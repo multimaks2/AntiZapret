@@ -6,6 +6,7 @@
 #include "gfx/theme_manager.h"
 #include "lua/lua_api.h"
 #include "ui/ui_common.h"
+#include "version.h"
 #include "window/window_manager.h"
 #include "vpn/vpn_flag_icons.h"
 #include "vpn/vpn_rules_updater.h"
@@ -259,12 +260,35 @@ void UiShell::TitleBar::DrawBrand(ImDrawList* drawList, ImVec2 barMin, float hei
 	const float titleFontSize = ImGui::GetFontSize();
 	const ImVec2 titleSize = titleFont->CalcTextSizeA(titleFontSize, 1e4f, 0.f, title);
 	const float titleY = barMin.y + (height - titleSize.y) * 0.5f;
+	const float titleX = barMin.x + kTitlePadLeft;
 	drawList->AddText(
 		titleFont,
 		titleFontSize,
-		{ barMin.x + kTitlePadLeft, titleY },
+		{ titleX, titleY },
 		ImGui::GetColorU32(theme.GetColors().textPrimary),
 		title);
+
+	const char* version = ANTIZAPRET_VERSION;
+	const float versionFontSize = titleFontSize * 0.82f;
+	const ImVec2 versionSize = titleFont->CalcTextSizeA(versionFontSize, 1e4f, 0.f, version);
+	const float padX = 5.f;
+	const float padY = 1.f;
+	const float badgeH = versionSize.y + padY * 2.f;
+	const float badgeW = versionSize.x + padX * 2.f;
+	const float badgeX = titleX + titleSize.x + 8.f;
+	const float badgeY = barMin.y + (height - badgeH) * 0.5f;
+	const ImVec2 badgeMin = { badgeX, badgeY };
+	const ImVec2 badgeMax = { badgeX + badgeW, badgeY + badgeH };
+	const ImU32 border = ImGui::GetColorU32(theme.GetAccents().ok);
+	const ImU32 fill = IM_COL32(33, 176, 77, 28);
+	drawList->AddRectFilled(badgeMin, badgeMax, fill, 3.f);
+	drawList->AddRect(badgeMin, badgeMax, border, 3.f, 0, 1.25f);
+	drawList->AddText(
+		titleFont,
+		versionFontSize,
+		{ badgeX + padX, badgeY + padY },
+		border,
+		version);
 }
 
 void UiShell::TitleBar::DrawButtons(HWND hwnd, WindowManager& window, float width, float height)
