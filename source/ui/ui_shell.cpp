@@ -170,6 +170,12 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 	m_vpnManager.Update(ImGui::GetIO().DeltaTime);
 	m_vpnPage.UpdateRuntime();
 	m_trafficMonitor.Update(ImGui::GetIO().DeltaTime);
+	m_discordPresence.Update(
+		m_activeTab,
+		m_zapretManager.IsRunning(),
+		m_tgWsProxyManager.IsRunning(),
+		m_vpnManager.IsRunning(),
+		ImGui::GetIO().DeltaTime);
 
 	const UiThemeColors colors = theme.GetColors();
 	UiCommon::SyncImGuiStyle(colors);
@@ -207,6 +213,11 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 	ImGui::EndChild();
 	ImGui::PopStyleColor();
 	ImGui::PopStyleVar();
+}
+
+void UiShell::ShutdownDiscord()
+{
+	m_discordPresence.Shutdown();
 }
 
 float UiShell::TitleBarHeight()

@@ -2,6 +2,8 @@ dofile("utils/buildactions/utils.lua")
 
 local imgui = "vendor/imgui-1.92.6"
 local lua = "vendor/lua/src"
+local discordRpc = "vendor/discord-rpc"
+local rapidjson = "vendor/rapidjson/include"
 
 workspace "AntiZapret"
 	configurations { "Debug", "Release" }
@@ -56,6 +58,13 @@ project "AntiZapret"
 		imgui,
 		imgui .. "/backends",
 		lua,
+		discordRpc .. "/include",
+		discordRpc .. "/src",
+		rapidjson,
+	}
+
+	defines {
+		"DISCORD_WINDOWS",
 	}
 
 	linkoptions { "/MANIFESTUAC:level='requireAdministrator'" }
@@ -164,6 +173,13 @@ project "AntiZapret"
 		"source/vpn/vpn_domain_routes.cpp",
 		"source/vpn/vpn_transport_settings.h",
 		"source/vpn/vpn_transport_settings.cpp",
+		"source/discord/discord_presence.h",
+		"source/discord/discord_presence.cpp",
+		discordRpc .. "/src/discord_rpc.cpp",
+		discordRpc .. "/src/rpc_connection.cpp",
+		discordRpc .. "/src/serialization.cpp",
+		discordRpc .. "/src/connection_win.cpp",
+		discordRpc .. "/src/discord_register_win.cpp",
 		imgui .. "/imgui.cpp",
 		imgui .. "/imgui_draw.cpp",
 		imgui .. "/imgui_tables.cpp",
@@ -231,6 +247,13 @@ project "AntiZapret"
 		["source/zapret"] = {
 			"source/zapret/**",
 		},
+		["source/discord"] = {
+			"source/discord/**",
+		},
+		["vendor/discord-rpc"] = {
+			discordRpc .. "/src/**",
+			discordRpc .. "/include/**",
+		},
 		["vendor/imgui"] = {
 			imgui .. "/imgui.cpp",
 			imgui .. "/imgui_draw.cpp",
@@ -250,6 +273,11 @@ project "AntiZapret"
 		defines { "_CRT_SECURE_NO_WARNINGS" }
 	filter {}
 
+	filter { "files:" .. discordRpc .. "/src/**.cpp" }
+		warnings "Off"
+		defines { "_CRT_SECURE_NO_WARNINGS" }
+	filter {}
+
 	links {
 		"d3d11",
 		"dxgi",
@@ -262,6 +290,7 @@ project "AntiZapret"
 		"windowscodecs",
 		"iphlpapi",
 		"ws2_32",
+		"psapi",
 	}
 
 	local deployScript = path.getabsolute("utils/buildactions/deploy-zapret-runtime.ps1")

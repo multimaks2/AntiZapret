@@ -16,6 +16,7 @@
 #include "ui/ui_tgfix_page.h"
 #include "ui/ui_vpn_page.h"
 #include "app/app_settings.h"
+#include "discord/discord_presence.h"
 #include "net/traffic_monitor.h"
 #include "tgproxy/tg_ws_proxy_manager.h"
 #include "zapret/zapret_manager.h"
@@ -38,6 +39,8 @@ public:
 		ThemeManager& theme,
 		FontManager& fonts,
 		LuaApi& api);
+
+	void ShutdownDiscord();
 
 	static float TitleBarHeight();
 	static void GetMinWindowSize(int* minWidth, int* minHeight);
@@ -84,6 +87,7 @@ private:
 	VpnManager m_vpnManager;
 	TrafficMonitor m_trafficMonitor;
 	AppSettings m_appSettings;
+	DiscordPresence m_discordPresence;
 	bool m_zapretPageInitialized = false;
 	bool m_startupActionsDone = false;
 };

@@ -149,6 +149,7 @@ void Application::Shutdown()
 		return;
 
 	m_components->window.SetReady(false);
+	m_components->ui.ShutdownDiscord();
 	if (m_components->lua.IsReady())
 		m_components->lua.Shutdown();
 
