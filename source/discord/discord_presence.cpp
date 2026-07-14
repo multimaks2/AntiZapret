@@ -16,24 +16,27 @@ namespace
 
 	void BuildServicesState(bool zapret, bool tg, bool vpn, char* out, size_t outSize)
 	{
-		out[0] = '\0';
+		if (!zapret && !tg && !vpn)
+		{
+			strncpy_s(out, outSize, "не использует сервисы", _TRUNCATE);
+			return;
+		}
+
+		strncpy_s(out, outSize, "использует — ", _TRUNCATE);
 		bool first = true;
 		auto append = [&](const char* label) {
 			if (!first)
-				strncat_s(out, outSize, " · ", _TRUNCATE);
+				strncat_s(out, outSize, ", ", _TRUNCATE);
 			strncat_s(out, outSize, label, _TRUNCATE);
 			first = false;
 		};
 
-		if (zapret)
-			append("Антизапрет");
-		if (tg)
-			append("TG Fix");
 		if (vpn)
 			append("VPN");
-
-		if (first)
-			strncpy_s(out, outSize, "Сервисы выключены", _TRUNCATE);
+		if (zapret)
+			append("антизапрет");
+		if (tg)
+			append("tg-ws-proxy");
 	}
 }
 
