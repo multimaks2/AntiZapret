@@ -1,7 +1,7 @@
-#include "discord/discord_presence.h"
-
-#include "version.h"
 #include "discord_rpc.h"
+
+#include "discord/discord_presence.h"
+#include "version.h"
 
 #include <cstdio>
 #include <cstring>
@@ -75,6 +75,7 @@ void DiscordPresence::Update(
 	bool tgRunning,
 	bool vpnRunning,
 	bool enabled,
+	bool shareButtonEnabled,
 	float deltaTime)
 {
 	if (!enabled)
@@ -107,7 +108,14 @@ void DiscordPresence::Update(
 		m_callbackAge = 0.f;
 	}
 
-	const Snapshot snap{ activeTab, zapretRunning, tgRunning, vpnRunning, true };
+	const Snapshot snap{
+		activeTab,
+		zapretRunning,
+		tgRunning,
+		vpnRunning,
+		true,
+		shareButtonEnabled
+	};
 	m_forceAge += deltaTime;
 
 	const bool changed = !m_hasPresence
@@ -115,7 +123,8 @@ void DiscordPresence::Update(
 		|| snap.tab != m_last.tab
 		|| snap.zapret != m_last.zapret
 		|| snap.tg != m_last.tg
-		|| snap.vpn != m_last.vpn;
+		|| snap.vpn != m_last.vpn
+		|| snap.shareButton != m_last.shareButton;
 
 	if (!changed && m_forceAge < kForceRefreshSec)
 		return;
@@ -144,8 +153,11 @@ void DiscordPresence::PushPresence(const Snapshot& snap) const
 	presence.largeImageText = largeText;
 	presence.smallImageKey = TabImageKey(snap.tab);
 	presence.smallImageText = TabLabel(snap.tab);
-	presence.button1Label = kShareButtonLabel;
-	presence.button1Url = kShareButtonUrl;
+	if (snap.shareButton)
+	{
+		presence.button1Label = kShareButtonLabel;
+		presence.button1Url = kShareButtonUrl;
+	}
 	presence.instance = 0;
 
 	Discord_UpdatePresence(&presence);

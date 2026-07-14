@@ -48,6 +48,7 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		m_autostartVpnMix = m_appSettings->GetAutostartVpn() ? 1.f : 0.f;
 		m_confirmAdultMix = m_appSettings->GetConfirmAdult() ? 1.f : 0.f;
 		m_discordPresenceMix = m_appSettings->GetDiscordPresenceEnabled() ? 1.f : 0.f;
+		m_discordShareButtonMix = m_appSettings->GetDiscordShareButtonEnabled() ? 1.f : 0.f;
 		m_loadedFromSettings = true;
 	}
 
@@ -81,6 +82,11 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 	m_discordPresenceMix = UiCommon::AnimateMix(
 		m_discordPresenceMix,
 		m_appSettings && m_appSettings->GetDiscordPresenceEnabled(),
+		deltaTime,
+		kToggleAnimSpeed);
+	m_discordShareButtonMix = UiCommon::AnimateMix(
+		m_discordShareButtonMix,
+		m_appSettings && m_appSettings->GetDiscordShareButtonEnabled(),
 		deltaTime,
 		kToggleAnimSpeed);
 
@@ -147,26 +153,17 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		}
 	}
 
-	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
-
-	if (UiCommon::BeginCard("##settings_discord", width, colors))
+	if (UiCommon::SettingRow("Discord активность", width, colors, m_discordPresenceMix))
 	{
-		const float innerWidth = ImGui::GetContentRegionAvail().x;
-		UiCommon::SectionHeader("Discord", colors);
-		ImGui::Dummy({ 0.f, 4.f });
-		UiCommon::CaptionText(
-			"Показывать активность AntiZapret в профиле Discord.",
-			colors,
-			innerWidth);
-		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
-
-		if (UiCommon::SettingRow("Discord активность", innerWidth, colors, m_discordPresenceMix))
-		{
-			if (m_appSettings)
-				m_appSettings->SetDiscordPresenceEnabled(!m_appSettings->GetDiscordPresenceEnabled());
-		}
+		if (m_appSettings)
+			m_appSettings->SetDiscordPresenceEnabled(!m_appSettings->GetDiscordPresenceEnabled());
 	}
-	UiCommon::EndCard();
+
+	if (UiCommon::SettingRow("Кнопка «Поделиться» в Discord", width, colors, m_discordShareButtonMix))
+	{
+		if (m_appSettings)
+			m_appSettings->SetDiscordShareButtonEnabled(!m_appSettings->GetDiscordShareButtonEnabled());
+	}
 
 	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 

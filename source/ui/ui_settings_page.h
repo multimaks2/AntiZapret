@@ -22,6 +22,7 @@ private:
 	float m_autostartVpnMix = 0.f;
 	float m_confirmAdultMix = 0.f;
 	float m_discordPresenceMix = 1.f;
+	float m_discordShareButtonMix = 1.f;
 	bool m_loadedFromSettings = false;
 	VpnManager* m_vpnManager = nullptr;
 };

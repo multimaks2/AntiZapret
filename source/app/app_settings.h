@@ -49,6 +49,9 @@ public:
 	bool GetDiscordPresenceEnabled() const { return m_discordPresenceEnabled; }
 	void SetDiscordPresenceEnabled(bool value);
 
+	bool GetDiscordShareButtonEnabled() const { return m_discordShareButtonEnabled; }
+	void SetDiscordShareButtonEnabled(bool value);
+
 	bool GetAutoSelectBestStrategy() const;
 	void SetAutoSelectBestStrategy(bool value);
 
@@ -78,6 +81,7 @@ private:
 	bool m_autostartVpn = false;
 	bool m_confirmAdult = false;
 	bool m_discordPresenceEnabled = true;
+	bool m_discordShareButtonEnabled = true;
 	bool m_autoSelectBestStrategy = false;
 	bool m_showExtraStrategies = false;
 	std::array<float, kPageScrollCount> m_pageScrollMultipliers {};

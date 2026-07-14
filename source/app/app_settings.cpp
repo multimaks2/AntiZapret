@@ -72,6 +72,7 @@ void AppSettings::Load()
 	m_autostartVpn = false;
 	m_confirmAdult = false;
 	m_discordPresenceEnabled = true;
+	m_discordShareButtonEnabled = true;
 	m_autoSelectBestStrategy = false;
 	m_showExtraStrategies = false;
 	ResetScrollMultipliers(m_pageScrollMultipliers);
@@ -137,6 +138,8 @@ void AppSettings::Load()
 				m_confirmAdult = ParseBool(value);
 			else if (key == "discord_presence")
 				m_discordPresenceEnabled = ParseBool(value);
+			else if (key == "discord_share_button")
+				m_discordShareButtonEnabled = ParseBool(value);
 			continue;
 		}
 
@@ -193,6 +196,7 @@ void AppSettings::Save()
 	output << "autostart_vpn=" << (m_autostartVpn ? "1" : "0") << "\r\n";
 	output << "confirm_adult=" << (m_confirmAdult ? "1" : "0") << "\r\n";
 	output << "discord_presence=" << (m_discordPresenceEnabled ? "1" : "0") << "\r\n";
+	output << "discord_share_button=" << (m_discordShareButtonEnabled ? "1" : "0") << "\r\n";
 	output << "[scroll]\r\n";
 	output << "home=" << m_pageScrollMultipliers[0] << "\r\n";
 	output << "antizapret=" << m_pageScrollMultipliers[1] << "\r\n";
@@ -324,6 +328,12 @@ void AppSettings::SetConfirmAdult(bool value)
 void AppSettings::SetDiscordPresenceEnabled(bool value)
 {
 	m_discordPresenceEnabled = value;
+	Save();
+}
+
+void AppSettings::SetDiscordShareButtonEnabled(bool value)
+{
+	m_discordShareButtonEnabled = value;
 	Save();
 }
 

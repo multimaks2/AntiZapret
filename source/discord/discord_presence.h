@@ -13,6 +13,7 @@ public:
 		bool tgRunning,
 		bool vpnRunning,
 		bool enabled,
+		bool shareButtonEnabled,
 		float deltaTime);
 
 private:
@@ -23,6 +24,7 @@ private:
 		bool tg = false;
 		bool vpn = false;
 		bool enabled = true;
+		bool shareButton = true;
 	};
 
 	void PushPresence(const Snapshot& snap) const;
