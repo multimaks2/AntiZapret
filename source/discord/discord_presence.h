@@ -5,6 +5,8 @@
 class DiscordPresence
 {
 public:
+	DiscordPresence();
+
 	void Initialize();
 	void Shutdown();
 	void Update(
@@ -19,22 +21,24 @@ public:
 private:
 	struct Snapshot
 	{
-		UiTab tab = UiTab::Home;
-		bool zapret = false;
-		bool tg = false;
-		bool vpn = false;
-		bool enabled = true;
-		bool shareButton = true;
+		UiTab tab;
+		bool zapret;
+		bool tg;
+		bool vpn;
+		bool enabled;
+		bool shareButton;
+
+		Snapshot();
 	};
 
 	void PushPresence(const Snapshot& snap) const;
 	static const char* TabImageKey(UiTab tab);
 	static const char* TabLabel(UiTab tab);
 
-	bool m_initialized = false;
-	bool m_hasPresence = false;
-	Snapshot m_last = {};
-	float m_callbackAge = 0.f;
-	float m_forceAge = 0.f;
-	long long m_startTimestamp = 0;
+	bool m_initialized;
+	bool m_hasPresence;
+	Snapshot m_last;
+	float m_callbackAge;
+	float m_refreshAge;
+	long long m_sessionStartedAt;
 };

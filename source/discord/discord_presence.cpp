@@ -1,17 +1,37 @@
-#include "discord_rpc.h"
-
 #include "discord/discord_presence.h"
+
 #include "version.h"
+
+#include "discord_rpc.h"
 
 #include <cstdio>
 #include <cstring>
 #include <ctime>
-#include <string>
+
+DiscordPresence::DiscordPresence()
+	: m_initialized(false)
+	, m_hasPresence(false)
+	, m_last()
+	, m_callbackAge(0.f)
+	, m_refreshAge(0.f)
+	, m_sessionStartedAt(0)
+{
+}
+
+DiscordPresence::Snapshot::Snapshot()
+	: tab(UiTab::Home)
+	, zapret(false)
+	, tg(false)
+	, vpn(false)
+	, enabled(true)
+	, shareButton(true)
+{
+}
 
 namespace
 {
 	constexpr char kApplicationId[] = "1526697979879231658";
-	// Discord button label soft-limit is ~31 bytes; full phrase overflows that.
+	// Discord button label soft-limit is ~31 bytes.
 	constexpr char kShareButtonLabel[] = "Поделиться";
 	// Placeholder until share-method payload logic is implemented.
 	constexpr char kShareButtonUrl[] = "https://github.com/multimaks2/AntiZapret/releases/latest";
@@ -49,13 +69,14 @@ void DiscordPresence::Initialize()
 	if (m_initialized)
 		return;
 
-	DiscordEventHandlers handlers = {};
+	DiscordEventHandlers handlers;
+	std::memset(&handlers, 0, sizeof(handlers));
 	Discord_Initialize(kApplicationId, &handlers, 0, nullptr);
-	m_startTimestamp = static_cast<long long>(std::time(nullptr));
+	m_sessionStartedAt = static_cast<long long>(std::time(nullptr));
 	m_initialized = true;
 	m_hasPresence = false;
 	m_callbackAge = 0.f;
-	m_forceAge = kForceRefreshSec; // push soon after init
+	m_refreshAge = kForceRefreshSec;
 }
 
 void DiscordPresence::Shutdown()
@@ -108,15 +129,15 @@ void DiscordPresence::Update(
 		m_callbackAge = 0.f;
 	}
 
-	const Snapshot snap{
-		activeTab,
-		zapretRunning,
-		tgRunning,
-		vpnRunning,
-		true,
-		shareButtonEnabled
-	};
-	m_forceAge += deltaTime;
+	Snapshot snap;
+	snap.tab = activeTab;
+	snap.zapret = zapretRunning;
+	snap.tg = tgRunning;
+	snap.vpn = vpnRunning;
+	snap.enabled = true;
+	snap.shareButton = shareButtonEnabled;
+
+	m_refreshAge += deltaTime;
 
 	const bool changed = !m_hasPresence
 		|| !m_last.enabled
@@ -126,13 +147,13 @@ void DiscordPresence::Update(
 		|| snap.vpn != m_last.vpn
 		|| snap.shareButton != m_last.shareButton;
 
-	if (!changed && m_forceAge < kForceRefreshSec)
+	if (!changed && m_refreshAge < kForceRefreshSec)
 		return;
 
 	PushPresence(snap);
 	m_last = snap;
 	m_hasPresence = true;
-	m_forceAge = 0.f;
+	m_refreshAge = 0.f;
 }
 
 void DiscordPresence::PushPresence(const Snapshot& snap) const
@@ -145,10 +166,11 @@ void DiscordPresence::PushPresence(const Snapshot& snap) const
 	BuildServicesState(snap.zapret, snap.tg, snap.vpn, state, sizeof state);
 	snprintf(largeText, sizeof largeText, "AntiZapret %s", ANTIZAPRET_VERSION);
 
-	DiscordRichPresence presence = {};
+	DiscordRichPresence presence;
+	std::memset(&presence, 0, sizeof(presence));
 	presence.details = details;
 	presence.state = state;
-	presence.startTimestamp = m_startTimestamp;
+	presence.startTimestamp = m_sessionStartedAt;
 	presence.largeImageKey = "main";
 	presence.largeImageText = largeText;
 	presence.smallImageKey = TabImageKey(snap.tab);
