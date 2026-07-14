@@ -47,6 +47,7 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		m_autostartTelegramMix = m_appSettings->GetAutostartTelegram() ? 1.f : 0.f;
 		m_autostartVpnMix = m_appSettings->GetAutostartVpn() ? 1.f : 0.f;
 		m_confirmAdultMix = m_appSettings->GetConfirmAdult() ? 1.f : 0.f;
+		m_discordPresenceMix = m_appSettings->GetDiscordPresenceEnabled() ? 1.f : 0.f;
 		m_loadedFromSettings = true;
 	}
 
@@ -75,6 +76,11 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 	m_confirmAdultMix = UiCommon::AnimateMix(
 		m_confirmAdultMix,
 		m_appSettings && m_appSettings->GetConfirmAdult(),
+		deltaTime,
+		kToggleAnimSpeed);
+	m_discordPresenceMix = UiCommon::AnimateMix(
+		m_discordPresenceMix,
+		m_appSettings && m_appSettings->GetDiscordPresenceEnabled(),
 		deltaTime,
 		kToggleAnimSpeed);
 
@@ -140,6 +146,36 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 			}
 		}
 	}
+
+	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
+
+	if (UiCommon::BeginCard("##settings_discord", width, colors))
+	{
+		const float innerWidth = ImGui::GetContentRegionAvail().x;
+		UiCommon::SectionHeader("Discord", colors);
+		ImGui::Dummy({ 0.f, 4.f });
+		UiCommon::CaptionText(
+			"Показывать активность AntiZapret в профиле Discord.",
+			colors,
+			innerWidth);
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+
+		if (UiCommon::SettingRow("Discord активность", innerWidth, colors, m_discordPresenceMix))
+		{
+			if (m_appSettings)
+				m_appSettings->SetDiscordPresenceEnabled(!m_appSettings->GetDiscordPresenceEnabled());
+		}
+
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+		if (UiCommon::SecondaryButton(
+				"Поделиться методом",
+				{ innerWidth, UiMetrics::kBtnHeight },
+				colors))
+		{
+			// Placeholder: share method flow will be added later.
+		}
+	}
+	UiCommon::EndCard();
 
 	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 

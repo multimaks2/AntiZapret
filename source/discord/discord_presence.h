@@ -7,7 +7,13 @@ class DiscordPresence
 public:
 	void Initialize();
 	void Shutdown();
-	void Update(UiTab activeTab, bool zapretRunning, bool tgRunning, bool vpnRunning, float deltaTime);
+	void Update(
+		UiTab activeTab,
+		bool zapretRunning,
+		bool tgRunning,
+		bool vpnRunning,
+		bool enabled,
+		float deltaTime);
 
 private:
 	struct Snapshot
@@ -16,6 +22,7 @@ private:
 		bool zapret = false;
 		bool tg = false;
 		bool vpn = false;
+		bool enabled = true;
 	};
 
 	void PushPresence(const Snapshot& snap) const;

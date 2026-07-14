@@ -175,6 +175,7 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		m_zapretManager.IsRunning(),
 		m_tgWsProxyManager.IsRunning(),
 		m_vpnManager.IsRunning(),
+		m_appSettings.GetDiscordPresenceEnabled(),
 		ImGui::GetIO().DeltaTime);
 
 	const UiThemeColors colors = theme.GetColors();

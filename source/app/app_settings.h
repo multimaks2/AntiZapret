@@ -46,6 +46,9 @@ public:
 	bool GetConfirmAdult() const { return m_confirmAdult; }
 	void SetConfirmAdult(bool value);
 
+	bool GetDiscordPresenceEnabled() const { return m_discordPresenceEnabled; }
+	void SetDiscordPresenceEnabled(bool value);
+
 	bool GetAutoSelectBestStrategy() const;
 	void SetAutoSelectBestStrategy(bool value);
 
@@ -74,6 +77,7 @@ private:
 	bool m_autostartTelegram = false;
 	bool m_autostartVpn = false;
 	bool m_confirmAdult = false;
+	bool m_discordPresenceEnabled = true;
 	bool m_autoSelectBestStrategy = false;
 	bool m_showExtraStrategies = false;
 	std::array<float, kPageScrollCount> m_pageScrollMultipliers {};

@@ -65,8 +65,34 @@ void DiscordPresence::Shutdown()
 	m_hasPresence = false;
 }
 
-void DiscordPresence::Update(UiTab activeTab, bool zapretRunning, bool tgRunning, bool vpnRunning, float deltaTime)
+void DiscordPresence::Update(
+	UiTab activeTab,
+	bool zapretRunning,
+	bool tgRunning,
+	bool vpnRunning,
+	bool enabled,
+	float deltaTime)
 {
+	if (!enabled)
+	{
+		if (m_initialized)
+		{
+			m_callbackAge += deltaTime;
+			if (m_callbackAge >= kCallbackIntervalSec)
+			{
+				Discord_RunCallbacks();
+				m_callbackAge = 0.f;
+			}
+			if (m_hasPresence || m_last.enabled)
+			{
+				Discord_ClearPresence();
+				m_hasPresence = false;
+				m_last.enabled = false;
+			}
+		}
+		return;
+	}
+
 	if (!m_initialized)
 		Initialize();
 
@@ -77,10 +103,11 @@ void DiscordPresence::Update(UiTab activeTab, bool zapretRunning, bool tgRunning
 		m_callbackAge = 0.f;
 	}
 
-	const Snapshot snap{ activeTab, zapretRunning, tgRunning, vpnRunning };
+	const Snapshot snap{ activeTab, zapretRunning, tgRunning, vpnRunning, true };
 	m_forceAge += deltaTime;
 
 	const bool changed = !m_hasPresence
+		|| !m_last.enabled
 		|| snap.tab != m_last.tab
 		|| snap.zapret != m_last.zapret
 		|| snap.tg != m_last.tg
