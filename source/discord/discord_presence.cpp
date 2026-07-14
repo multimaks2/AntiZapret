@@ -1,39 +1,16 @@
 #include "discord/discord_presence.h"
 
 #include "version.h"
-
 #include "discord_rpc.h"
 
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 
-DiscordPresence::DiscordPresence()
-	: m_initialized(false)
-	, m_hasPresence(false)
-	, m_last()
-	, m_callbackAge(0.f)
-	, m_refreshAge(0.f)
-	, m_sessionStartedAt(0)
-{
-}
-
-DiscordPresence::Snapshot::Snapshot()
-	: tab(UiTab::Home)
-	, zapret(false)
-	, tg(false)
-	, vpn(false)
-	, enabled(true)
-	, shareButton(true)
-{
-}
-
 namespace
 {
 	constexpr char kApplicationId[] = "1526697979879231658";
-	// Discord button label soft-limit is ~31 bytes.
 	constexpr char kShareButtonLabel[] = "Поделиться";
-	// Placeholder until share-method payload logic is implemented.
 	constexpr char kShareButtonUrl[] = "https://github.com/multimaks2/AntiZapret/releases/latest";
 	constexpr float kCallbackIntervalSec = 0.5f;
 	constexpr float kForceRefreshSec = 12.f;
@@ -64,7 +41,22 @@ namespace
 	}
 }
 
-void DiscordPresence::Initialize()
+AppRichPresence::AppRichPresence()
+	: m_initialized(false)
+	, m_hasPresence(false)
+	, m_lastTab(UiTab::Home)
+	, m_lastZapret(false)
+	, m_lastTg(false)
+	, m_lastVpn(false)
+	, m_lastEnabled(false)
+	, m_lastShareButton(true)
+	, m_callbackAge(0.f)
+	, m_refreshAge(0.f)
+	, m_sessionStartedAt(0)
+{
+}
+
+void AppRichPresence::Initialize()
 {
 	if (m_initialized)
 		return;
@@ -79,7 +71,7 @@ void DiscordPresence::Initialize()
 	m_refreshAge = kForceRefreshSec;
 }
 
-void DiscordPresence::Shutdown()
+void AppRichPresence::Shutdown()
 {
 	if (!m_initialized)
 		return;
@@ -90,7 +82,7 @@ void DiscordPresence::Shutdown()
 	m_hasPresence = false;
 }
 
-void DiscordPresence::Update(
+void AppRichPresence::Update(
 	UiTab activeTab,
 	bool zapretRunning,
 	bool tgRunning,
@@ -109,11 +101,11 @@ void DiscordPresence::Update(
 				Discord_RunCallbacks();
 				m_callbackAge = 0.f;
 			}
-			if (m_hasPresence || m_last.enabled)
+			if (m_hasPresence || m_lastEnabled)
 			{
 				Discord_ClearPresence();
 				m_hasPresence = false;
-				m_last.enabled = false;
+				m_lastEnabled = false;
 			}
 		}
 		return;
@@ -129,41 +121,43 @@ void DiscordPresence::Update(
 		m_callbackAge = 0.f;
 	}
 
-	Snapshot snap;
-	snap.tab = activeTab;
-	snap.zapret = zapretRunning;
-	snap.tg = tgRunning;
-	snap.vpn = vpnRunning;
-	snap.enabled = true;
-	snap.shareButton = shareButtonEnabled;
-
 	m_refreshAge += deltaTime;
 
 	const bool changed = !m_hasPresence
-		|| !m_last.enabled
-		|| snap.tab != m_last.tab
-		|| snap.zapret != m_last.zapret
-		|| snap.tg != m_last.tg
-		|| snap.vpn != m_last.vpn
-		|| snap.shareButton != m_last.shareButton;
+		|| !m_lastEnabled
+		|| activeTab != m_lastTab
+		|| zapretRunning != m_lastZapret
+		|| tgRunning != m_lastTg
+		|| vpnRunning != m_lastVpn
+		|| shareButtonEnabled != m_lastShareButton;
 
 	if (!changed && m_refreshAge < kForceRefreshSec)
 		return;
 
-	PushPresence(snap);
-	m_last = snap;
+	PushPresence(activeTab, zapretRunning, tgRunning, vpnRunning, shareButtonEnabled);
+	m_lastTab = activeTab;
+	m_lastZapret = zapretRunning;
+	m_lastTg = tgRunning;
+	m_lastVpn = vpnRunning;
+	m_lastEnabled = true;
+	m_lastShareButton = shareButtonEnabled;
 	m_hasPresence = true;
 	m_refreshAge = 0.f;
 }
 
-void DiscordPresence::PushPresence(const Snapshot& snap) const
+void AppRichPresence::PushPresence(
+	UiTab tab,
+	bool zapret,
+	bool tg,
+	bool vpn,
+	bool shareButton) const
 {
 	char details[128] = {};
 	char state[128] = {};
 	char largeText[128] = {};
 
-	snprintf(details, sizeof details, "%s", TabLabel(snap.tab));
-	BuildServicesState(snap.zapret, snap.tg, snap.vpn, state, sizeof state);
+	snprintf(details, sizeof details, "%s", TabLabel(tab));
+	BuildServicesState(zapret, tg, vpn, state, sizeof state);
 	snprintf(largeText, sizeof largeText, "AntiZapret %s", ANTIZAPRET_VERSION);
 
 	DiscordRichPresence presence;
@@ -173,9 +167,9 @@ void DiscordPresence::PushPresence(const Snapshot& snap) const
 	presence.startTimestamp = m_sessionStartedAt;
 	presence.largeImageKey = "main";
 	presence.largeImageText = largeText;
-	presence.smallImageKey = TabImageKey(snap.tab);
-	presence.smallImageText = TabLabel(snap.tab);
-	if (snap.shareButton)
+	presence.smallImageKey = TabImageKey(tab);
+	presence.smallImageText = TabLabel(tab);
+	if (shareButton)
 	{
 		presence.button1Label = kShareButtonLabel;
 		presence.button1Url = kShareButtonUrl;
@@ -185,7 +179,7 @@ void DiscordPresence::PushPresence(const Snapshot& snap) const
 	Discord_UpdatePresence(&presence);
 }
 
-const char* DiscordPresence::TabImageKey(UiTab tab)
+const char* AppRichPresence::TabImageKey(UiTab tab)
 {
 	switch (tab)
 	{
@@ -201,7 +195,7 @@ const char* DiscordPresence::TabImageKey(UiTab tab)
 	return "icon-home";
 }
 
-const char* DiscordPresence::TabLabel(UiTab tab)
+const char* AppRichPresence::TabLabel(UiTab tab)
 {
 	switch (tab)
 	{

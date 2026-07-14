@@ -87,7 +87,7 @@ private:
 	VpnManager m_vpnManager;
 	TrafficMonitor m_trafficMonitor;
 	AppSettings m_appSettings;
-	DiscordPresence m_discordPresence;
+	AppRichPresence m_discordPresence;
 	bool m_zapretPageInitialized = false;
 	bool m_startupActionsDone = false;
 };

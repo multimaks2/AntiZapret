@@ -2,10 +2,11 @@
 
 #include "ui/ui_types.h"
 
-class DiscordPresence
+// Application-side Rich Presence controller (not a Discord SDK type).
+class AppRichPresence
 {
 public:
-	DiscordPresence();
+	AppRichPresence();
 
 	void Initialize();
 	void Shutdown();
@@ -19,25 +20,24 @@ public:
 		float deltaTime);
 
 private:
-	struct Snapshot
-	{
-		UiTab tab;
-		bool zapret;
-		bool tg;
-		bool vpn;
-		bool enabled;
-		bool shareButton;
+	void PushPresence(
+		UiTab tab,
+		bool zapret,
+		bool tg,
+		bool vpn,
+		bool shareButton) const;
 
-		Snapshot();
-	};
-
-	void PushPresence(const Snapshot& snap) const;
 	static const char* TabImageKey(UiTab tab);
 	static const char* TabLabel(UiTab tab);
 
 	bool m_initialized;
 	bool m_hasPresence;
-	Snapshot m_last;
+	UiTab m_lastTab;
+	bool m_lastZapret;
+	bool m_lastTg;
+	bool m_lastVpn;
+	bool m_lastEnabled;
+	bool m_lastShareButton;
 	float m_callbackAge;
 	float m_refreshAge;
 	long long m_sessionStartedAt;

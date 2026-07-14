@@ -18,7 +18,7 @@ workspace "AntiZapret"
 		toolset "v145"
 		buildoptions { "/utf-8" }
 		defines { "UNICODE", "_UNICODE" }
-		flags { "MultiProcessorCompile" }
+		multiprocessorcompile "On"
 
 	filter "platforms:Win32"
 		architecture "x86"
