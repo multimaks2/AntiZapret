@@ -165,15 +165,6 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 			if (m_appSettings)
 				m_appSettings->SetDiscordPresenceEnabled(!m_appSettings->GetDiscordPresenceEnabled());
 		}
-
-		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
-		if (UiCommon::SecondaryButton(
-				"Поделиться методом",
-				{ innerWidth, UiMetrics::kBtnHeight },
-				colors))
-		{
-			// Placeholder: share method flow will be added later.
-		}
 	}
 	UiCommon::EndCard();
 

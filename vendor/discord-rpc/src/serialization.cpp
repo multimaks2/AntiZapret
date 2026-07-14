@@ -133,6 +133,24 @@ size_t JsonWriteRichPresenceObj(char* dest,
                     WriteOptionalString(writer, "small_text", presence->smallImageText);
                 }
 
+                const bool button1Ok = (presence->button1Label && presence->button1Label[0]) &&
+                                       (presence->button1Url && presence->button1Url[0]);
+                const bool button2Ok = (presence->button2Label && presence->button2Label[0]) &&
+                                       (presence->button2Url && presence->button2Url[0]);
+                if (button1Ok || button2Ok) {
+                    WriteArray buttons(writer, "buttons");
+                    if (button1Ok) {
+                        WriteObject button1(writer);
+                        WriteOptionalString(writer, "label", presence->button1Label);
+                        WriteOptionalString(writer, "url", presence->button1Url);
+                    }
+                    if (button2Ok) {
+                        WriteObject button2(writer);
+                        WriteOptionalString(writer, "label", presence->button2Label);
+                        WriteOptionalString(writer, "url", presence->button2Url);
+                    }
+                }
+
                 if ((presence->partyId && presence->partyId[0]) || presence->partySize ||
                     presence->partyMax || presence->partyPrivacy) {
                     WriteObject party(writer, "party");

@@ -11,6 +11,10 @@
 namespace
 {
 	constexpr char kApplicationId[] = "1526697979879231658";
+	// Discord button label soft-limit is ~31 bytes; full phrase overflows that.
+	constexpr char kShareButtonLabel[] = "Поделиться";
+	// Placeholder until share-method payload logic is implemented.
+	constexpr char kShareButtonUrl[] = "https://github.com/multimaks2/AntiZapret/releases/latest";
 	constexpr float kCallbackIntervalSec = 0.5f;
 	constexpr float kForceRefreshSec = 12.f;
 
@@ -140,6 +144,8 @@ void DiscordPresence::PushPresence(const Snapshot& snap) const
 	presence.largeImageText = largeText;
 	presence.smallImageKey = TabImageKey(snap.tab);
 	presence.smallImageText = TabLabel(snap.tab);
+	presence.button1Label = kShareButtonLabel;
+	presence.button1Url = kShareButtonUrl;
 	presence.instance = 0;
 
 	Discord_UpdatePresence(&presence);
