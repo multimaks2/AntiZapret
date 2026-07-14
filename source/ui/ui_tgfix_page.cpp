@@ -1,0 +1,131 @@
+#include "ui/ui_tgfix_page.h"
+
+#include "app/app_settings.h"
+#include "gfx/font_manager.h"
+#include "gfx/theme_manager.h"
+#include "tgproxy/tg_ws_proxy_manager.h"
+#include "ui/ui_common.h"
+#include "imgui.h"
+
+#include <cstdio>
+#include <string>
+
+namespace
+{
+	const std::string kEmptyTelegramLink;
+}
+
+void UiTgFixPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width)
+{
+	const UiThemeColors colors = theme.GetColors();
+	const UiAccentColors accents = theme.GetAccents();
+
+	const bool running = m_manager && m_manager->IsRunning();
+	const bool openTelegram = m_settings && m_settings->GetOpenTelegramOnProxyStart();
+
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, UiMetrics::kRowGap });
+	UiCommon::PageTitle(
+		fonts,
+		0xE8BD,
+		"TG WS Proxy",
+		"Локальный MTProto-прокси для Telegram",
+		colors);
+
+	if (UiCommon::BeginCard("##tg_status", width, colors))
+	{
+		const float innerWidth = ImGui::GetContentRegionAvail().x;
+		UiCommon::SectionHeader("Локальный прокси для Telegram", colors);
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+
+		const char* actionLabel = m_manager ? m_manager->GetPrimaryActionLabel() : "Запустить TG WS Proxy";
+		const bool canAction = m_manager && m_manager->CanPrimaryAction();
+		const ImVec4 actionColor = running ? accents.fail : accents.download;
+
+		if (UiCommon::AccentButton(actionLabel, { innerWidth, 40.f }, actionColor, colors, canAction) && m_manager)
+			m_manager->HandlePrimaryAction(openTelegram);
+
+		ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
+
+		const char* processLabel = running
+			? (m_manager->IsStartedByUs() ? "tg-ws-proxy" : "tg-ws-proxy (внешний)")
+			: "—";
+		UiCommon::InfoLine("Процесс: ", processLabel, colors);
+
+		if (m_manager && !m_manager->GetStatusMessage().empty())
+		{
+			ImGui::Dummy({ 0.f, 4.f });
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+			ImGui::TextWrapped("%s", m_manager->GetStatusMessage().c_str());
+			ImGui::PopStyleColor();
+		}
+
+		if (m_manager && !m_manager->GetErrorMessage().empty())
+		{
+			ImGui::Dummy({ 0.f, 4.f });
+			ImGui::PushStyleColor(ImGuiCol_Text, accents.fail);
+			ImGui::TextWrapped("%s", m_manager->GetErrorMessage().c_str());
+			ImGui::PopStyleColor();
+		}
+	}
+	UiCommon::EndCard();
+	UiCommon::CardGap();
+
+	if (UiCommon::BeginCard("##tg_link", width, colors))
+	{
+		const float innerWidth = ImGui::GetContentRegionAvail().x;
+		UiCommon::SectionHeader("Ссылка для Telegram", colors);
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+
+		const std::string& link = m_manager ? m_manager->GetTelegramLinkCached() : kEmptyTelegramLink;
+		const char* linkText = link.empty() ? "tg://proxy?..." : link.c_str();
+
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, colors.inputBg);
+		ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiMetrics::kCardRadius);
+		ImGui::BeginChild("##link_box", { innerWidth, 36.f }, ImGuiChildFlags_None);
+		ImGui::SetCursorPos({ 10.f, 9.f });
+		ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
+		ImGui::TextUnformatted(linkText);
+		ImGui::PopStyleColor();
+		ImGui::EndChild();
+		ImGui::PopStyleVar();
+		ImGui::PopStyleColor();
+
+		ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
+
+		const float btnW = (innerWidth - UiMetrics::kGridGap) * 0.5f;
+		if (UiCommon::SecondaryButton("Копировать ссылку", { btnW, UiMetrics::kBtnHeight }, colors, m_manager != nullptr) && m_manager)
+			m_manager->CopyTelegramLinkToClipboard();
+		ImGui::SameLine(0.f, UiMetrics::kGridGap);
+		if (UiCommon::SecondaryButton("Открыть в Telegram", { btnW, UiMetrics::kBtnHeight }, colors, m_manager != nullptr) && m_manager)
+			m_manager->OpenTelegramLink();
+	}
+	UiCommon::EndCard();
+	UiCommon::CardGap();
+
+	if (UiCommon::BeginCard("##tg_extra", width, colors))
+	{
+		UiCommon::SectionHeader("Дополнительно", colors);
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+
+		if (m_settings)
+		{
+			bool autoStart = m_settings->GetAutoStartTgProxyWithAntiZapret();
+			if (UiCommon::StyledCheckbox("Запускать прокси вместе с Антизапретом", &autoStart, colors))
+				m_settings->SetAutoStartTgProxyWithAntiZapret(autoStart);
+
+			bool openOnStart = m_settings->GetOpenTelegramOnProxyStart();
+			if (UiCommon::StyledCheckbox("Открывать Telegram при запуске прокси", &openOnStart, colors))
+				m_settings->SetOpenTelegramOnProxyStart(openOnStart);
+		}
+
+		ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+		ImGui::TextWrapped(
+			"Ссылка tg://proxy содержит secret=dd и 32-символьный ключ MTProto. "
+			"Если Python или зависимости не установлены, кнопка запуска предложит установку.");
+		ImGui::PopStyleColor();
+	}
+	UiCommon::EndCard();
+
+	ImGui::Dummy({ 0.f, UiMetrics::kCardGap });
+	ImGui::PopStyleVar();
+}

@@ -1,0 +1,43 @@
+##############################################
+### ВСЯ ЭТА СБОРКА - БУКВАЛЬНО OPEN SOURCE ###
+##############################################
+
+Вот ссылки на оригинальные GitHub репозитории всего, из чего собрана данная сборка:
+GitHub Zapret - https://github.com/bol-van/zapret
+GitHub Zapret Win Bundle - https://github.com/bol-van/zapret-win-bundle
+GitHub WinDivert - https://github.com/basil00/WinDivert
+GitHub Zapret Autorunner - https://github.com/Priler/bat_autorunner
+GitHub Zapret Preconfigs Tester - https://github.com/Priler/zapret_preconfigs_tester
+GitHub Zapret Domains Selector - https://github.com/Priler/zapret_domains_selector
+GitHub Zapret Discord - https://github.com/Flowseal/zapret-discord-youtube
+GitHub Discordfix Autoupdate - https://github.com/Priler/discordfix_autoupdate
+IPSets-For-Bypass-in-Russia - https://github.com/V3nilla/IPSets-For-Bypass-in-Russia/tree/main
+
+Остаются только .BAT файлы.
+Можете их открыть через Блокнот и посмотреть что внутри.
+На этом всё, в сборке больше ничего нет.
+
+И даже наш "Албанский вирус" это тоже Open Source - https://github.com/Priler/AlbanianVirus
+(добавлено по рофлу)
+
+
+
+##################################################
+### ТУТ ЕСТЬ ВИРУС? ПОЧЕМУ АНТИВИРУС РУГАЕТСЯ? ###
+##################################################
+
+Конкретно в данной сборке вирусов нет, и майнеров тоже.
+Но только если вы скачивали сборку именно с нашего сайта - https://howdyho.net/windows-software/discord-fix-snova-rabotayushij-diskord-vojs-zvonki
+За другие источники автор сборки не ручается.
+
+По поводу детекций.
+Вот скан Virus Total - https://www.virustotal.com/gui/file/33462952f2ba4c8c7ac8af4ae8f0e33edca580e706cc7e1388ebf485c7866c0b
+А вот объяснения разработчика Zapret по поводу этих "детекций" - https://github.com/bol-van/zapret/issues/393
+
+Если вкратце, это НЕ вирус.
+Некоторые антивирусы ругаются, так как драйвер WinDivert манипулирует пакетами.
+Без этого никак, тк в этом и заключается смысл данного фикса - он искажает сетевые DPI пакеты.
+
+Еще антивирусы могут ругаться на файл "Установить как службу в АВТОЗАПУСК.exe".
+Однако эта утилита также чистая и является Open Source проектом.
+Вот ссылка, можете скачать/собрать её оттуда, если вам так спокойнее - https://github.com/Priler/bat_autorunner
