@@ -312,26 +312,41 @@ namespace
 		return true;
 	}
 
+	bool LooksLikeHtml(const std::string& text)
+	{
+		const std::string trimmed = Trim(text);
+		return StartsWithIgnoreCase(trimmed, "<!doctype")
+			|| StartsWithIgnoreCase(trimmed, "<html")
+			|| StartsWithIgnoreCase(trimmed, "<head")
+			|| trimmed.find("<!doctype html") != std::string::npos;
+	}
+
 	bool FetchSubscriptionText(const std::string& url, std::string& outText, std::string& outError)
 	{
-		HINTERNET internet = InternetOpenA("AntiZapret", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
+		// Panels like Capybara return an install HTML page for unknown UAs
+		// (e.g. "AntiZapret"), and the real base64/share-link feed for VPN clients.
+		HINTERNET internet = InternetOpenA("v2rayN/6.40", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
 		if (!internet)
 		{
 			outError = "WinInet недоступен.";
 			return false;
 		}
 
-		DWORD timeoutMs = 15000;
+		DWORD timeoutMs = 20000;
 		InternetSetOptionA(internet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeoutMs, sizeof(timeoutMs));
 		InternetSetOptionA(internet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeoutMs, sizeof(timeoutMs));
 		InternetSetOptionA(internet, INTERNET_OPTION_SEND_TIMEOUT, &timeoutMs, sizeof(timeoutMs));
 
+		const char* headers =
+			"Accept: text/plain, text/yaml, application/json, */*\r\n"
+			"Accept-Language: en-US,en;q=0.9\r\n";
+
 		HINTERNET request = InternetOpenUrlA(
 			internet,
 			url.c_str(),
-			nullptr,
-			0,
-			INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_SECURE,
+			headers,
+			static_cast<DWORD>(-1),
+			INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_SECURE | INTERNET_FLAG_IGNORE_REDIRECT_TO_HTTPS,
 			0);
 
 		if (!request)
@@ -353,6 +368,15 @@ namespace
 		if (outText.empty())
 		{
 			outError = "Подписка пустая.";
+			return false;
+		}
+
+		if (LooksLikeHtml(outText))
+		{
+			outError =
+				"Сервер вернул HTML-страницу установки вместо списка серверов. "
+				"Скопируйте сырую ссылку подписки (иконка «Получить ссылку» на сайте), "
+				"а не страницу Happ/INCY.";
 			return false;
 		}
 
