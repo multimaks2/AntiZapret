@@ -159,7 +159,7 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 			m_appSettings->SetDiscordPresenceEnabled(!m_appSettings->GetDiscordPresenceEnabled());
 	}
 
-	if (UiCommon::SettingRow("Кнопка «Поделиться» в Discord", width, colors, m_discordShareButtonMix))
+	if (UiCommon::SettingRow("Кнопка «Импорт» в Discord", width, colors, m_discordShareButtonMix))
 	{
 		if (m_appSettings)
 			m_appSettings->SetDiscordShareButtonEnabled(!m_appSettings->GetDiscordShareButtonEnabled());

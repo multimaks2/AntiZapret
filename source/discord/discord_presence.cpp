@@ -10,7 +10,7 @@
 namespace
 {
 	constexpr char kApplicationId[] = "1526697979879231658";
-	constexpr char kShareButtonLabel[] = "Поделиться";
+	constexpr char kShareButtonLabel[] = "Импорт";
 	constexpr char kShareButtonUrl[] = "https://github.com/multimaks2/AntiZapret/releases/latest";
 	constexpr float kCallbackIntervalSec = 0.5f;
 	constexpr float kForceRefreshSec = 12.f;
