@@ -321,10 +321,116 @@ namespace
 			|| trimmed.find("<!doctype html") != std::string::npos;
 	}
 
+	bool LooksLikeUnsupportedStub(const std::string& text)
+	{
+		const std::string lower = ToLower(text);
+		return lower.find("не поддерживается") != std::string::npos
+			|| lower.find("%d0%bd%d0%b5%20%d0%bf%d0%be%d0%b4%d0%b4%d0%b5%d1%80%d0%b6%d0%b8%d0%b2%d0%b0%d0%b5%d1%82%d1%81%d1%8f") != std::string::npos
+			|| lower.find("not supported") != std::string::npos;
+	}
+
+	std::string SanitizeHwid(std::string value)
+	{
+		std::string out;
+		out.reserve(value.size());
+		for (char ch : value)
+		{
+			const unsigned char c = static_cast<unsigned char>(ch);
+			if ((c >= 'a' && c <= 'z')
+				|| (c >= 'A' && c <= 'Z')
+				|| (c >= '0' && c <= '9')
+				|| c == '='
+				|| c == '-')
+			{
+				out.push_back(static_cast<char>(c));
+			}
+		}
+		if (out.size() > 64)
+			out.resize(64);
+		return out;
+	}
+
+	std::string GetMachineGuid()
+	{
+		HKEY key = nullptr;
+		if (RegOpenKeyExW(
+				HKEY_LOCAL_MACHINE,
+				L"SOFTWARE\\Microsoft\\Cryptography",
+				0,
+				KEY_READ | KEY_WOW64_64KEY,
+				&key) != ERROR_SUCCESS)
+		{
+			return {};
+		}
+
+		wchar_t buffer[128] = {};
+		DWORD bufferBytes = sizeof(buffer);
+		DWORD type = 0;
+		const LONG status = RegQueryValueExW(
+			key,
+			L"MachineGuid",
+			nullptr,
+			&type,
+			reinterpret_cast<LPBYTE>(buffer),
+			&bufferBytes);
+		RegCloseKey(key);
+		if (status != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ))
+			return {};
+
+		char utf8[256] = {};
+		WideCharToMultiByte(CP_UTF8, 0, buffer, -1, utf8, static_cast<int>(sizeof(utf8)), nullptr, nullptr);
+		return SanitizeHwid(utf8);
+	}
+
+	std::string BuildSubscriptionHwid()
+	{
+		std::string hwid = GetMachineGuid();
+		if (hwid.size() >= 10)
+			return hwid;
+
+		wchar_t computerName[MAX_COMPUTERNAME_LENGTH + 1] = {};
+		DWORD computerNameLen = MAX_COMPUTERNAME_LENGTH + 1;
+		GetComputerNameW(computerName, &computerNameLen);
+
+		DWORD volumeSerial = 0;
+		GetVolumeInformationW(L"C:\\", nullptr, 0, &volumeSerial, nullptr, nullptr, nullptr, 0);
+
+		char fallback[96] = {};
+		snprintf(
+			fallback,
+			sizeof fallback,
+			"az-%08X-%04X",
+			volumeSerial,
+			static_cast<unsigned>(computerNameLen * 7919u + 0xA5A5u));
+		hwid = SanitizeHwid(fallback);
+		while (hwid.size() < 10)
+			hwid.push_back('0');
+		return hwid;
+	}
+
+	std::string BuildSubscriptionRequestHeaders()
+	{
+		const std::string hwid = BuildSubscriptionHwid();
+		char headers[512] = {};
+		snprintf(
+			headers,
+			sizeof headers,
+			"Accept: text/plain, text/yaml, application/json, */*\r\n"
+			"Accept-Language: en-US,en;q=0.9\r\n"
+			"x-hwid: %s\r\n"
+			"x-device-os: windows\r\n"
+			"x-ver-os: 10.0\r\n"
+			"x-device-model: AntiZapret\r\n",
+			hwid.c_str());
+		return headers;
+	}
+
 	bool FetchSubscriptionText(const std::string& url, std::string& outText, std::string& outError)
 	{
-		// Panels like Capybara return an install HTML page for unknown UAs
-		// (e.g. "AntiZapret"), and the real base64/share-link feed for VPN clients.
+		// Panels like Capybara/Remnawave:
+		// - unknown UA -> HTML install page
+		// - no x-hwid -> stub node "Данное приложение не поддерживается"
+		// - v2rayN UA + x-hwid -> base64 share-link feed
 		HINTERNET internet = InternetOpenA("v2rayN/6.40", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
 		if (!internet)
 		{
@@ -337,15 +443,13 @@ namespace
 		InternetSetOptionA(internet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeoutMs, sizeof(timeoutMs));
 		InternetSetOptionA(internet, INTERNET_OPTION_SEND_TIMEOUT, &timeoutMs, sizeof(timeoutMs));
 
-		const char* headers =
-			"Accept: text/plain, text/yaml, application/json, */*\r\n"
-			"Accept-Language: en-US,en;q=0.9\r\n";
+		const std::string headers = BuildSubscriptionRequestHeaders();
 
 		HINTERNET request = InternetOpenUrlA(
 			internet,
 			url.c_str(),
-			headers,
-			static_cast<DWORD>(-1),
+			headers.c_str(),
+			static_cast<DWORD>(headers.size()),
 			INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_SECURE | INTERNET_FLAG_IGNORE_REDIRECT_TO_HTTPS,
 			0);
 
@@ -383,6 +487,15 @@ namespace
 		std::string decoded;
 		if (Base64Decode(Trim(outText), decoded) && decoded.find("://") != std::string::npos)
 			outText = decoded;
+
+		if (LooksLikeUnsupportedStub(outText))
+		{
+			outError =
+				"Провайдер отклонил клиент (нужен HWID). "
+				"Обновите AntiZapret и повторите импорт; "
+				"если снова увидите «не поддерживается» — лимит устройств на стороне подписки.";
+			return false;
+		}
 
 		return true;
 	}
