@@ -287,14 +287,218 @@ namespace
 		return true;
 	}
 
+	bool BuildVlessProxyYaml(const VpnNode& node, const std::string& proxyName, std::string& outYaml, std::string& outError)
+	{
+		const std::string uri = node.originalUri;
+		const size_t schemePos = uri.find("://");
+		if (schemePos == std::string::npos)
+		{
+			outError = "Некорректная vless:// ссылка.";
+			return false;
+		}
+
+		std::string rest = uri.substr(schemePos + 3);
+		const size_t hashPos = rest.find('#');
+		if (hashPos != std::string::npos)
+			rest = rest.substr(0, hashPos);
+
+		std::string query;
+		const size_t queryPos = rest.find('?');
+		if (queryPos != std::string::npos)
+		{
+			query = rest.substr(queryPos + 1);
+			rest = rest.substr(0, queryPos);
+		}
+
+		const size_t atPos = rest.rfind('@');
+		if (atPos == std::string::npos)
+		{
+			outError = "Некорректная vless:// ссылка (нет uuid@host).";
+			return false;
+		}
+
+		const std::string uuid = rest.substr(0, atPos);
+		if (uuid.empty() || node.server.empty() || node.port <= 0)
+		{
+			outError = "vless://: пустой uuid/server/port.";
+			return false;
+		}
+
+		const std::string security = GetQueryParam(query, "security");
+		const std::string network = GetQueryParam(query, "type");
+		const std::string flow = GetQueryParam(query, "flow");
+		const std::string sni = GetQueryParam(query, "sni");
+		const std::string fp = GetQueryParam(query, "fp");
+		const std::string pbk = GetQueryParam(query, "pbk");
+		const std::string sid = GetQueryParam(query, "sid");
+		const std::string spx = GetQueryParam(query, "spx");
+		const std::string path = GetQueryParam(query, "path");
+		const std::string hostHeader = GetQueryParam(query, "host");
+		const std::string alpn = GetQueryParam(query, "alpn");
+		const std::string packetEncoding = GetQueryParam(query, "packetEncoding");
+		const std::string encryption = GetQueryParam(query, "encryption");
+
+		std::ostringstream yaml;
+		yaml << "  - name: " << YamlQuote(proxyName) << "\n";
+		yaml << "    type: vless\n";
+		yaml << "    server: " << YamlQuote(node.server) << "\n";
+		yaml << "    port: " << node.port << "\n";
+		yaml << "    uuid: " << YamlQuote(uuid) << "\n";
+		yaml << "    udp: true\n";
+		if (!encryption.empty() && encryption != "none")
+			yaml << "    encryption: " << YamlQuote(encryption) << "\n";
+		if (!flow.empty())
+			yaml << "    flow: " << YamlQuote(flow) << "\n";
+		if (!packetEncoding.empty())
+			yaml << "    packet-encoding: " << YamlQuote(packetEncoding) << "\n";
+		else if (!flow.empty())
+			yaml << "    packet-encoding: xudp\n";
+
+		const std::string net = network.empty() ? "tcp" : network;
+		yaml << "    network: " << YamlQuote(net) << "\n";
+
+		if (net == "ws")
+		{
+			yaml << "    ws-opts:\n";
+			yaml << "      path: " << YamlQuote(path.empty() ? "/" : path) << "\n";
+			if (!hostHeader.empty())
+				yaml << "      headers:\n        Host: " << YamlQuote(hostHeader) << "\n";
+		}
+		else if (net == "grpc")
+		{
+			yaml << "    grpc-opts:\n";
+			yaml << "      grpc-service-name: " << YamlQuote(path) << "\n";
+		}
+
+		const bool useTls = security == "tls" || security == "reality" || node.tls || node.port == 443;
+		if (useTls)
+		{
+			yaml << "    tls: true\n";
+			if (!sni.empty())
+				yaml << "    servername: " << YamlQuote(sni) << "\n";
+			else if (!hostHeader.empty())
+				yaml << "    servername: " << YamlQuote(hostHeader) << "\n";
+			if (!fp.empty())
+				yaml << "    client-fingerprint: " << YamlQuote(fp) << "\n";
+			if (!alpn.empty())
+			{
+				yaml << "    alpn:\n";
+				yaml << "      - " << YamlQuote(alpn) << "\n";
+			}
+			if (security == "reality")
+			{
+				yaml << "    reality-opts:\n";
+				if (!pbk.empty())
+					yaml << "      public-key: " << YamlQuote(pbk) << "\n";
+				if (!sid.empty())
+					yaml << "      short-id: " << YamlQuote(sid) << "\n";
+			}
+			else
+			{
+				yaml << "    skip-cert-verify: true\n";
+			}
+		}
+
+		(void)spx;
+		outYaml = yaml.str();
+		return true;
+	}
+
+	bool BuildHysteria2ProxyYaml(const VpnNode& node, const std::string& proxyName, std::string& outYaml, std::string& outError)
+	{
+		const std::string uri = node.originalUri;
+		const size_t schemePos = uri.find("://");
+		if (schemePos == std::string::npos)
+		{
+			outError = "Некорректная hysteria2:// ссылка.";
+			return false;
+		}
+
+		std::string rest = uri.substr(schemePos + 3);
+		const size_t hashPos = rest.find('#');
+		if (hashPos != std::string::npos)
+			rest = rest.substr(0, hashPos);
+
+		std::string query;
+		const size_t queryPos = rest.find('?');
+		if (queryPos != std::string::npos)
+		{
+			query = rest.substr(queryPos + 1);
+			rest = rest.substr(0, queryPos);
+		}
+
+		const size_t atPos = rest.rfind('@');
+		if (atPos == std::string::npos)
+		{
+			outError = "Некорректная hysteria2:// ссылка (нет password@host).";
+			return false;
+		}
+
+		std::string password = rest.substr(0, atPos);
+		// Url-decode password (import may encode it).
+		{
+			std::string decoded;
+			decoded.reserve(password.size());
+			for (size_t i = 0; i < password.size(); ++i)
+			{
+				if (password[i] == '%' && i + 2 < password.size())
+				{
+					const char hex[] = { password[i + 1], password[i + 2], '\0' };
+					decoded.push_back(static_cast<char>(strtoul(hex, nullptr, 16)));
+					i += 2;
+				}
+				else if (password[i] == '+')
+					decoded.push_back(' ');
+				else
+					decoded.push_back(password[i]);
+			}
+			password = decoded;
+		}
+
+		if (password.empty() || node.server.empty() || node.port <= 0)
+		{
+			outError = "hysteria2://: пустой password/server/port.";
+			return false;
+		}
+
+		const std::string sni = GetQueryParam(query, "sni");
+		const std::string fp = GetQueryParam(query, "fp");
+		const std::string obfs = GetQueryParam(query, "obfs");
+		const std::string obfsPassword = GetQueryParam(query, "obfs-password");
+
+		std::ostringstream yaml;
+		yaml << "  - name: " << YamlQuote(proxyName) << "\n";
+		yaml << "    type: hysteria2\n";
+		yaml << "    server: " << YamlQuote(node.server) << "\n";
+		yaml << "    port: " << node.port << "\n";
+		yaml << "    password: " << YamlQuote(password) << "\n";
+		if (!sni.empty())
+			yaml << "    sni: " << YamlQuote(sni) << "\n";
+		if (!fp.empty())
+			yaml << "    client-fingerprint: " << YamlQuote(fp) << "\n";
+		if (!obfs.empty())
+			yaml << "    obfs: " << YamlQuote(obfs) << "\n";
+		if (!obfsPassword.empty())
+			yaml << "    obfs-password: " << YamlQuote(obfsPassword) << "\n";
+		yaml << "    skip-cert-verify: true\n";
+
+		outYaml = yaml.str();
+		return true;
+	}
+
 	bool BuildProxyYaml(const VpnNode& node, const std::string& proxyName, std::string& outYaml, std::string& outError)
 	{
 		if (node.scheme == "trojan")
 			return BuildTrojanProxyYaml(node, proxyName, outYaml, outError);
 		if (node.scheme == "vmess")
 			return BuildVmessProxyYaml(node, proxyName, outYaml, outError);
+		if (node.scheme == "vless")
+			return BuildVlessProxyYaml(node, proxyName, outYaml, outError);
+		if (node.scheme == "hysteria2")
+			return BuildHysteria2ProxyYaml(node, proxyName, outYaml, outError);
 
-		outError = "Пока поддерживаются только trojan:// и vmess:// для запуска VPN.";
+		outError = "Неподдерживаемый протокол для запуска VPN: " + node.scheme
+			+ ". Поддерживаются trojan, vmess, vless, hysteria2.";
 		return false;
 	}
 

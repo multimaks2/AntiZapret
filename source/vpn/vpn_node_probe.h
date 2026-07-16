@@ -8,11 +8,22 @@
 
 namespace VpnNodeProbe
 {
-	// TCP connect RTT to server:port (v2rayN Tcping-style). -1 on failure.
-	int TcpPingMs(const std::string& host, int port, int timeoutMs = 4000);
+	// TCP connect RTT to server:port (v2rayN Tcping). Default timeout 5s. -1 on failure.
+	int TcpPingMs(const std::string& host, int port, int timeoutMs = 5000);
 
-	// Download via HTTP proxy (mihomo mixed-port). Returns Mbps or -1.
-	float MeasureDownloadMbps(
+	// Resolve hostname to IPv4 address list (comma-separated). Uses DoH to avoid
+	// Clash/mihomo fake-ip (198.18.0.0/15) from system DNS. Empty on failure.
+	std::string ResolveHostIpv4(const std::string& host);
+
+	// v2rayN Realping: HTTP GET via local HTTP/SOCKS mixed-port. Best of 2 samples. -1 on failure.
+	int HttpRealPingMs(
+		const std::string& proxyHost,
+		int proxyPort,
+		const char* url = "https://www.google.com/generate_204",
+		int timeoutMs = 9000);
+
+	// Peak download speed in MB/s via HTTP proxy (v2rayN Speedtest-style). -1 on failure.
+	float MeasureDownloadPeakMBps(
 		const std::string& proxyHost,
 		int proxyPort,
 		const char* url,

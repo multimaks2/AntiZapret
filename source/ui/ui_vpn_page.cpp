@@ -1,5 +1,6 @@
 #include "ui/ui_vpn_page.h"
 
+#include "app/app_log.h"
 #include "gfx/font_manager.h"
 #include "gfx/theme_manager.h"
 #include "ui/ui_common.h"
@@ -17,9 +18,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace
 {
@@ -73,6 +78,16 @@ namespace
 		return buffer;
 	}
 
+	ImVec4 LerpVec4(const ImVec4& a, const ImVec4& b, float t)
+	{
+		t = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
+		return ImVec4(
+			a.x + (b.x - a.x) * t,
+			a.y + (b.y - a.y) * t,
+			a.z + (b.z - a.z) * t,
+			a.w + (b.w - a.w) * t);
+	}
+
 	bool MatchesSearch(const VpnNode& node, const char* query)
 	{
 		if (!query || !query[0])
@@ -98,9 +113,72 @@ namespace
 		return UiCommon::IconToolButton(fonts, iconCode, tooltip, tooltip, colors, ImVec2(30.f, 30.f), enabled);
 	}
 
+	bool HeaderIconButton(
+		FontManager& fonts,
+		uint32_t iconCode,
+		const char* id,
+		const char* tooltip,
+		const UiThemeColors& colors,
+		ImVec2 size,
+		bool enabled = true)
+	{
+		if (!enabled)
+			ImGui::BeginDisabled();
+
+		ImGui::PushID(id);
+		// Same fill as CollapsingHeader strip (navActive).
+		ImGui::PushStyleColor(ImGuiCol_Button, colors.navActive);
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors.navHover);
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, colors.navActive);
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.f, 0.f));
+
+		const bool pressed = ImGui::Button("##hdr_icon", size);
+
+		wchar_t wide[] = { static_cast<wchar_t>(iconCode), 0 };
+		char utf8[8] = {};
+		const int len = WideCharToMultiByte(CP_UTF8, 0, wide, 1, utf8, static_cast<int>(sizeof(utf8)), nullptr, nullptr);
+		if (len > 0)
+		{
+			ImFont* iconFont = fonts.GetIconFont();
+			if (!iconFont)
+				iconFont = ImGui::GetFont();
+
+			const float iconPx = (std::max)(10.f, size.y * 0.52f);
+			const ImVec2 glyphSize = iconFont->CalcTextSizeA(iconPx, FLT_MAX, 0.f, utf8);
+			const ImVec2 rectMin = ImGui::GetItemRectMin();
+			const ImVec2 rectMax = ImGui::GetItemRectMax();
+			// Segoe MDL2 glyphs sit optically high-left in their metrics box — nudge to true center.
+			const ImVec2 glyphPos(
+				rectMin.x + ((rectMax.x - rectMin.x) - glyphSize.x) * 0.5f + iconPx * 0.08f,
+				rectMin.y + ((rectMax.y - rectMin.y) - glyphSize.y) * 0.5f + iconPx * 0.10f);
+			const ImU32 glyphColor = ImGui::GetColorU32(
+				enabled ? colors.textPrimary : colors.textMuted);
+			ImGui::GetWindowDrawList()->AddText(iconFont, iconPx, glyphPos, glyphColor, utf8);
+		}
+
+		if (tooltip && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("%s", tooltip);
+
+		ImGui::PopStyleVar();
+		ImGui::PopStyleColor(3);
+		ImGui::PopID();
+
+		if (!enabled)
+			ImGui::EndDisabled();
+		return pressed;
+	}
+
+	const char* DisplayGroupName(const std::string& groupName)
+	{
+		if (groupName.empty() || groupName == "Imported")
+			return "Моё импортированное";
+		return groupName.c_str();
+	}
+
 	void DrawCountryFlagCell(const std::string& countryCode, float rowContentH)
 	{
 		const std::string normalized = countryCode.size() == 2 ? countryCode : std::string {};
+		const std::string countryName = normalized.empty() ? std::string {} : VpnGeo::CountryCodeToName(normalized);
 		const ImTextureID flagTexture = VpnFlagIcons::Instance().GetFlagTexture(countryCode);
 		if (flagTexture != 0)
 		{
@@ -114,6 +192,8 @@ namespace
 			if (offsetX > 0.f)
 				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
 			ImGui::Image(ImTextureRef(flagTexture), drawSize);
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !countryName.empty())
+				ImGui::SetTooltip("%s", countryName.c_str());
 			return;
 		}
 
@@ -123,6 +203,104 @@ namespace
 		UiCommon::TableTextAligned(
 			normalized.empty() ? "—" : normalized.c_str(),
 			UiCommon::UiTableAlign::Center);
+		if (!normalized.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !countryName.empty())
+			ImGui::SetTooltip("%s", countryName.c_str());
+	}
+
+	std::mutex g_dnsMutex;
+	std::unordered_map<std::string, std::string> g_dnsCache;
+	std::unordered_set<std::string> g_dnsInFlight;
+
+	bool IsHostnameForTooltip(const std::string& server)
+	{
+		if (server.empty())
+			return false;
+		if (VpnGeo::IsPublicIp(server))
+			return false;
+		// Skip raw IPv6 literals.
+		if (server.find(':') != std::string::npos)
+			return false;
+		return true;
+	}
+
+	void RequestHostIpResolve(const std::string& host)
+	{
+		{
+			std::lock_guard<std::mutex> lock(g_dnsMutex);
+			if (g_dnsCache.count(host) > 0 || g_dnsInFlight.count(host) > 0)
+				return;
+			g_dnsInFlight.insert(host);
+		}
+
+		std::thread([host]()
+		{
+			const std::string resolvedIp = VpnNodeProbe::ResolveHostIpv4(host);
+			std::lock_guard<std::mutex> lock(g_dnsMutex);
+			g_dnsCache[host] = resolvedIp; // empty string = failed
+			g_dnsInFlight.erase(host);
+		}).detach();
+	}
+
+	void DrawServerHostCell(const std::string& server)
+	{
+		ImGui::TextUnformatted(server.c_str());
+		if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) || !IsHostnameForTooltip(server))
+			return;
+
+		RequestHostIpResolve(server);
+
+		std::string tip;
+		bool inFlight = false;
+		{
+			std::lock_guard<std::mutex> lock(g_dnsMutex);
+			const auto it = g_dnsCache.find(server);
+			if (it != g_dnsCache.end())
+			{
+				if (it->second.empty())
+					tip = "IP: не удалось определить";
+				else
+					tip = "IP: " + it->second;
+			}
+			else
+			{
+				inFlight = g_dnsInFlight.count(server) > 0;
+			}
+		}
+
+	if (tip.empty())
+		tip = inFlight ? "IP: резолв…" : "IP: …";
+		ImGui::SetTooltip("%s", tip.c_str());
+	}
+
+	std::string FormatSubscriptionRemaining(long long expireUnix)
+	{
+		if (expireUnix <= 0)
+			return {};
+
+		const long long now = static_cast<long long>(std::time(nullptr));
+		const long long left = expireUnix - now;
+		char buf[64] = {};
+		if (left <= 0)
+		{
+			snprintf(buf, sizeof buf, "истекла");
+			return buf;
+		}
+
+		const long long days = left / 86400;
+		if (days >= 1)
+		{
+			snprintf(buf, sizeof buf, "осталось %lld дн.", days);
+			return buf;
+		}
+		const long long hours = left / 3600;
+		if (hours >= 1)
+		{
+			snprintf(buf, sizeof buf, "осталось %lld ч.", hours);
+			return buf;
+		}
+		const long long mins = (std::max)(1LL, left / 60);
+		snprintf(buf, sizeof buf, "осталось %lld мин.", mins);
+		return buf;
 	}
 
 	bool DrawServersPageHeader(
@@ -229,6 +407,17 @@ void UiVpnPage::EnsureStoreLoaded()
 	m_workMode = settings.workMode;
 	m_fixDiscord = settings.fixDiscord;
 
+	bool normalized = false;
+	for (VpnNode& node : m_nodes)
+	{
+		const std::string beforeName = node.name;
+		const std::string beforeGroup = node.group;
+		const std::string beforeCountry = node.country;
+		VpnImport::NormalizeNodeDisplay(node);
+		if (node.name != beforeName || node.group != beforeGroup || node.country != beforeCountry)
+			normalized = true;
+	}
+
 	m_activeIndex = FindNodeIndexByUri(settings.activeUri);
 	if (m_activeIndex < 0 && !m_nodes.empty())
 		m_activeIndex = 0;
@@ -238,6 +427,9 @@ void UiVpnPage::EnsureStoreLoaded()
 	m_store.LoadSettings(m_lastAppliedSettings);
 	m_lastAppliedSettings.workMode = m_workMode;
 	m_storeLoaded = true;
+
+	if (normalized)
+		SaveStore();
 }
 
 VpnStoreSettings UiVpnPage::BuildStoreSettings() const
@@ -248,6 +440,17 @@ VpnStoreSettings UiVpnPage::BuildStoreSettings() const
 	settings.fixDiscord = m_fixDiscord;
 	if (m_activeIndex >= 0 && m_activeIndex < static_cast<int>(m_nodes.size()))
 		settings.activeUri = m_nodes[static_cast<size_t>(m_activeIndex)].originalUri;
+	if (settings.lastSubscriptionUrl.empty())
+	{
+		for (const VpnNode& node : m_nodes)
+		{
+			if (!node.sourceUrl.empty())
+			{
+				settings.lastSubscriptionUrl = node.sourceUrl;
+				break;
+			}
+		}
+	}
 	return settings;
 }
 
@@ -389,17 +592,143 @@ void UiVpnPage::ApplyPendingImportIfAny()
 		m_pendingImport = {};
 	}
 
-	ApplyImportResult(std::move(pending.nodes), pending.duplicatesSkipped, std::move(pending.errors));
+	if (!pending.refreshSourceUrl.empty())
+	{
+		ApplyRefreshResult(
+			std::move(pending.nodes),
+			std::move(pending.errors),
+			pending.refreshSourceUrl,
+			pending.subscriptionExpireUnix);
+	}
+	else
+	{
+		ApplyImportResult(
+			std::move(pending.nodes),
+			pending.duplicatesSkipped,
+			std::move(pending.errors),
+			pending.subscriptionExpireUnix);
+	}
+}
+
+namespace
+{
+	bool NodeFromSubscriptionUrl(const VpnNode& node, const std::string& sourceUrl)
+	{
+		if (!sourceUrl.empty() && node.sourceUrl == sourceUrl)
+			return true;
+		return false;
+	}
+
+	bool NodeLooksLikeCapybaraGroup(const VpnNode& node)
+	{
+		const std::string group = node.group;
+		if (group.find("Capybara") != std::string::npos || group.find("Copybara") != std::string::npos)
+			return true;
+		if (node.server.find("capynode.") != std::string::npos
+			|| node.server.find("capycore.") != std::string::npos)
+			return true;
+		if (node.name.find("ОБХОД") != std::string::npos || node.name.find("обход") != std::string::npos)
+			return true;
+		return false;
+	}
+}
+
+void UiVpnPage::ApplyRefreshResult(
+	std::vector<VpnNode> importedNodes,
+	std::vector<std::string> errors,
+	const std::string& sourceUrl,
+	long long subscriptionExpireUnix)
+{
+	for (VpnNode& node : importedNodes)
+		VpnImport::NormalizeNodeDisplay(node);
+
+	const std::string activeUri =
+		(m_activeIndex >= 0 && m_activeIndex < static_cast<int>(m_nodes.size()))
+			? m_nodes[static_cast<size_t>(m_activeIndex)].originalUri
+			: std::string {};
+
+	std::unordered_map<std::string, VpnNode> previousByUri;
+	const bool refreshCapybara = !importedNodes.empty()
+		&& (importedNodes.front().group.find("Capybara") != std::string::npos
+			|| importedNodes.front().server.find("capynode.") != std::string::npos
+			|| importedNodes.front().server.find("capycore.") != std::string::npos);
+
+	for (const VpnNode& node : m_nodes)
+	{
+		if (NodeFromSubscriptionUrl(node, sourceUrl) || (refreshCapybara && NodeLooksLikeCapybaraGroup(node)))
+			previousByUri[node.originalUri] = node;
+	}
+
+	m_nodes.erase(
+		std::remove_if(
+			m_nodes.begin(),
+			m_nodes.end(),
+			[&](const VpnNode& node)
+			{
+				return NodeFromSubscriptionUrl(node, sourceUrl)
+					|| (refreshCapybara && NodeLooksLikeCapybaraGroup(node));
+			}),
+		m_nodes.end());
+
+	size_t addedCount = 0;
+	for (VpnNode& node : importedNodes)
+	{
+		const auto it = previousByUri.find(node.originalUri);
+		if (it != previousByUri.end())
+		{
+			node.pingMs = it->second.pingMs;
+			node.speedMbps = it->second.speedMbps;
+			node.alive = it->second.alive;
+			node.lastUsed = it->second.lastUsed;
+			node.pingHistory = it->second.pingHistory;
+			node.speedHistory = it->second.speedHistory;
+			if (node.country.empty())
+				node.country = it->second.country;
+		}
+		node.sourceUrl = sourceUrl;
+		m_nodes.push_back(std::move(node));
+		++addedCount;
+	}
+
+	m_activeIndex = FindNodeIndexByUri(activeUri);
+	if (m_activeIndex < 0 && !m_nodes.empty())
+		m_activeIndex = 0;
+	m_selected = -1;
+	{
+		VpnStoreSettings settings = BuildStoreSettings();
+		settings.lastSubscriptionUrl = sourceUrl;
+		if (subscriptionExpireUnix > 0)
+			settings.subscriptionExpireUnix = subscriptionExpireUnix;
+		m_store.Save(m_nodes, &settings);
+	}
+
+	char buffer[256] = {};
+	if (!errors.empty() && addedCount == 0)
+		snprintf(buffer, sizeof buffer, "Обновление подписки не удалось: %s", errors.front().c_str());
+	else
+		snprintf(buffer, sizeof buffer, "Подписка обновлена: серверов %zu", addedCount);
+
+	{
+		std::lock_guard<std::mutex> lock(m_importMutex);
+		m_importStatus = buffer;
+		m_importRunning.store(false);
+	}
+	AppLog::Instance().Append(LogSource::VpnRouting, std::string("Импорт (UI): ") + buffer);
 }
 
 void UiVpnPage::ApplyImportResult(
 	std::vector<VpnNode> importedNodes,
 	int duplicatesSkipped,
-	std::vector<std::string> errors)
+	std::vector<std::string> errors,
+	long long subscriptionExpireUnix)
 {
 	size_t addedCount = 0;
+	std::string importedSourceUrl;
 	for (VpnNode& node : importedNodes)
 	{
+		VpnImport::NormalizeNodeDisplay(node);
+		if (importedSourceUrl.empty() && !node.sourceUrl.empty())
+			importedSourceUrl = node.sourceUrl;
 		const bool alreadyExists = std::any_of(
 			m_nodes.begin(),
 			m_nodes.end(),
@@ -416,7 +745,19 @@ void UiVpnPage::ApplyImportResult(
 	if (m_activeIndex < 0 && !m_nodes.empty())
 		m_activeIndex = 0;
 
-	SaveStore();
+	if (!importedSourceUrl.empty() || subscriptionExpireUnix > 0)
+	{
+		VpnStoreSettings settings = BuildStoreSettings();
+		if (!importedSourceUrl.empty())
+			settings.lastSubscriptionUrl = importedSourceUrl;
+		if (subscriptionExpireUnix > 0)
+			settings.subscriptionExpireUnix = subscriptionExpireUnix;
+		m_store.Save(m_nodes, &settings);
+	}
+	else
+	{
+		SaveStore();
+	}
 
 	char buffer[256] = {};
 	if (addedCount > 0)
@@ -451,6 +792,12 @@ void UiVpnPage::ApplyImportResult(
 	std::lock_guard<std::mutex> lock(m_importMutex);
 	m_importStatus = buffer;
 	m_importRunning.store(false);
+	AppLog::Instance().Append(LogSource::VpnRouting, std::string("Импорт (UI): ") + buffer);
+	for (const std::string& error : errors)
+	{
+		if (!error.empty())
+			AppLog::Instance().Append(LogSource::VpnRouting, std::string("Импорт ошибка: ") + error);
+	}
 }
 
 void UiVpnPage::StartImportFromClipboard()
@@ -463,6 +810,7 @@ void UiVpnPage::StartImportFromClipboard()
 	{
 		std::lock_guard<std::mutex> lock(m_importMutex);
 		m_importStatus = "Буфер обмена пуст или недоступен.";
+		AppLog::Instance().Append(LogSource::VpnRouting, "Импорт: буфер обмена пуст или недоступен.");
 		return;
 	}
 
@@ -471,6 +819,9 @@ void UiVpnPage::StartImportFromClipboard()
 		m_importStatus = "Импорт из буфера обмена...";
 	}
 	m_importRunning.store(true);
+	AppLog::Instance().Append(
+		LogSource::VpnRouting,
+		"Импорт: запуск из буфера обмена (" + std::to_string(clipboardText.size()) + " байт).");
 
 	const int nextNodeIndex = static_cast<int>(m_nodes.size()) + 1;
 	std::thread([this, clipboardText, nextNodeIndex]()
@@ -481,6 +832,60 @@ void UiVpnPage::StartImportFromClipboard()
 			m_pendingImport.nodes = std::move(result.nodes);
 			m_pendingImport.duplicatesSkipped = result.duplicatesSkipped;
 			m_pendingImport.errors = std::move(result.errors);
+			m_pendingImport.subscriptionExpireUnix = result.subscriptionExpireUnix;
+			m_pendingImport.ready = true;
+		}
+	}).detach();
+}
+
+void UiVpnPage::StartRefreshSubscriptions(const std::string& preferredSourceUrl)
+{
+	if (m_importRunning.load())
+		return;
+
+	std::string sourceUrl = preferredSourceUrl;
+	if (sourceUrl.empty())
+	{
+		for (const VpnNode& node : m_nodes)
+		{
+			if (!node.sourceUrl.empty())
+			{
+				sourceUrl = node.sourceUrl;
+				break;
+			}
+		}
+	}
+	if (sourceUrl.empty())
+	{
+		VpnStoreSettings settings;
+		m_store.LoadSettings(settings);
+		sourceUrl = settings.lastSubscriptionUrl;
+	}
+	if (sourceUrl.empty())
+	{
+		std::lock_guard<std::mutex> lock(m_importMutex);
+		m_importStatus = "Нет сохранённой ссылки подписки. Сначала импортируйте URL.";
+		return;
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(m_importMutex);
+		m_importStatus = "Обновление подписки...";
+	}
+	m_importRunning.store(true);
+	AppLog::Instance().Append(LogSource::VpnRouting, "Импорт: обновление подписки " + sourceUrl);
+
+	const int nextNodeIndex = 1;
+	std::thread([this, sourceUrl, nextNodeIndex]()
+	{
+		const VpnImportResult result = VpnImport::ImportFromText(sourceUrl, nextNodeIndex);
+		{
+			std::lock_guard<std::mutex> lock(m_importMutex);
+			m_pendingImport.nodes = std::move(result.nodes);
+			m_pendingImport.duplicatesSkipped = result.duplicatesSkipped;
+			m_pendingImport.errors = std::move(result.errors);
+			m_pendingImport.refreshSourceUrl = sourceUrl;
+			m_pendingImport.subscriptionExpireUnix = result.subscriptionExpireUnix;
 			m_pendingImport.ready = true;
 		}
 	}).detach();
@@ -514,7 +919,7 @@ void UiVpnPage::PushSpeedHistory(VpnNode& node, float speedMbps)
 	else
 	{
 		char buf[32];
-		snprintf(buf, sizeof buf, "%.2f Mbps", speedMbps);
+		snprintf(buf, sizeof buf, "%.1f MB/s", speedMbps);
 		entry.value = buf;
 	}
 	node.speedHistory.push_back(entry);
@@ -546,12 +951,14 @@ void UiVpnPage::ApplyPendingProbeResults()
 			node.pingMs = item.pingMs;
 			node.alive = item.pingMs >= 0 ? 1 : 0;
 			PushPingHistory(node, item.pingMs);
+			m_probeFlash[item.nodeIndex] = 1.f;
 			changed = true;
 		}
 		if (item.speedMbps > -1.5f)
 		{
 			node.speedMbps = item.speedMbps;
 			PushSpeedHistory(node, item.speedMbps);
+			m_probeFlash[item.nodeIndex] = 1.f;
 			changed = true;
 		}
 	}
@@ -583,34 +990,119 @@ void UiVpnPage::StartPing(bool selectedOnly)
 		for (int i = 0; i < static_cast<int>(m_nodes.size()); ++i)
 			indices.push_back(i);
 	}
+	StartPingIndices(std::move(indices));
+}
 
-	std::vector<std::pair<int, std::pair<std::string, int>>> targets;
-	targets.reserve(indices.size());
-	for (int index : indices)
+void UiVpnPage::StartPingIndices(std::vector<int> indices)
+{
+	if (m_probeRunning.load() || indices.empty())
+		return;
+
+	const bool useRealPing =
+		m_vpnEnabled
+		&& m_manager
+		&& m_manager->IsRunning();
+
+	if (!useRealPing)
 	{
-		if (index < 0 || index >= static_cast<int>(m_nodes.size()))
-			continue;
-		const VpnNode& node = m_nodes[static_cast<size_t>(index)];
-		targets.push_back({ index, { node.server, node.port } });
+		// VPN off: direct Tcping to real IP (DoH). With TUN on this path is unreliable.
+		std::vector<std::pair<int, std::pair<std::string, int>>> targets;
+		targets.reserve(indices.size());
+		for (int index : indices)
+		{
+			if (index < 0 || index >= static_cast<int>(m_nodes.size()))
+				continue;
+			const VpnNode& node = m_nodes[static_cast<size_t>(index)];
+			targets.push_back({ index, { node.server, node.port } });
+		}
+		if (targets.empty())
+			return;
+
+		m_probeCancel.store(false);
+		m_probeRunning.store(true);
+		SetToolbarStatus(targets.size() == 1 ? "Tcping..." : "Tcping группы...");
+
+		std::thread([this, targets]()
+		{
+			int ok = 0;
+			for (const auto& target : targets)
+			{
+				if (m_probeCancel.load())
+					break;
+				const int pingMs = VpnNodeProbe::TcpPingMs(target.second.first, target.second.second, 5000);
+				if (pingMs >= 0)
+					++ok;
+
+				PendingProbeResult result;
+				result.nodeIndex = target.first;
+				result.pingMs = pingMs;
+				result.speedMbps = -2.f;
+				result.ready = true;
+				{
+					std::lock_guard<std::mutex> lock(m_probeMutex);
+					m_pendingProbe.push_back(result);
+				}
+			}
+
+			char status[96];
+			snprintf(status, sizeof status, "Tcping завершён: %d/%zu OK", ok, targets.size());
+			SetToolbarStatus(status);
+			m_probeRunning.store(false);
+		}).detach();
+		return;
 	}
+
+	// v2rayN Realping: switch node → HTTP GET via mixed-port → best of 2.
+	const std::vector<VpnNode> nodesSnapshot = m_nodes;
+	const VpnStoreSettings settings = BuildStoreSettings();
+	const int originalActive = m_activeIndex;
 
 	m_probeCancel.store(false);
 	m_probeRunning.store(true);
-	SetToolbarStatus(selectedOnly ? "Пинг выбранного сервера..." : "Пинг всех серверов...");
+	SetToolbarStatus(
+		indices.size() == 1 ? "Реальная задержка..." : "Реальная задержка группы...");
 
-	std::thread([this, targets]()
+	std::thread([this, indices, nodesSnapshot, settings, originalActive]()
 	{
+		constexpr const char* kPingUrl = "https://www.google.com/generate_204";
 		int ok = 0;
-		for (const auto& target : targets)
+
+		for (size_t n = 0; n < indices.size(); ++n)
 		{
 			if (m_probeCancel.load())
 				break;
-			const int pingMs = VpnNodeProbe::TcpPingMs(target.second.first, target.second.second, 4000);
-			if (pingMs >= 0)
-				++ok;
+
+			const int index = indices[n];
+			if (index < 0 || index >= static_cast<int>(nodesSnapshot.size()))
+				continue;
+
+			const VpnNode& node = nodesSnapshot[static_cast<size_t>(index)];
+			char status[160];
+			snprintf(
+				status,
+				sizeof status,
+				"Задержка [%zu/%zu]: %s...",
+				n + 1,
+				indices.size(),
+				node.name.c_str());
+			SetToolbarStatus(status);
+
+			int pingMs = -1;
+			if (m_manager->Reload(nodesSnapshot, index, settings))
+			{
+				Sleep(1000);
+				if (!m_probeCancel.load())
+				{
+					pingMs = VpnNodeProbe::HttpRealPingMs(
+						"127.0.0.1",
+						VpnManager::kMixedPort,
+						kPingUrl,
+						9000);
+				}
+			}
 
 			PendingProbeResult result;
-			result.nodeIndex = target.first;
+			result.nodeIndex = index;
 			result.pingMs = pingMs;
 			result.speedMbps = -2.f;
 			result.ready = true;
@@ -618,11 +1110,24 @@ void UiVpnPage::StartPing(bool selectedOnly)
 				std::lock_guard<std::mutex> lock(m_probeMutex);
 				m_pendingProbe.push_back(result);
 			}
+
+			if (pingMs >= 0)
+			{
+				++ok;
+				snprintf(status, sizeof status, "%s: %d ms", node.name.c_str(), pingMs);
+				SetToolbarStatus(status);
+			}
 		}
 
-		char status[96];
-		snprintf(status, sizeof status, "Пинг завершён: %d/%zu OK", ok, targets.size());
-		SetToolbarStatus(status);
+		if (originalActive >= 0 && originalActive < static_cast<int>(nodesSnapshot.size()))
+			m_manager->Reload(nodesSnapshot, originalActive, settings);
+
+		char done[96];
+		if (m_probeCancel.load())
+			snprintf(done, sizeof done, "Задержка остановлена.");
+		else
+			snprintf(done, sizeof done, "Реальная задержка: %d/%zu OK", ok, indices.size());
+		SetToolbarStatus(done);
 		m_probeRunning.store(false);
 	}).detach();
 }
@@ -636,69 +1141,115 @@ void UiVpnPage::StartSpeedTest(bool selectedOnly)
 		SetToolbarStatus("Для теста скорости включите VPN.");
 		return;
 	}
-	if (!HasActiveServer())
-	{
-		SetToolbarStatus("Нет активного сервера для теста скорости.");
-		return;
-	}
 
 	std::vector<int> indices;
 	if (selectedOnly)
 	{
 		if (m_selected < 0 || m_selected >= static_cast<int>(m_nodes.size()))
 			return;
-		if (m_selected != m_activeIndex)
-		{
-			SetToolbarStatus("Тест скорости доступен для активного сервера. Сначала сделайте его активным.");
-			return;
-		}
 		indices.push_back(m_selected);
 	}
 	else
 	{
+		if (!HasActiveServer())
+		{
+			SetToolbarStatus("Нет активного сервера для теста скорости.");
+			return;
+		}
 		indices.push_back(m_activeIndex);
 	}
+	StartSpeedTestIndices(std::move(indices));
+}
+
+void UiVpnPage::StartSpeedTestIndices(std::vector<int> indices)
+{
+	if (m_probeRunning.load() || indices.empty())
+		return;
+	if (!m_vpnEnabled || !m_manager || !m_manager->IsRunning())
+	{
+		SetToolbarStatus("Для теста скорости включите VPN.");
+		return;
+	}
+
+	const std::vector<VpnNode> nodesSnapshot = m_nodes;
+	const VpnStoreSettings settings = BuildStoreSettings();
+	const int originalActive = m_activeIndex;
 
 	m_probeCancel.store(false);
 	m_probeRunning.store(true);
 	m_speedTestRunning = true;
-	SetToolbarStatus("Тест скорости через mixed-port...");
+	SetToolbarStatus(
+		indices.size() == 1 ? "Тест скорости..." : "Тест скорости группы...");
 
-	std::thread([this, indices]()
+	std::thread([this, indices, nodesSnapshot, settings, originalActive]()
 	{
-		constexpr const char* kUrl = "https://speed.cloudflare.com/__down?bytes=10000000";
-		for (int index : indices)
+		// v2rayN: per-node proxy switch → settle → Cachefly peak MB/s.
+		constexpr const char* kUrl = "https://cachefly.cachefly.net/50mb.test";
+		constexpr int kTimeoutMs = 10000;
+		int ok = 0;
+
+		for (size_t n = 0; n < indices.size(); ++n)
 		{
 			if (m_probeCancel.load())
 				break;
-			const float mbps = VpnNodeProbe::MeasureDownloadMbps(
-				"127.0.0.1",
-				VpnManager::kMixedPort,
-				kUrl,
-				15000,
-				&m_probeCancel);
+
+			const int index = indices[n];
+			if (index < 0 || index >= static_cast<int>(nodesSnapshot.size()))
+				continue;
+
+			const VpnNode& node = nodesSnapshot[static_cast<size_t>(index)];
+			char status[160];
+			snprintf(
+				status,
+				sizeof status,
+				"Скорость [%zu/%zu]: %s...",
+				n + 1,
+				indices.size(),
+				node.name.c_str());
+			SetToolbarStatus(status);
+
+			float peakMBps = -1.f;
+			if (m_manager->Reload(nodesSnapshot, index, settings))
+			{
+				Sleep(1000);
+				if (!m_probeCancel.load())
+				{
+					peakMBps = VpnNodeProbe::MeasureDownloadPeakMBps(
+						"127.0.0.1",
+						VpnManager::kMixedPort,
+						kUrl,
+						kTimeoutMs,
+						&m_probeCancel);
+				}
+			}
 
 			PendingProbeResult result;
 			result.nodeIndex = index;
 			result.pingMs = -2;
-			result.speedMbps = mbps;
+			result.speedMbps = peakMBps;
 			result.ready = true;
 			{
 				std::lock_guard<std::mutex> lock(m_probeMutex);
 				m_pendingProbe.push_back(result);
 			}
 
-			if (mbps >= 0.f)
+			if (peakMBps >= 0.f)
 			{
-				char status[96];
-				snprintf(status, sizeof status, "Скорость: %.2f Mbps", mbps);
+				++ok;
+				snprintf(status, sizeof status, "%s: %.1f MB/s", node.name.c_str(), peakMBps);
 				SetToolbarStatus(status);
 			}
-			else
-			{
-				SetToolbarStatus(m_probeCancel.load() ? "Тест скорости остановлен." : "Тест скорости не удался.");
-			}
 		}
+
+		if (originalActive >= 0 && originalActive < static_cast<int>(nodesSnapshot.size()))
+			m_manager->Reload(nodesSnapshot, originalActive, settings);
+
+		char done[96];
+		if (m_probeCancel.load())
+			snprintf(done, sizeof done, "Тест скорости остановлен.");
+		else
+			snprintf(done, sizeof done, "Скорость группы: %d/%zu OK", ok, indices.size());
+		SetToolbarStatus(done);
 
 		m_speedTestRunning = false;
 		m_probeRunning.store(false);
@@ -783,6 +1334,10 @@ void UiVpnPage::SyncVpnRuntime()
 	if (!m_manager)
 		return;
 
+	// Don't fight per-node proxy switches during real-ping / speed probes.
+	if (m_speedTestRunning || m_probeRunning.load())
+		return;
+
 	if (m_vpnEnabled
 		&& m_lastAppliedVpnEnabled
 		&& !m_manager->IsRunning()
@@ -858,6 +1413,17 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 {
 	const UiThemeColors colors = theme.GetColors();
 	const UiAccentColors accents = theme.GetAccents();
+	const float deltaTime = ImGui::GetIO().DeltaTime;
+
+	// Smooth fade of "new probe result" row highlights.
+	for (auto it = m_probeFlash.begin(); it != m_probeFlash.end(); )
+	{
+		it->second -= deltaTime / 1.35f;
+		if (it->second <= 0.01f)
+			it = m_probeFlash.erase(it);
+		else
+			++it;
+	}
 
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.f, UiMetrics::kRowGap));
 	if (DrawServersPageHeader(fonts, width, m_vpnEnabled, m_vpnMix, m_fixDiscord, colors))
@@ -865,13 +1431,14 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 
 	const float filterSearchW = width * 0.38f;
 	const float filterGap = UiMetrics::kGridGap;
+	const float comboW = (std::max)(120.f, width - filterSearchW - filterGap);
 
 	UiCommon::PushInputStyle(colors);
 	ImGui::SetNextItemWidth(filterSearchW);
 	if (ImGui::InputTextWithHint("##search", "Поиск серверов", m_search, sizeof m_search))
 		m_selected = -1;
 	ImGui::SameLine(0.f, filterGap);
-	ImGui::SetNextItemWidth(-1.f);
+	ImGui::SetNextItemWidth(comboW);
 	const int previousWorkMode = m_workMode;
 	ImGui::Combo("##work_mode", &m_workMode, kWorkModes, 5);
 	if (m_workMode != previousWorkMode)
@@ -901,11 +1468,8 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 	if (ToolbarIconButton(fonts, 0xE70F, "Редактировать", colors, hasSelection && !m_probeRunning.load()))
 		OpenSelectedDetails();
 	ImGui::SameLine(0.f, 2.f);
-	if (ToolbarIconButton(fonts, 0xE724, "Пинг выбранных", colors, hasSelection && !m_probeRunning.load()))
+	if (ToolbarIconButton(fonts, 0xE724, "Реальная задержка выбранных", colors, hasSelection && !m_probeRunning.load()))
 		StartPing(true);
-	ImGui::SameLine(0.f, 2.f);
-	if (ToolbarIconButton(fonts, 0xE895, "Пинг всех", colors, !m_nodes.empty() && !m_probeRunning.load()))
-		StartPing(false);
 	ImGui::SameLine(0.f, 2.f);
 	if (ToolbarIconButton(fonts, 0xE9F5, "Тест скорости выбранных", colors, hasSelection && !m_probeRunning.load()))
 		StartSpeedTest(true);
@@ -1018,106 +1582,293 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 	}
 
 	const float tableWidth = width;
-	UiCommon::PushTableStyle(colors);
-	if (ImGui::BeginTable(
-		"##servers",
-		9,
-		UiCommon::StretchableTableFlags(false),
-		ImVec2(tableWidth, 0.f)))
+
+	std::vector<std::string> groupOrder;
+	groupOrder.reserve(8);
+	for (const VpnNode& node : m_nodes)
 	{
-		ImGui::TableSetupColumn("№", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_NoSort, kColNum);
-		ImGui::TableSetupColumn("Название", ImGuiTableColumnFlags_WidthStretch, 1.6f);
-		ImGui::TableSetupColumn("IP Сервера", ImGuiTableColumnFlags_WidthStretch, 1.8f);
-		ImGui::TableSetupColumn("Страна", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, 44.f);
-		ImGui::TableSetupColumn("Порт", ImGuiTableColumnFlags_WidthStretch, 0.6f);
-		ImGui::TableSetupColumn("тип протокола", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-		ImGui::TableSetupColumn("TLS", ImGuiTableColumnFlags_WidthStretch, 0.5f);
-		ImGui::TableSetupColumn("Пинг", ImGuiTableColumnFlags_WidthStretch, 0.7f);
-		ImGui::TableSetupColumn("Скорость", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-		UiCommon::TableHeadersRowCentered(colors);
+		const std::string& group = node.group.empty() ? "Imported" : node.group;
+		if (std::find(groupOrder.begin(), groupOrder.end(), group) == groupOrder.end())
+			groupOrder.push_back(group);
+	}
+	if (groupOrder.empty())
+		groupOrder.push_back("Imported");
 
-		char pingBuf[24];
-		char speedBuf[24];
-		int displayIndex = 0;
+	char pingBuf[24];
+	char speedBuf[24];
+	int displayIndex = 0;
 
+	VpnStoreSettings uiSettings;
+	m_store.LoadSettings(uiSettings);
+	const std::string subscriptionRemaining = FormatSubscriptionRemaining(uiSettings.subscriptionExpireUnix);
+
+	for (const std::string& groupName : groupOrder)
+	{
+		std::vector<int> groupIndices;
+		groupIndices.reserve(m_nodes.size());
+		std::string groupSourceUrl;
 		for (int i = 0; i < static_cast<int>(m_nodes.size()); ++i)
 		{
 			const VpnNode& node = m_nodes[static_cast<size_t>(i)];
+			const std::string& group = node.group.empty() ? "Imported" : node.group;
+			if (group != groupName)
+				continue;
 			if (!MatchesSearch(node, m_search))
 				continue;
+			groupIndices.push_back(i);
+			if (groupSourceUrl.empty() && !node.sourceUrl.empty())
+				groupSourceUrl = node.sourceUrl;
+		}
+		if (groupIndices.empty())
+			continue;
 
-			++displayIndex;
-			ImGui::PushID(i);
-
-			const float rowContentH = ImGui::GetTextLineHeight();
-			ImGui::TableNextRow(ImGuiTableRowFlags_None, UiCommon::TableRowMinHeight(rowContentH));
-
-			const ImVec4 rowColor = node.alive == 0 ? accents.fail : colors.textPrimary;
-			const bool rowSelected = m_selected == i;
-
-			char numBuf[8];
-			snprintf(numBuf, sizeof numBuf, "%d", displayIndex);
-
-			ImGui::TableSetColumnIndex(0);
-			ImGui::PushStyleColor(ImGuiCol_Text, rowColor);
-			if (UiCommon::TableRowSelectable(numBuf, rowSelected, rowContentH))
+		// source_url may be empty on older caches — still treat Capybara as subscription group.
+		bool showSubscriptionActions = !groupSourceUrl.empty();
+		if (!showSubscriptionActions)
+		{
+			if (groupName.find("Capybara") != std::string::npos
+				|| groupName.find("Copybara") != std::string::npos)
 			{
-				m_selected = i;
-				if (ImGui::IsMouseDoubleClicked(0))
-				{
-					m_detailIndex = i;
-					m_view = View::Detail;
-				}
-			}
-
-			ImGui::TableSetColumnIndex(1);
-			UiCommon::TableAlignTextY(rowContentH);
-			if (i == m_activeIndex)
-			{
-				ImGui::PushStyleColor(ImGuiCol_Text, accents.ok);
-				char nameBuf[128];
-				snprintf(nameBuf, sizeof nameBuf, "● %s", node.name.c_str());
-				ImGui::TextUnformatted(nameBuf);
-				ImGui::PopStyleColor();
+				showSubscriptionActions = true;
 			}
 			else
 			{
-				ImGui::TextUnformatted(node.name.c_str());
+				for (int gi : groupIndices)
+				{
+					if (NodeLooksLikeCapybaraGroup(m_nodes[static_cast<size_t>(gi)]))
+					{
+						showSubscriptionActions = true;
+						break;
+					}
+				}
 			}
-
-			ImGui::TableSetColumnIndex(2);
-			UiCommon::TableAlignTextY(rowContentH);
-			ImGui::TextUnformatted(node.server.c_str());
-			ImGui::TableSetColumnIndex(3);
-			UiCommon::TableAlignTextY(rowContentH);
-			DrawCountryFlagCell(node.country, rowContentH);
-			ImGui::TableSetColumnIndex(4);
-			UiCommon::TableAlignTextY(rowContentH);
-			{
-				char portBuf[16];
-				snprintf(portBuf, sizeof portBuf, "%d", node.port);
-				UiCommon::TableTextAligned(portBuf, UiCommon::UiTableAlign::Center);
-			}
-			ImGui::TableSetColumnIndex(5);
-			UiCommon::TableAlignTextY(rowContentH);
-			UiCommon::TableTextAligned(node.scheme.c_str(), UiCommon::UiTableAlign::Center);
-			ImGui::TableSetColumnIndex(6);
-			UiCommon::TableAlignTextY(rowContentH);
-			UiCommon::TableTextAligned(node.tls ? "TLS" : "—", UiCommon::UiTableAlign::Center);
-			ImGui::TableSetColumnIndex(7);
-			UiCommon::TableAlignTextY(rowContentH);
-			UiCommon::TableTextAligned(FormatPing(node.pingMs, pingBuf, sizeof pingBuf), UiCommon::UiTableAlign::Center);
-			ImGui::TableSetColumnIndex(8);
-			UiCommon::TableAlignTextY(rowContentH);
-			UiCommon::TableTextAligned(FormatSpeed(node.speedMbps, speedBuf, sizeof speedBuf), UiCommon::UiTableAlign::Center);
-
-			ImGui::PopStyleColor();
-			ImGui::PopID();
 		}
 
-		ImGui::EndTable();
+		std::string refreshUrl = groupSourceUrl;
+		if (refreshUrl.empty())
+			refreshUrl = uiSettings.lastSubscriptionUrl;
+
+		const char* groupLabel = DisplayGroupName(groupName);
+		char groupTitle[256];
+		if (showSubscriptionActions && !subscriptionRemaining.empty())
+		{
+			snprintf(
+				groupTitle,
+				sizeof groupTitle,
+				"%s  (%zu)  ·  %s",
+				groupLabel,
+				groupIndices.size(),
+				subscriptionRemaining.c_str());
+		}
+		else
+		{
+			snprintf(groupTitle, sizeof groupTitle, "%s  (%zu)", groupLabel, groupIndices.size());
+		}
+
+		ImGui::PushID(groupName.c_str());
+
+		const float stripH = ImGui::GetFrameHeight();
+		const ImVec2 headerBtnSize(stripH, stripH);
+		constexpr float kGroupBtnGap = 4.f;
+		// ping + speed; subscription groups also get refresh.
+		const int headerBtnCount = showSubscriptionActions ? 3 : 2;
+		const float headerBtnsW =
+			static_cast<float>(headerBtnCount) * stripH
+			+ static_cast<float>(headerBtnCount - 1) * kGroupBtnGap;
+		const ImVec2 headerRowPos = ImGui::GetCursorScreenPos();
+		const float headerRowW = ImGui::GetContentRegionAvail().x;
+		const float headerW = (std::max)(80.f, headerRowW - headerBtnsW - kGroupBtnGap);
+
+		float btnX = headerRowPos.x + headerRowW - headerBtnsW;
+		if (showSubscriptionActions)
+		{
+			ImGui::SetCursorScreenPos({ btnX, headerRowPos.y });
+			const bool canRefresh = !m_importRunning.load();
+			if (HeaderIconButton(fonts, 0xE72C, "refresh_sub", "Обновить подписку", colors, headerBtnSize, canRefresh))
+				StartRefreshSubscriptions(refreshUrl);
+			btnX += stripH + kGroupBtnGap;
+		}
+
+		ImGui::SetCursorScreenPos({ btnX, headerRowPos.y });
+		const bool canPingGroup =
+			!groupIndices.empty()
+			&& !m_probeRunning.load()
+			&& m_vpnEnabled
+			&& m_manager
+			&& m_manager->IsRunning();
+		if (HeaderIconButton(fonts, 0xE895, "ping_group", "Реальная задержка группы (как v2rayN)", colors, headerBtnSize, canPingGroup))
+			StartPingIndices(groupIndices);
+		btnX += stripH + kGroupBtnGap;
+
+		ImGui::SetCursorScreenPos({ btnX, headerRowPos.y });
+		const bool canSpeedGroup =
+			!groupIndices.empty()
+			&& !m_probeRunning.load()
+			&& m_vpnEnabled
+			&& m_manager
+			&& m_manager->IsRunning();
+		if (HeaderIconButton(fonts, 0xE9F5, "speed_group", "Тест скорости группы", colors, headerBtnSize, canSpeedGroup))
+			StartSpeedTestIndices(groupIndices);
+
+		ImGui::SetCursorScreenPos(headerRowPos);
+		ImGui::PushStyleColor(ImGuiCol_Header, colors.navActive);
+		ImGui::PushStyleColor(ImGuiCol_HeaderHovered, colors.navHover);
+		ImGui::PushStyleColor(ImGuiCol_HeaderActive, colors.navActive);
+		ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
+		ImGui::BeginChild(
+			"##group_hdr",
+			ImVec2(headerW, stripH),
+			ImGuiChildFlags_None,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+		const bool open = ImGui::CollapsingHeader(groupTitle, ImGuiTreeNodeFlags_DefaultOpen);
+		ImGui::EndChild();
+		ImGui::PopStyleColor(4);
+
+		ImGui::SetCursorScreenPos({
+			headerRowPos.x,
+			headerRowPos.y + stripH + ImGui::GetStyle().ItemSpacing.y });
+		ImGui::Dummy(ImVec2(headerRowW, 0.f));
+
+		if (!open)
+		{
+			ImGui::PopID();
+			ImGui::Dummy(ImVec2(0.f, 4.f));
+			continue;
+		}
+
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, UiCommon::WithAlpha(colors.tileBg, 0.55f));
+		ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.f);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f, 8.f));
+		ImGui::BeginChild("##group_card", ImVec2(tableWidth, 0.f), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+
+		UiCommon::PushTableStyle(colors);
+		if (ImGui::BeginTable(
+			"##servers",
+			9,
+			UiCommon::StretchableTableFlags(false),
+			ImVec2(-1.f, 0.f)))
+		{
+			ImGui::TableSetupColumn("№", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_NoSort, kColNum);
+			ImGui::TableSetupColumn("Название", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+			ImGui::TableSetupColumn("IP Сервера", ImGuiTableColumnFlags_WidthStretch, 1.8f);
+			ImGui::TableSetupColumn("Страна", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, 44.f);
+			ImGui::TableSetupColumn("Порт", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+			ImGui::TableSetupColumn("тип протокола", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+			ImGui::TableSetupColumn("TLS", ImGuiTableColumnFlags_WidthStretch, 0.5f);
+			ImGui::TableSetupColumn("Пинг", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+			ImGui::TableSetupColumn("Скорость", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+			UiCommon::TableHeadersRowCentered(colors);
+
+			for (int i : groupIndices)
+			{
+				const VpnNode& node = m_nodes[static_cast<size_t>(i)];
+				++displayIndex;
+				ImGui::PushID(i);
+
+				const float rowContentH = ImGui::GetTextLineHeight();
+				ImGui::TableNextRow(ImGuiTableRowFlags_None, UiCommon::TableRowMinHeight(rowContentH));
+
+				float flash = 0.f;
+				const auto flashIt = m_probeFlash.find(i);
+				if (flashIt != m_probeFlash.end())
+					flash = flashIt->second;
+				// Ease-out for a softer fade.
+				const float flashEase = flash * flash;
+				if (flashEase > 0.01f)
+				{
+					const ImVec4 flashTint = (node.alive == 0) ? accents.fail : accents.ok;
+					ImGui::TableSetBgColor(
+						ImGuiTableBgTarget_RowBg0,
+						ImGui::GetColorU32(UiCommon::WithAlpha(flashTint, flashEase * 0.32f)));
+				}
+
+				const ImVec4 rowColor = node.alive == 0 ? accents.fail : colors.textPrimary;
+				const bool rowSelected = m_selected == i;
+
+				char numBuf[8];
+				snprintf(numBuf, sizeof numBuf, "%d", displayIndex);
+
+				ImGui::TableSetColumnIndex(0);
+				ImGui::PushStyleColor(ImGuiCol_Text, rowColor);
+				if (UiCommon::TableRowSelectable(numBuf, rowSelected, rowContentH))
+				{
+					m_selected = i;
+					if (ImGui::IsMouseDoubleClicked(0))
+					{
+						m_detailIndex = i;
+						m_view = View::Detail;
+					}
+				}
+
+				ImGui::TableSetColumnIndex(1);
+				UiCommon::TableAlignTextY(rowContentH);
+				if (i == m_activeIndex)
+				{
+					ImGui::PushStyleColor(ImGuiCol_Text, accents.ok);
+					char nameBuf[128];
+					snprintf(nameBuf, sizeof nameBuf, "● %s", node.name.c_str());
+					ImGui::TextUnformatted(nameBuf);
+					ImGui::PopStyleColor();
+				}
+				else
+				{
+					ImGui::TextUnformatted(node.name.c_str());
+				}
+
+				ImGui::TableSetColumnIndex(2);
+				UiCommon::TableAlignTextY(rowContentH);
+				DrawServerHostCell(node.server);
+				ImGui::TableSetColumnIndex(3);
+				UiCommon::TableAlignTextY(rowContentH);
+				DrawCountryFlagCell(node.country, rowContentH);
+				ImGui::TableSetColumnIndex(4);
+				UiCommon::TableAlignTextY(rowContentH);
+				{
+					char portBuf[16];
+					snprintf(portBuf, sizeof portBuf, "%d", node.port);
+					UiCommon::TableTextAligned(portBuf, UiCommon::UiTableAlign::Center);
+				}
+				ImGui::TableSetColumnIndex(5);
+				UiCommon::TableAlignTextY(rowContentH);
+				UiCommon::TableTextAligned(node.scheme.c_str(), UiCommon::UiTableAlign::Center);
+				ImGui::TableSetColumnIndex(6);
+				UiCommon::TableAlignTextY(rowContentH);
+				UiCommon::TableTextAligned(node.tls ? "TLS" : "—", UiCommon::UiTableAlign::Center);
+
+				ImGui::TableSetColumnIndex(7);
+				UiCommon::TableAlignTextY(rowContentH);
+				{
+					const ImVec4 pingBright = (node.alive == 0) ? accents.fail : accents.ok;
+					const ImVec4 pingColor = LerpVec4(rowColor, pingBright, flashEase);
+					ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
+					UiCommon::TableTextAligned(FormatPing(node.pingMs, pingBuf, sizeof pingBuf), UiCommon::UiTableAlign::Center);
+					ImGui::PopStyleColor();
+				}
+
+				ImGui::TableSetColumnIndex(8);
+				UiCommon::TableAlignTextY(rowContentH);
+				{
+					const ImVec4 speedBright = accents.ok;
+					const ImVec4 speedColor = LerpVec4(rowColor, speedBright, flashEase);
+					ImGui::PushStyleColor(ImGuiCol_Text, speedColor);
+					UiCommon::TableTextAligned(FormatSpeed(node.speedMbps, speedBuf, sizeof speedBuf), UiCommon::UiTableAlign::Center);
+					ImGui::PopStyleColor();
+				}
+
+				ImGui::PopStyleColor();
+				ImGui::PopID();
+			}
+
+			ImGui::EndTable();
+		}
+		UiCommon::PopTableStyle();
+
+		ImGui::EndChild();
+		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor();
+		ImGui::PopID();
+		ImGui::Dummy(ImVec2(0.f, UiMetrics::kSectionGap));
 	}
-	UiCommon::PopTableStyle();
 
 	ImGui::Dummy(ImVec2(0.f, UiMetrics::kCardGap));
 	ImGui::PopStyleVar();

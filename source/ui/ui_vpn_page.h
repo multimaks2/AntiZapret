@@ -6,6 +6,7 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -35,11 +36,21 @@ private:
 	void EnsureStoreLoaded();
 	void SaveStore();
 	void StartImportFromClipboard();
+	void StartRefreshSubscriptions(const std::string& sourceUrl = {});
 	void ApplyPendingImportIfAny();
+	void ApplyRefreshResult(
+		std::vector<VpnNode> importedNodes,
+		std::vector<std::string> errors,
+		const std::string& sourceUrl,
+		long long subscriptionExpireUnix);
 	void ApplyPendingGeoLookups();
 	void ApplyPendingProbeResults();
 	void QueueCountryLookups();
-	void ApplyImportResult(std::vector<VpnNode> importedNodes, int duplicatesSkipped, std::vector<std::string> errors);
+	void ApplyImportResult(
+		std::vector<VpnNode> importedNodes,
+		int duplicatesSkipped,
+		std::vector<std::string> errors,
+		long long subscriptionExpireUnix);
 	void DrawListView(ThemeManager& theme, FontManager& fonts, float width);
 	void DrawDetailView(ThemeManager& theme, FontManager& fonts, float width);
 	void SyncVpnRuntime();
@@ -48,7 +59,9 @@ private:
 	int FindNodeIndexByUri(const std::string& uri) const;
 
 	void StartPing(bool selectedOnly);
+	void StartPingIndices(std::vector<int> indices);
 	void StartSpeedTest(bool selectedOnly);
+	void StartSpeedTestIndices(std::vector<int> indices);
 	void StopSpeedTest();
 	void ExportOutboundJson(int nodeIndex);
 	void ExportRuntimeConfig(int nodeIndex);
@@ -86,6 +99,8 @@ private:
 		std::vector<VpnNode> nodes;
 		int duplicatesSkipped = 0;
 		std::vector<std::string> errors;
+		std::string refreshSourceUrl; // non-empty => replace subscription nodes
+		long long subscriptionExpireUnix = 0;
 		bool ready = false;
 	};
 	PendingImportResult m_pendingImport;
@@ -112,4 +127,6 @@ private:
 		bool ready = false;
 	};
 	std::vector<PendingProbeResult> m_pendingProbe;
+	// 1 → 0 fade after a probe result lands (row highlight).
+	std::unordered_map<int, float> m_probeFlash;
 };

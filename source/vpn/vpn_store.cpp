@@ -29,6 +29,13 @@ namespace
 		return std::atoi(value.c_str());
 	}
 
+	long long ParseInt64(const std::string& value, long long fallback)
+	{
+		if (value.empty())
+			return fallback;
+		return std::atoll(value.c_str());
+	}
+
 	float ParseFloat(const std::string& value, float fallback)
 	{
 		if (value.empty())
@@ -79,6 +86,10 @@ void VpnStore::ParseSettingsLine(const std::string& key, const std::string& valu
 		settings.routingRevision = ParseInt(value, 0);
 	else if (key == "fix_discord")
 		settings.fixDiscord = value == "1" || value == "true" || value == "yes";
+	else if (key == "last_subscription_url")
+		settings.lastSubscriptionUrl = value;
+	else if (key == "subscription_expire_unix")
+		settings.subscriptionExpireUnix = ParseInt64(value, 0);
 }
 
 void VpnStore::LoadSettings(VpnStoreSettings& settings) const
@@ -125,6 +136,8 @@ void VpnStore::SaveSettings(const VpnStoreSettings& settings) const
 	output << "proxy_type=" << settings.proxyType << "\r\n";
 	output << "routing_revision=" << settings.routingRevision << "\r\n";
 	output << "fix_discord=" << (settings.fixDiscord ? "1" : "0") << "\r\n";
+	output << "last_subscription_url=" << settings.lastSubscriptionUrl << "\r\n";
+	output << "subscription_expire_unix=" << settings.subscriptionExpireUnix << "\r\n";
 }
 
 void VpnStore::Load(std::vector<VpnNode>& nodes, VpnStoreSettings* settings)
@@ -183,6 +196,12 @@ void VpnStore::Load(std::vector<VpnNode>& nodes, VpnStoreSettings* settings)
 					current.lastUsed = value;
 				else if (key == "country")
 					current.country = value;
+				else if (key == "name")
+					current.name = value;
+				else if (key == "group")
+					current.group = value;
+				else if (key == "source_url")
+					current.sourceUrl = value;
 			}
 
 			if (!current.originalUri.empty())
@@ -205,8 +224,17 @@ void VpnStore::Load(std::vector<VpnNode>& nodes, VpnStoreSettings* settings)
 			node.speedMbps = it->second.speedMbps;
 			node.alive = it->second.alive;
 			node.lastUsed = it->second.lastUsed;
-			node.country = it->second.country;
+			if (!it->second.country.empty())
+				node.country = it->second.country;
+			if (!it->second.name.empty())
+				node.name = it->second.name;
+			if (!it->second.group.empty())
+				node.group = it->second.group;
+			if (!it->second.sourceUrl.empty())
+				node.sourceUrl = it->second.sourceUrl;
 		}
+
+		VpnImport::NormalizeNodeDisplay(node);
 
 		if (node.country.empty())
 			node.country = VpnGeo::GetCachedCountryCode(node.server);
@@ -257,6 +285,9 @@ void VpnStore::Save(const std::vector<VpnNode>& nodes, const VpnStoreSettings* s
 			output << "alive=" << node.alive << "\r\n";
 			output << "last_used=" << node.lastUsed << "\r\n";
 			output << "country=" << node.country << "\r\n";
+			output << "name=" << node.name << "\r\n";
+			output << "group=" << node.group << "\r\n";
+			output << "source_url=" << node.sourceUrl << "\r\n";
 		}
 	}
 
@@ -276,6 +307,8 @@ void VpnStore::Save(const std::vector<VpnNode>& nodes, const VpnStoreSettings* s
 			output << "proxy_type=" << settings->proxyType << "\r\n";
 			output << "routing_revision=" << settings->routingRevision << "\r\n";
 			output << "fix_discord=" << (settings->fixDiscord ? "1" : "0") << "\r\n";
+			output << "last_subscription_url=" << settings->lastSubscriptionUrl << "\r\n";
+			output << "subscription_expire_unix=" << settings->subscriptionExpireUnix << "\r\n";
 		}
 	}
 }

@@ -21,6 +21,7 @@ struct VpnNode
 	std::string tags;
 	std::string country;
 	std::string originalUri;
+	std::string sourceUrl; // subscription URL when imported from feed
 	int pingMs = -1;
 	float speedMbps = -1.f;
 	int alive = -1;

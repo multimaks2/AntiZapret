@@ -17,6 +17,9 @@ struct VpnStoreSettings
 	int proxyType = 0;
 	int routingRevision = 0;
 	bool fixDiscord = false;
+	std::string lastSubscriptionUrl;
+	// Unix seconds from subscription-userinfo `expire=`; 0 = unknown.
+	long long subscriptionExpireUnix = 0;
 };
 
 namespace VpnTransportSettings
