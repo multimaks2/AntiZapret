@@ -137,6 +137,10 @@ def main() -> int:
     gen = load_generator()
     base_dir = ROOT / "vendor" / "zapret-discord-youtube"
     fork_dir = ROOT / "vendor" / "zapret-discord-youtubev2fork" / "pre-configs"
+    if not fork_dir.is_dir():
+        print(f"Fork directory not found (optional): {fork_dir}")
+        print("Nothing to merge. Place fork pre-configs there or pass a custom path.")
+        return 0
 
     base = [gen.parse_strategy(path) for path in sorted(base_dir.glob("general*.bat"), key=lambda p: p.name.lower())]
     base_ids = {s["id"] for s in base}

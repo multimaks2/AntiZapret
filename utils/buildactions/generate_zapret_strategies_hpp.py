@@ -575,7 +575,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--fork-dir",
-        default="vendor/zapret-discord-youtubev2fork/pre-configs",
+        default="",
         help="Optional fork pre-configs directory with additional unique strategies",
     )
     parser.add_argument(
