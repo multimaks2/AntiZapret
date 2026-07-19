@@ -1,12 +1,13 @@
 #include "ui/ui_about_page.h"
 
+#include "app/app_version.h"
 #include "gfx/font_manager.h"
 #include "gfx/theme_manager.h"
 #include "ui/ui_common.h"
-#include "version.h"
 #include "imgui.h"
 
 #include <cstdio>
+#include <string>
 
 namespace
 {
@@ -69,7 +70,8 @@ void UiAboutPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 		const float innerWidth = ImGui::GetContentRegionAvail().x;
 
 		char versionLine[64] = {};
-		snprintf(versionLine, sizeof versionLine, "AntiZapret %s", ANTIZAPRET_VERSION);
+		const std::string appVersion = AppVersion::ReadLocal();
+		snprintf(versionLine, sizeof versionLine, "AntiZapret %s", appVersion.c_str());
 		ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
 		ImGui::TextUnformatted(versionLine);
 		ImGui::PopStyleColor();

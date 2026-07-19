@@ -85,6 +85,9 @@ public:
 
 	TgProxyEnvState GetEnvState() const { return m_envState.load(); }
 
+	// Short label for UI: "Ок", "Нет Python", …
+	const char* GetEnvStatusLabel() const;
+
 	const std::string& GetStatusMessage() const;
 
 	const std::string& GetErrorMessage() const { return m_lastError; }
@@ -180,8 +183,6 @@ private:
 	std::string m_lastError;
 
 	std::string m_pythonLauncher;
-
-	float m_envRefreshTimer = 0.f;
 
 	float m_statusPollTimer = 0.f;
 

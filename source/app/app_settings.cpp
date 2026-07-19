@@ -1,5 +1,6 @@
 #include "app/app_settings.h"
 
+#include "app/settings_document.h"
 #include "zapret/zapret_paths.h"
 
 #include <Windows.h>
@@ -9,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 
 #pragma comment(lib, "advapi32.lib")
@@ -17,7 +19,7 @@ namespace
 {
 	std::filesystem::path SettingsPath()
 	{
-		return std::filesystem::path(ZapretPaths::GetAppDirectory()) / L"settings.ini";
+		return std::filesystem::path(ZapretPaths::GetSettingsPath());
 	}
 
 	std::string Trim(std::string value)
@@ -73,6 +75,8 @@ void AppSettings::Load()
 	m_confirmAdult = false;
 	m_discordPresenceEnabled = true;
 	m_discordShareButtonEnabled = true;
+	m_discordDownloadButtonEnabled = true;
+	m_discordDownloadUrl = "https://github.com/multimaks2/AntiZapret/releases/latest";
 	m_autoSelectBestStrategy = false;
 	m_showExtraStrategies = false;
 	ResetScrollMultipliers(m_pageScrollMultipliers);
@@ -140,6 +144,10 @@ void AppSettings::Load()
 				m_discordPresenceEnabled = ParseBool(value);
 			else if (key == "discord_share_button")
 				m_discordShareButtonEnabled = ParseBool(value);
+			else if (key == "discord_download_button")
+				m_discordDownloadButtonEnabled = ParseBool(value);
+			else if (key == "discord_download_url" && !value.empty())
+				m_discordDownloadUrl = value;
 			continue;
 		}
 
@@ -170,42 +178,47 @@ void AppSettings::Load()
 
 void AppSettings::Save()
 {
-	const std::filesystem::path path = SettingsPath();
-	std::error_code ec;
-	std::filesystem::create_directories(path.parent_path(), ec);
+	SettingsDocument::KeyMap tgProxy;
+	tgProxy["host"] = m_tgProxyHost;
+	tgProxy["port"] = std::to_string(m_tgProxyPort);
+	tgProxy["secret"] = m_tgProxySecret;
+	tgProxy["auto_start_with_antizapret"] = m_autoStartTgProxyWithAntiZapret ? "1" : "0";
+	tgProxy["open_telegram_on_start"] = m_openTelegramOnProxyStart ? "1" : "0";
 
-	std::ofstream output(path, std::ios::binary | std::ios::trunc);
-	if (!output)
-		return;
+	SettingsDocument::KeyMap antizapret;
+	antizapret["auto_select_best"] = m_autoSelectBestStrategy ? "1" : "0";
+	antizapret["show_extra_strategies"] = m_showExtraStrategies ? "1" : "0";
 
-	output << "; AntiZapret settings\r\n";
-	output << "[tg_proxy]\r\n";
-	output << "host=" << m_tgProxyHost << "\r\n";
-	output << "port=" << m_tgProxyPort << "\r\n";
-	output << "secret=" << m_tgProxySecret << "\r\n";
-	output << "auto_start_with_antizapret=" << (m_autoStartTgProxyWithAntiZapret ? "1" : "0") << "\r\n";
-	output << "open_telegram_on_start=" << (m_openTelegramOnProxyStart ? "1" : "0") << "\r\n";
-	output << "[antizapret]\r\n";
-	output << "auto_select_best=" << (m_autoSelectBestStrategy ? "1" : "0") << "\r\n";
-	output << "show_extra_strategies=" << (m_showExtraStrategies ? "1" : "0") << "\r\n";
-	output << "[ui]\r\n";
-	output << "light_theme=" << (m_lightTheme ? "1" : "0") << "\r\n";
-	output << "autostart_app=" << (m_autostartApp ? "1" : "0") << "\r\n";
-	output << "autostart_bypass=" << (m_autostartBypass ? "1" : "0") << "\r\n";
-	output << "autostart_telegram=" << (m_autostartTelegram ? "1" : "0") << "\r\n";
-	output << "autostart_vpn=" << (m_autostartVpn ? "1" : "0") << "\r\n";
-	output << "confirm_adult=" << (m_confirmAdult ? "1" : "0") << "\r\n";
-	output << "discord_presence=" << (m_discordPresenceEnabled ? "1" : "0") << "\r\n";
-	output << "discord_share_button=" << (m_discordShareButtonEnabled ? "1" : "0") << "\r\n";
-	output << "[scroll]\r\n";
-	output << "home=" << m_pageScrollMultipliers[0] << "\r\n";
-	output << "antizapret=" << m_pageScrollMultipliers[1] << "\r\n";
-	output << "tg_ws_proxy=" << m_pageScrollMultipliers[2] << "\r\n";
-	output << "vpn=" << m_pageScrollMultipliers[3] << "\r\n";
-	output << "routing=" << m_pageScrollMultipliers[4] << "\r\n";
-	output << "console=" << m_pageScrollMultipliers[5] << "\r\n";
-	output << "settings=" << m_pageScrollMultipliers[6] << "\r\n";
-	output << "about=" << m_pageScrollMultipliers[7] << "\r\n";
+	SettingsDocument::KeyMap ui;
+	ui["light_theme"] = m_lightTheme ? "1" : "0";
+	ui["autostart_app"] = m_autostartApp ? "1" : "0";
+	ui["autostart_bypass"] = m_autostartBypass ? "1" : "0";
+	ui["autostart_telegram"] = m_autostartTelegram ? "1" : "0";
+	ui["autostart_vpn"] = m_autostartVpn ? "1" : "0";
+	ui["confirm_adult"] = m_confirmAdult ? "1" : "0";
+	ui["discord_presence"] = m_discordPresenceEnabled ? "1" : "0";
+	ui["discord_share_button"] = m_discordShareButtonEnabled ? "1" : "0";
+	ui["discord_download_button"] = m_discordDownloadButtonEnabled ? "1" : "0";
+	ui["discord_download_url"] = m_discordDownloadUrl;
+
+	SettingsDocument::KeyMap scroll;
+	scroll["home"] = std::to_string(m_pageScrollMultipliers[0]);
+	scroll["antizapret"] = std::to_string(m_pageScrollMultipliers[1]);
+	scroll["tg_ws_proxy"] = std::to_string(m_pageScrollMultipliers[2]);
+	scroll["vpn"] = std::to_string(m_pageScrollMultipliers[3]);
+	scroll["routing"] = std::to_string(m_pageScrollMultipliers[4]);
+	scroll["console"] = std::to_string(m_pageScrollMultipliers[5]);
+	scroll["settings"] = std::to_string(m_pageScrollMultipliers[6]);
+	scroll["about"] = std::to_string(m_pageScrollMultipliers[7]);
+
+	std::lock_guard<std::mutex> lock(SettingsDocument::Mutex());
+	SettingsDocument::Doc doc;
+	SettingsDocument::Load(doc);
+	SettingsDocument::SetSection(doc, "tg_proxy", tgProxy);
+	SettingsDocument::SetSection(doc, "antizapret", antizapret);
+	SettingsDocument::SetSection(doc, "ui", ui);
+	SettingsDocument::SetSection(doc, "scroll", scroll);
+	SettingsDocument::Save(doc);
 }
 
 float AppSettings::GetPageScrollMultiplier(int pageIndex) const
@@ -297,8 +310,8 @@ void AppSettings::SetLightTheme(bool value)
 void AppSettings::SetAutostartApp(bool value)
 {
 	m_autostartApp = value;
-	ApplyWindowsAutostart(value);
 	Save();
+	SyncWindowsAutostart();
 }
 
 void AppSettings::SetAutostartBypass(bool value)
@@ -337,6 +350,31 @@ void AppSettings::SetDiscordShareButtonEnabled(bool value)
 	Save();
 }
 
+void AppSettings::SetDiscordDownloadButtonEnabled(bool value)
+{
+	m_discordDownloadButtonEnabled = value;
+	Save();
+}
+
+void AppSettings::SetDiscordDownloadUrl(const std::string& value)
+{
+	std::string trimmed = value;
+	while (!trimmed.empty() && (trimmed.back() == ' ' || trimmed.back() == '\t' || trimmed.back() == '\r' || trimmed.back() == '\n'))
+		trimmed.pop_back();
+	size_t start = 0;
+	while (start < trimmed.size() && (trimmed[start] == ' ' || trimmed[start] == '\t'))
+		++start;
+	if (start > 0)
+		trimmed = trimmed.substr(start);
+
+	if (trimmed.empty())
+		trimmed = "https://github.com/multimaks2/AntiZapret/releases/latest";
+	if (trimmed == m_discordDownloadUrl)
+		return;
+	m_discordDownloadUrl = trimmed;
+	Save();
+}
+
 bool AppSettings::GetAutoSelectBestStrategy() const
 {
 	return m_autoSelectBestStrategy;
@@ -366,20 +404,90 @@ void AppSettings::SyncWindowsAutostart() const
 
 void AppSettings::ApplyWindowsAutostart(bool enabled) const
 {
-	wchar_t exePath[MAX_PATH] = {};
-	const DWORD length = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+	wchar_t exePathW[MAX_PATH] = {};
+	const DWORD length = GetModuleFileNameW(nullptr, exePathW, MAX_PATH);
 	if (length == 0 || length >= MAX_PATH)
 		return;
 
-	const std::wstring command = L"\"" + std::wstring(exePath) + L"\"";
-	HKEY key = nullptr;
-	if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS)
-		return;
+	const std::wstring runCommand = L"\"" + std::wstring(exePathW) + L"\" --autostart";
+	constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+	constexpr wchar_t kValueName[] = L"AntiZapret";
+	constexpr char kTaskName[] = "AntiZapret_Autostart";
+
+	auto runHidden = [](const std::string& commandLine, DWORD timeoutMs) -> bool {
+		STARTUPINFOA si = {};
+		si.cb = sizeof(si);
+		si.dwFlags = STARTF_USESHOWWINDOW;
+		si.wShowWindow = SW_HIDE;
+		PROCESS_INFORMATION pi = {};
+		std::string mutableCmd = commandLine;
+		if (!CreateProcessA(
+				nullptr,
+				mutableCmd.data(),
+				nullptr,
+				nullptr,
+				FALSE,
+				CREATE_NO_WINDOW,
+				nullptr,
+				nullptr,
+				&si,
+				&pi))
+			return false;
+		const DWORD wait = WaitForSingleObject(pi.hProcess, timeoutMs);
+		DWORD exitCode = 1;
+		if (wait == WAIT_OBJECT_0)
+			GetExitCodeProcess(pi.hProcess, &exitCode);
+		else
+			TerminateProcess(pi.hProcess, 1);
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
+		return wait == WAIT_OBJECT_0 && exitCode == 0;
+	};
+
+	char exePathA[MAX_PATH] = {};
+	GetModuleFileNameA(nullptr, exePathA, MAX_PATH);
 
 	if (enabled)
-		RegSetValueExW(key, L"AntiZapret", 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()), static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
-	else
-		RegDeleteValueW(key, L"AntiZapret");
+	{
+		// ONLOGON + HIGHEST needs admin; often fails → fall back to HKCU Run.
+		bool taskOk = false;
+		const std::string trArg = std::string("\\\"") + exePathA + "\\\" --autostart";
+		const std::string createHighest =
+			std::string("cmd /c schtasks /Create /F /SC ONLOGON /TN \"") +
+			kTaskName + "\" /TR \"" + trArg + "\" /RL HIGHEST";
+		taskOk = runHidden(createHighest, 8000);
 
-	RegCloseKey(key);
+		if (taskOk)
+		{
+			HKEY key = nullptr;
+			if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_SET_VALUE, &key) == ERROR_SUCCESS)
+			{
+				RegDeleteValueW(key, kValueName);
+				RegCloseKey(key);
+			}
+			return;
+		}
+
+		HKEY key = nullptr;
+		if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS)
+		{
+			RegSetValueExW(
+				key,
+				kValueName,
+				0,
+				REG_SZ,
+				reinterpret_cast<const BYTE*>(runCommand.c_str()),
+				static_cast<DWORD>((runCommand.size() + 1) * sizeof(wchar_t)));
+			RegCloseKey(key);
+		}
+		return;
+	}
+
+	runHidden(std::string("cmd /c schtasks /Delete /F /TN \"") + kTaskName + "\"", 8000);
+	HKEY key = nullptr;
+	if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_SET_VALUE, &key) == ERROR_SUCCESS)
+	{
+		RegDeleteValueW(key, kValueName);
+		RegCloseKey(key);
+	}
 }

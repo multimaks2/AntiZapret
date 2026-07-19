@@ -11,6 +11,7 @@
 #include <array>
 #include <mutex>
 #include <string>
+#include <vector>
 
 class AppSettings;
 
@@ -50,10 +51,19 @@ public:
 
 	void LoadStore();
 	void SaveStore();
+	void RememberSelectedStrategy(int strategyIndex);
+	void RememberSmartStrategySelected();
+	void ReloadRuntimeStrategies();
 	int GetPreferredStrategyIndex(bool autoSelectBest) const;
 	int GetCachedBestStrategyIndex() const;
 	const ZapretStore& GetStore() const { return m_store; }
 	const StrategyTestEntry* GetStrategyResult(int strategyIndex) const;
+	int GetVisibleStrategyCount(bool showExtraStrategies) const;
+	int GetVisibleStrategyAt(int visibleIndex, bool showExtraStrategies) const;
+	bool IsStrategyVisible(int strategyIndex, bool showExtraStrategies) const;
+	bool IsBatchStrategy(int strategyIndex) const;
+	const std::string& GetStrategyLabel(int strategyIndex) const;
+	const std::string& GetStrategyFileName(int strategyIndex) const;
 
 	void RequestConnectivityCheck(int strategyIndex = -1);
 	bool IsCheckingConnectivity() const { return m_connectivityCheckRunning.load(); }
@@ -65,6 +75,8 @@ public:
 	int GetConnectivityCountdownSecondsCeil() const;
 
 	void HandleStrategyTestButton(ZapretStrategies::GameFilterMode gameFilterMode);
+	void RequestStopStrategyTest();
+	bool CanStopStrategyTest() const;
 	StrategyTestState GetStrategyTestState() const { return m_strategyTestState.load(); }
 	const char* GetStrategyTestButtonLabel() const;
 	float GetStrategyTestProgress() const;
@@ -100,6 +112,9 @@ private:
 	void RestoreStrategyAfterTest(int strategyIndex);
 	void InvalidateStrategyCache();
 	void EnsureStrategyCache() const;
+	void LoadRuntimeStrategies();
+	bool IsValidStrategyIndex(int strategyIndex) const;
+	const std::string& GetStrategyKey(int strategyIndex) const;
 	bool ShowExtraStrategies() const;
 	int GetBestVisibleStrategyIndex() const;
 	int ClampStrategyIndexToVisible(int strategyIndex) const;
@@ -118,6 +133,7 @@ private:
 	void MaybeAutoFailover(bool discordOk, bool youtubeOk);
 
 	static constexpr int kAutoFailoverConfirmChecks = 2;
+	static constexpr int kStrategyTestStopDelayMs = 2000;
 
 	HANDLE m_process = nullptr;
 	mutable std::mutex m_processMutex;
@@ -142,6 +158,8 @@ private:
 
 	std::atomic<StrategyTestState> m_strategyTestState { StrategyTestState::Idle };
 	std::atomic<bool> m_strategyTestStopRequested { false };
+	std::atomic<bool> m_strategyTestFullStopRequested { false };
+	std::atomic<ULONGLONG> m_strategyTestStartTick { 0 };
 	std::atomic<int> m_strategyTestCurrent { 0 };
 	std::atomic<int> m_strategyTestTotal { 0 };
 	std::atomic<int> m_strategyTestResumeIndex { 0 };
@@ -160,7 +178,17 @@ private:
 
 	ZapretStore m_store;
 	SmartStrategyEngine m_smartStrategy;
-	mutable std::array<const StrategyTestEntry*, ZapretStrategies::kStrategyCount> m_strategyResultCache {};
+	struct RuntimeStrategy
+	{
+		std::string id;
+		std::string label;
+		std::string fileName;
+		std::wstring batPath;
+		const ZapretStrategies::StrategyDefinition* staticDefinition = nullptr;
+		bool isExtra = false;
+	};
+	std::vector<RuntimeStrategy> m_strategies;
+	mutable std::vector<const StrategyTestEntry*> m_strategyResultCache;
 	mutable int m_cachedPreferredBestIndex = -1;
 	mutable bool m_strategyCacheValid = false;
 

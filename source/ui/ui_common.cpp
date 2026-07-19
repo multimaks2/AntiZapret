@@ -42,12 +42,80 @@ namespace
 	}
 }
 
+void UiCommon::VersionBadge(const char* version, const ImVec4& accent, const UiThemeColors& colors)
+{
+	VersionBadge(version, accent, colors, true);
+}
+
+void UiCommon::VersionBadge(const char* version, const ImVec4& accent, const UiThemeColors& colors, bool centerInLine)
+{
+	if (!version || !version[0])
+		return;
+
+	ImFont* font = ImGui::GetFont();
+	const float versionFontSize = ImGui::GetFontSize() * 0.82f;
+	const ImVec2 textSize = font->CalcTextSizeA(versionFontSize, FLT_MAX, 0.f, version);
+	const float padX = 5.f;
+	const float padY = 1.f;
+	const float badgeH = textSize.y + padY * 2.f;
+	const float badgeW = textSize.x + padX * 2.f;
+	const ImVec2 cursor = ImGui::GetCursorScreenPos();
+	const float lineH = ImGui::GetTextLineHeight();
+	const float badgeY = centerInLine && lineH > badgeH
+		? cursor.y + (lineH - badgeH) * 0.5f
+		: cursor.y;
+	const ImVec2 min = { cursor.x, badgeY };
+	const ImVec2 max = { min.x + badgeW, min.y + badgeH };
+
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	drawList->AddRect(
+		min,
+		max,
+		ImGui::ColorConvertFloat4ToU32(accent),
+		3.f,
+		0,
+		1.25f);
+	drawList->AddText(
+		font,
+		versionFontSize,
+		{ min.x + padX, min.y + padY },
+		ImGui::ColorConvertFloat4ToU32(colors.textPrimary),
+		version);
+	ImGui::Dummy({ badgeW, centerInLine ? lineH : badgeH });
+}
+
 void UiCommon::PageTitle(
 	FontManager& fonts,
 	uint32_t iconCode,
 	const char* title,
 	const char* subtitle,
 	const UiThemeColors& colors)
+{
+	PageTitle(fonts, iconCode, title, subtitle, colors, nullptr, {}, nullptr, false);
+}
+
+void UiCommon::PageTitle(
+	FontManager& fonts,
+	uint32_t iconCode,
+	const char* title,
+	const char* subtitle,
+	const UiThemeColors& colors,
+	const char* version,
+	const ImVec4& versionAccent)
+{
+	PageTitle(fonts, iconCode, title, subtitle, colors, version, versionAccent, nullptr, false);
+}
+
+bool UiCommon::PageTitle(
+	FontManager& fonts,
+	uint32_t iconCode,
+	const char* title,
+	const char* subtitle,
+	const UiThemeColors& colors,
+	const char* version,
+	const ImVec4& versionAccent,
+	const char* updateButtonLabel,
+	bool updateButtonEnabled)
 {
 	const std::string glyph = CodepointUtf8(iconCode);
 	ImFont* iconFont = fonts.GetIconFont();
@@ -62,13 +130,37 @@ void UiCommon::PageTitle(
 	ImGui::TextUnformatted(title);
 	ImGui::PopStyleColor();
 
+	if (version && version[0])
+	{
+		ImGui::SameLine(0.f, 10.f);
+		VersionBadge(version, versionAccent, colors);
+	}
+
+	bool updateClicked = false;
+	if (updateButtonLabel && updateButtonLabel[0])
+	{
+		ImGui::SameLine(0.f, 12.f);
+		const float btnH = UiMetrics::kSmallBtnHeight;
+		const float btnW = ImGui::CalcTextSize(updateButtonLabel).x + 24.f;
+		const float lineH = ImGui::GetTextLineHeight();
+		if (btnH < lineH)
+			ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (lineH - btnH) * 0.5f);
+		updateClicked = SecondaryButton(updateButtonLabel, { btnW, btnH }, colors, updateButtonEnabled);
+	}
+
 	if (subtitle && subtitle[0])
 	{
 		ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
 		ImGui::TextUnformatted(subtitle);
 		ImGui::PopStyleColor();
+		ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 	}
-	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
+	else if (!(version && version[0]) && !(updateButtonLabel && updateButtonLabel[0]))
+	{
+		ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
+	}
+
+	return updateClicked;
 }
 
 void UiCommon::SectionHeader(const char* title, const UiThemeColors& colors)

@@ -72,7 +72,7 @@ namespace
 
 	std::filesystem::path FlagDirectory()
 	{
-		return std::filesystem::path(ZapretPaths::GetVpnDirectory()) / L"flags";
+		return std::filesystem::path(ZapretPaths::GetCacheDirectory()) / L"flags";
 	}
 
 	std::filesystem::path FlagFilePath(const std::string& countryCode)

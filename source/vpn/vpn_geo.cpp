@@ -66,7 +66,7 @@ namespace
 
 	std::filesystem::path GeoCacheFile()
 	{
-		return std::filesystem::path(ZapretPaths::GetVpnDirectory()) / L"cache" / L"geoip.ini";
+		return std::filesystem::path(ZapretPaths::GetCacheDirectory()) / L"geoip.ini";
 	}
 
 	std::string JsonStringField(const std::string& json, const char* key)

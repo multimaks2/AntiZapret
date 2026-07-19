@@ -69,6 +69,7 @@ private:
 	};
 
 	void DrawMainLayout(ThemeManager& theme, FontManager& fonts, float width, float height);
+	void ProcessProtocolCommands();
 
 	UiSidebar m_sidebar;
 	UiPageHost m_pageHost;

@@ -18,7 +18,6 @@
 
 namespace
 {
-	const char* kTransportModes[] = { "Режим - Proxy", "Режим - Tunnel" };
 	const char* kDnsModes[] = { "Системный DNS", "Встроенный DNS" };
 	const char* kBootstrapDns[] = {
 		"Cloudflare 1.1.1.1",
@@ -557,12 +556,13 @@ namespace
 
 void UiRoutingPage::EnsureLoaded()
 {
+	VpnStoreSettings settings;
+	m_store.LoadSettings(settings);
+	// Режим Proxy/Tunnel меняется на вкладке VPN — всегда подтягиваем актуальное значение.
+	m_transportMode = settings.transportMode;
 	if (m_loaded)
 		return;
 
-	VpnStoreSettings settings;
-	m_store.LoadSettings(settings);
-	m_transportMode = settings.transportMode;
 	m_dnsMode = settings.dnsMode;
 	m_bootstrapDns = settings.bootstrapDns;
 	m_bootstrapType = settings.bootstrapType;
@@ -596,7 +596,7 @@ void UiRoutingPage::ApplyRouting()
 
 	VpnStoreSettings settings;
 	m_store.LoadSettings(settings);
-	settings.transportMode = m_transportMode;
+	// transportMode задаётся на вкладке VPN — не перезаписываем.
 	settings.dnsMode = m_dnsMode;
 	settings.bootstrapDns = m_bootstrapDns;
 	settings.bootstrapType = m_bootstrapType;
@@ -1124,8 +1124,6 @@ void UiRoutingPage::DrawContent(ThemeManager& theme, FontManager& fonts, float w
 		const float fieldW = ImGui::GetContentRegionAvail().x;
 		constexpr float kLabelW = 72.f;
 
-		if (DrawInlineFieldCombo("mode", "Режим", m_transportMode, kTransportModes, 2, fieldW, kLabelW, colors))
-			ApplyRouting();
 		if (DrawInlineFieldCombo("dns_mode", "DNS", m_dnsMode, kDnsModes, 2, fieldW, kLabelW, colors))
 			ApplyRouting();
 

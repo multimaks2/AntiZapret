@@ -58,7 +58,7 @@ namespace
 
 	{
 
-		return std::filesystem::path(ZapretPaths::GetVpnDirectory()) / L"cache" / L"domain-rules.ini";
+		return std::filesystem::path(ZapretPaths::GetCacheDirectory()) / L"domain-rules.ini";
 
 	}
 

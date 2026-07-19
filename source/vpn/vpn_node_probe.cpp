@@ -7,6 +7,8 @@
 #include <WS2tcpip.h>
 #include <Windows.h>
 #include <WinInet.h>
+#include <iphlpapi.h>
+#include <icmpapi.h>
 
 #include <algorithm>
 #include <chrono>
@@ -18,6 +20,7 @@
 
 #pragma comment(lib, "wininet.lib")
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "iphlpapi.lib")
 
 namespace
 {
@@ -219,6 +222,86 @@ std::string VpnNodeProbe::ResolveHostIpv4(const std::string& host)
 	return ResolveViaGetAddrInfo(host);
 }
 
+namespace
+{
+	std::string ResolveFirstPublicIpv4(const std::string& host)
+	{
+		unsigned a = 0, b = 0, c = 0, d = 0;
+		if (ParseIpv4(host, a, b, c, d) && !IsClashFakeIp(host))
+			return host;
+
+		std::string resolved = VpnNodeProbe::ResolveHostIpv4(host);
+		const size_t comma = resolved.find(',');
+		if (comma != std::string::npos)
+			resolved = resolved.substr(0, comma);
+		while (!resolved.empty() && (resolved.front() == ' ' || resolved.front() == '\t'))
+			resolved.erase(resolved.begin());
+		while (!resolved.empty() && (resolved.back() == ' ' || resolved.back() == '\t'))
+			resolved.pop_back();
+		if (!resolved.empty() && !IsClashFakeIp(resolved) && ParseIpv4(resolved, a, b, c, d))
+			return resolved;
+		return {};
+	}
+}
+
+int VpnNodeProbe::IcmpPingMs(const std::string& host, int timeoutMs)
+{
+	if (host.empty() || timeoutMs <= 0)
+		return -1;
+
+	EnsureWinsock();
+	const std::string connectIp = ResolveFirstPublicIpv4(host);
+	if (connectIp.empty())
+		return -1;
+
+	IN_ADDR addr = {};
+	if (inet_pton(AF_INET, connectIp.c_str(), &addr) != 1)
+		return -1;
+
+	HANDLE icmp = IcmpCreateFile();
+	if (icmp == INVALID_HANDLE_VALUE)
+		return -1;
+
+	constexpr char kPayload[] = "AntiZapretICMP";
+	constexpr DWORD kReplySlots = 2;
+	const DWORD replySize = sizeof(ICMP_ECHO_REPLY) + sizeof(kPayload) + 16;
+	std::vector<unsigned char> reply(replySize * kReplySlots, 0);
+
+	int bestMs = -1;
+	// Like cmd ping: a couple of echoes, take the best successful RTT.
+	for (int attempt = 0; attempt < 2; ++attempt)
+	{
+		const DWORD replies = IcmpSendEcho(
+			icmp,
+			addr.S_un.S_addr,
+			const_cast<char*>(kPayload),
+			static_cast<WORD>(sizeof(kPayload) - 1),
+			nullptr,
+			reply.data(),
+			static_cast<DWORD>(reply.size()),
+			static_cast<DWORD>(timeoutMs));
+		if (replies > 0)
+		{
+			const auto* echo = reinterpret_cast<const ICMP_ECHO_REPLY*>(reply.data());
+			if (echo->Status == IP_SUCCESS && echo->RoundTripTime >= 0)
+			{
+				const int rtt = static_cast<int>(echo->RoundTripTime);
+				// RoundTripTime can be 0 for LAN — keep as 1ms for UI "alive".
+				const int ms = rtt <= 0 ? 1 : rtt;
+				if (bestMs < 0 || ms < bestMs)
+					bestMs = ms;
+			}
+		}
+		if (attempt == 0 && bestMs < 0)
+			Sleep(50);
+		else if (attempt == 0)
+			break; // first success is enough for list ping
+	}
+
+	IcmpCloseHandle(icmp);
+	return bestMs;
+}
+
 int VpnNodeProbe::TcpPingMs(const std::string& host, int port, int timeoutMs)
 {
 	if (host.empty() || port <= 0 || port > 65535)
@@ -229,27 +312,7 @@ int VpnNodeProbe::TcpPingMs(const std::string& host, int port, int timeoutMs)
 	// With mihomo TUN + fake-ip, system DNS returns 198.18.x.x and connect()
 	// completes locally against Clash (~10–20 ms) — not real RTT from the PC.
 	// Resolve a real public IPv4 (DoH) and TCP-connect to that address directly.
-	std::string connectIp;
-	unsigned a = 0, b = 0, c = 0, d = 0;
-	if (ParseIpv4(host, a, b, c, d) && !IsClashFakeIp(host))
-	{
-		connectIp = host;
-	}
-	else
-	{
-		std::string resolved = ResolveHostIpv4(host);
-		const size_t comma = resolved.find(',');
-		if (comma != std::string::npos)
-			resolved = resolved.substr(0, comma);
-		// trim spaces
-		while (!resolved.empty() && (resolved.front() == ' ' || resolved.front() == '\t'))
-			resolved.erase(resolved.begin());
-		while (!resolved.empty() && (resolved.back() == ' ' || resolved.back() == '\t'))
-			resolved.pop_back();
-		if (!resolved.empty() && !IsClashFakeIp(resolved) && ParseIpv4(resolved, a, b, c, d))
-			connectIp = resolved;
-	}
-
+	const std::string connectIp = ResolveFirstPublicIpv4(host);
 	if (connectIp.empty())
 		return -1;
 
@@ -366,7 +429,8 @@ float VpnNodeProbe::MeasureDownloadPeakMBps(
 	int proxyPort,
 	const char* url,
 	int timeoutMs,
-	std::atomic_bool* cancelFlag)
+	std::atomic_bool* cancelFlag,
+	const std::function<void(float peakMBps)>& onProgress)
 {
 	if (proxyHost.empty() || proxyPort <= 0 || !url || !url[0])
 		return -1.f;
@@ -410,6 +474,12 @@ float VpnNodeProbe::MeasureDownloadPeakMBps(
 	unsigned long long total = 0;
 	unsigned long long sampleBytes = 0;
 	double maxBytesPerSec = 0.0;
+	auto reportProgress = [&]()
+	{
+		if (!onProgress || maxBytesPerSec <= 0.0)
+			return;
+		onProgress(static_cast<float>(maxBytesPerSec / 1000.0 / 1000.0));
+	};
 
 	char buffer[16384];
 	DWORD read = 0;
@@ -433,6 +503,7 @@ float VpnNodeProbe::MeasureDownloadPeakMBps(
 				maxBytesPerSec = bps;
 			sampleBytes = 0;
 			sampleStart = now;
+			reportProgress();
 		}
 
 		const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count();
@@ -460,8 +531,11 @@ float VpnNodeProbe::MeasureDownloadPeakMBps(
 	if (total < 64 * 1024 || maxBytesPerSec <= 0.0)
 		return -1.f;
 
+	const float peak = static_cast<float>(maxBytesPerSec / 1000.0 / 1000.0);
+	if (onProgress)
+		onProgress(peak);
 	// v2rayN: maxSpeed / 1000 / 1000 → MB/s
-	return static_cast<float>(maxBytesPerSec / 1000.0 / 1000.0);
+	return peak;
 }
 
 bool VpnNodeProbe::CopyUtf8ToClipboard(const std::string& text)

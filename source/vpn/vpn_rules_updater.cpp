@@ -156,9 +156,9 @@ namespace
 		output << "updated=" << now << "\r\n";
 	}
 
-	void CleanupVpnDirectory(const std::filesystem::path& vpnDirectory, const std::filesystem::path& srssDirectory)
+	void CleanupGeneratedFiles(const std::filesystem::path& cacheDirectory, const std::filesystem::path& srssDirectory)
 	{
-		static const wchar_t* kStaleVpnFiles[] = {
+		static const wchar_t* kStaleCacheFiles[] = {
 			L"GeoIP.dat",
 			L"Country.mmdb",
 			L"config-test.yaml",
@@ -195,7 +195,12 @@ namespace
 			}
 		}
 
-		for (const wchar_t* name : kStaleVpnFiles)
+		for (const wchar_t* name : kStaleCacheFiles)
+			std::filesystem::remove(cacheDirectory / name, ec);
+
+		// Leftovers from older layouts under vpn/
+		const std::filesystem::path vpnDirectory = std::filesystem::path(ZapretPaths::GetVpnDirectory());
+		for (const wchar_t* name : kStaleCacheFiles)
 			std::filesystem::remove(vpnDirectory / name, ec);
 	}
 
@@ -204,8 +209,8 @@ namespace
 		g_updateInProgress = true;
 		SetStatus("Обновление правил маршрутизации...");
 
-		const std::filesystem::path vpnDirectory = std::filesystem::path(ZapretPaths::GetVpnDirectory());
-		const std::filesystem::path srssDirectory = vpnDirectory / L"srss";
+		const std::filesystem::path cacheDirectory = std::filesystem::path(ZapretPaths::GetCacheDirectory());
+		const std::filesystem::path srssDirectory = cacheDirectory / L"srss";
 		std::error_code ec;
 		std::filesystem::create_directories(srssDirectory, ec);
 
@@ -248,11 +253,11 @@ namespace
 				false);
 		}
 
-		refreshFile(kGeoipMetadbUrl, vpnDirectory / L"geoip.metadb", true);
+		refreshFile(kGeoipMetadbUrl, cacheDirectory / L"geoip.metadb", true);
 
-		CleanupVpnDirectory(vpnDirectory, srssDirectory);
+		CleanupGeneratedFiles(cacheDirectory, srssDirectory);
 
-		WriteLastUpdateTimestamp(vpnDirectory / L"cache" / L"rules-update.ini");
+		WriteLastUpdateTimestamp(cacheDirectory / L"rules-update.ini");
 
 		char summary[256] = {};
 		snprintf(
@@ -281,8 +286,8 @@ void VpnRulesUpdater::EnsureGeositeFiles(const std::vector<std::string>& geosite
 	if (geositeNames.empty())
 		return;
 
-	const std::filesystem::path vpnDirectory = std::filesystem::path(ZapretPaths::GetVpnDirectory());
-	const std::filesystem::path srssDirectory = vpnDirectory / L"srss";
+	const std::filesystem::path cacheDirectory = std::filesystem::path(ZapretPaths::GetCacheDirectory());
+	const std::filesystem::path srssDirectory = cacheDirectory / L"srss";
 	std::error_code ec;
 	std::filesystem::create_directories(srssDirectory, ec);
 
@@ -312,6 +317,34 @@ void VpnRulesUpdater::StartBackgroundUpdate()
 bool VpnRulesUpdater::IsUpdateInProgress()
 {
 	return g_updateInProgress.load();
+}
+
+bool VpnRulesUpdater::AreCoreRulesReady()
+{
+	const std::filesystem::path srss =
+		std::filesystem::path(ZapretPaths::GetCacheDirectory()) / L"srss";
+
+	// Required for all RUv1 presets (always referenced in rule-providers).
+	static const wchar_t* kRequired[] = {
+		L"geosite-ru-blocked.srs",
+		L"geoip-ru-blocked.srs",
+		L"geosite-private.srs",
+		L"geoip-private.srs",
+		L"geosite-category-ads-all.srs",
+		L"geoip-ru.srs",
+	};
+
+	std::error_code ec;
+	for (const wchar_t* name : kRequired)
+	{
+		const std::filesystem::path path = srss / name;
+		if (!std::filesystem::exists(path, ec))
+			return false;
+		const auto size = std::filesystem::file_size(path, ec);
+		if (ec || size < 64)
+			return false;
+	}
+	return true;
 }
 
 std::string VpnRulesUpdater::GetStatusMessage()

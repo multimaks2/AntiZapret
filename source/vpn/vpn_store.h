@@ -20,6 +20,5 @@ private:
 	std::filesystem::path CacheDirectory() const;
 	std::filesystem::path NodesFile() const;
 	std::filesystem::path StateFile() const;
-	std::filesystem::path SettingsFile() const;
 	void ParseSettingsLine(const std::string& key, const std::string& value, VpnStoreSettings& settings) const;
 };

@@ -567,7 +567,9 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 	const VpnNode& node,
 	VpnRoutingPreset preset,
 	const VpnStoreSettings& transport,
-	const std::wstring& vpnDirectory,
+	const std::wstring& mihomoHome,
+	int mixedPort,
+	int apiPort,
 	std::string& outError,
 	bool fetchGeosites)
 {
@@ -581,8 +583,8 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 	const bool useTun = transport.transportMode != 0;
 	const bool strictRoute = useTun && preset == VpnRoutingPreset::Ruv1All;
 
-	yaml << "mixed-port: " << VpnManager::kMixedPort << "\n";
-	yaml << "external-controller: 127.0.0.1:" << VpnManager::kApiPort << "\n";
+	yaml << "mixed-port: " << mixedPort << "\n";
+	yaml << "external-controller: 127.0.0.1:" << apiPort << "\n";
 	yaml << "allow-lan: false\n";
 	yaml << "mode: rule\n";
 	yaml << "log-level: warning\n";
@@ -632,7 +634,7 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 	yaml << "\n";
 
 	std::string configBody = yaml.str();
-	const std::filesystem::path srssDirectory = std::filesystem::path(vpnDirectory) / L"srss";
+	const std::filesystem::path srssDirectory = std::filesystem::path(mihomoHome) / L"srss";
 
 	VpnCustomRoutingInput customRouting;
 	const VpnCustomRoutingInput* customRoutingPtr = nullptr;
@@ -661,12 +663,12 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 		&& std::filesystem::exists(srssDirectory / L"geosite-google.srs");
 	const bool hasGoogleIpRules = preset == VpnRoutingPreset::Ruv1Blocked
 		&& std::filesystem::exists(srssDirectory / L"geoip-google.srs");
-	VpnRouting::AppendRuleProviders(configBody, preset, vpnDirectory, customRoutingPtr);
+	VpnRouting::AppendRuleProviders(configBody, preset, mihomoHome, customRoutingPtr);
 	configBody += "\n";
 	VpnRouting::AppendRules(
 		configBody,
 		preset,
-		vpnDirectory,
+		mihomoHome,
 		hasRuInsideDomainRules,
 		hasGoogleDomainRules,
 		hasGoogleIpRules,
@@ -674,9 +676,9 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 		transport.fixDiscord);
 	configBody += "\n";
 
-	const std::filesystem::path configPath = std::filesystem::path(vpnDirectory) / L"config.yaml";
+	const std::filesystem::path configPath = std::filesystem::path(mihomoHome) / L"config.yaml";
 	std::error_code ec;
-	std::filesystem::create_directories(std::filesystem::path(vpnDirectory), ec);
+	std::filesystem::create_directories(std::filesystem::path(mihomoHome), ec);
 
 	std::ofstream output(configPath, std::ios::binary | std::ios::trunc);
 	if (!output)
@@ -685,6 +687,168 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 		return false;
 	}
 
+	output << configBody;
+	return output.good();
+}
+
+bool VpnConfigBuilder::WriteParallelProbeConfig(
+	const std::vector<VpnNode>& nodes,
+	const std::vector<int>& indices,
+	int activeIndex,
+	VpnRoutingPreset preset,
+	const VpnStoreSettings& transport,
+	const std::wstring& mihomoHome,
+	int mixedPort,
+	int apiPort,
+	int portBase,
+	std::vector<ParallelProbeEndpoint>& outEndpoints,
+	std::string& outError)
+{
+	outEndpoints.clear();
+	if (indices.empty())
+	{
+		outError = "Нет серверов для параллельного пинга.";
+		return false;
+	}
+
+	std::ostringstream proxiesYaml;
+	std::ostringstream listenersYaml;
+	std::ostringstream groupProxiesYaml;
+	std::string activeTag;
+
+	for (size_t n = 0; n < indices.size(); ++n)
+	{
+		const int index = indices[n];
+		if (index < 0 || index >= static_cast<int>(nodes.size()))
+			continue;
+
+		const VpnNode& node = nodes[static_cast<size_t>(index)];
+		char tagBuf[32];
+		snprintf(tagBuf, sizeof tagBuf, "az-%d", index);
+		const std::string tag = tagBuf;
+
+		std::string proxyYaml;
+		std::string buildError;
+		if (!BuildProxyYaml(node, tag, proxyYaml, buildError))
+			continue;
+
+		proxiesYaml << proxyYaml;
+		groupProxiesYaml << "      - " << YamlQuote(tag) << "\n";
+
+		const int port = portBase + static_cast<int>(outEndpoints.size());
+		listenersYaml << "  - name: L" << index << "\n";
+		listenersYaml << "    type: mixed\n";
+		listenersYaml << "    port: " << port << "\n";
+		listenersYaml << "    listen: 127.0.0.1\n";
+		listenersYaml << "    proxy: " << YamlQuote(tag) << "\n";
+
+		ParallelProbeEndpoint endpoint;
+		endpoint.nodeIndex = index;
+		endpoint.port = port;
+		endpoint.proxyTag = tag;
+		outEndpoints.push_back(endpoint);
+
+		if (index == activeIndex)
+			activeTag = tag;
+	}
+
+	if (outEndpoints.empty())
+	{
+		outError = "Не удалось собрать прокси для параллельного пинга.";
+		return false;
+	}
+
+	if (activeTag.empty())
+		activeTag = outEndpoints.front().proxyTag;
+
+	std::ostringstream yaml;
+	// Probe session must never enable TUN — only local mixed listeners for RealPing.
+	constexpr bool useTun = false;
+
+	yaml << "mixed-port: " << mixedPort << "\n";
+	yaml << "external-controller: 127.0.0.1:" << apiPort << "\n";
+	yaml << "allow-lan: false\n";
+	yaml << "mode: rule\n";
+	yaml << "log-level: warning\n";
+	yaml << "ipv6: false\n";
+	yaml << "geodata-mode: true\n";
+	yaml << "geo-auto-update: false\n";
+	yaml << "find-process-mode: off\n";
+	yaml << "\n";
+
+	yaml << "sniffer:\n";
+	yaml << "  enable: true\n";
+	yaml << "  sniff:\n";
+	yaml << "    HTTP:\n";
+	yaml << "      ports: [80, 8080-8880]\n";
+	yaml << "    TLS:\n";
+	yaml << "      ports: [443, 8443]\n";
+	yaml << "    QUIC:\n";
+	yaml << "      ports: [443]\n";
+	yaml << "\n";
+
+	yaml << "tun:\n";
+	yaml << "  enable: false\n";
+	yaml << "\n";
+
+	AppendDnsBlock(yaml, transport, preset, useTun);
+	yaml << "proxies:\n";
+	yaml << proxiesYaml.str();
+	yaml << "\n";
+	yaml << "proxy-groups:\n";
+	yaml << "  - name: PROXY\n";
+	yaml << "    type: select\n";
+	yaml << "    proxies:\n";
+	yaml << "      - " << YamlQuote(activeTag) << "\n";
+	yaml << groupProxiesYaml.str();
+	yaml << "\n";
+	yaml << "listeners:\n";
+	yaml << listenersYaml.str();
+	yaml << "\n";
+
+	std::string configBody = yaml.str();
+	const std::filesystem::path srssDirectory = std::filesystem::path(mihomoHome) / L"srss";
+
+	VpnCustomRoutingInput customRouting;
+	const VpnCustomRoutingInput* customRoutingPtr = nullptr;
+	if (preset == VpnRoutingPreset::Custom)
+	{
+		VpnServiceRoutes::Load(customRouting.services);
+		VpnDomainRoutes::Load(customRouting.domains);
+		AppSettings appSettings;
+		appSettings.Load();
+		customRouting.includeAdultServices = appSettings.GetConfirmAdult();
+		customRoutingPtr = &customRouting;
+	}
+
+	const bool hasRuInsideDomainRules = preset == VpnRoutingPreset::Ruv1ExceptRu
+		&& std::filesystem::exists(srssDirectory / L"geosite-ru-available-only-inside.srs");
+	const bool hasGoogleDomainRules = preset == VpnRoutingPreset::Ruv1Blocked
+		&& std::filesystem::exists(srssDirectory / L"geosite-google.srs");
+	const bool hasGoogleIpRules = preset == VpnRoutingPreset::Ruv1Blocked
+		&& std::filesystem::exists(srssDirectory / L"geoip-google.srs");
+	VpnRouting::AppendRuleProviders(configBody, preset, mihomoHome, customRoutingPtr);
+	configBody += "\n";
+	VpnRouting::AppendRules(
+		configBody,
+		preset,
+		mihomoHome,
+		hasRuInsideDomainRules,
+		hasGoogleDomainRules,
+		hasGoogleIpRules,
+		customRoutingPtr,
+		transport.fixDiscord);
+	configBody += "\n";
+
+	const std::filesystem::path configPath = std::filesystem::path(mihomoHome) / L"config.yaml";
+	std::error_code ec;
+	std::filesystem::create_directories(std::filesystem::path(mihomoHome), ec);
+	std::ofstream output(configPath, std::ios::binary | std::ios::trunc);
+	if (!output)
+	{
+		outError = "Не удалось записать config.yaml для параллельного пинга.";
+		return false;
+	}
 	output << configBody;
 	return output.good();
 }

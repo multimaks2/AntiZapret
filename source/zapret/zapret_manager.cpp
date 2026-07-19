@@ -5,8 +5,10 @@
 
 #include "app/app_log.h"
 #include "app/app_settings.h"
+#include "app/process_job.h"
 #include "tgproxy/tg_ws_proxy_manager.h"
 #include "zapret/strategy_argument_builder.h"
+#include "zapret/strategy_bat_parser.h"
 #include "zapret/zapret_paths.h"
 
 #include <Windows.h>
@@ -14,12 +16,57 @@
 
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
+#include <cctype>
 #include <random>
 #include <thread>
 #include <vector>
 
 namespace
 {
+	// Как в interface: ALT2 < ALT10 (цифры сравниваются как числа).
+	bool CompareStrategyNamesNatural(const std::string& a, const std::string& b)
+	{
+		size_t i = 0;
+		size_t j = 0;
+		while (i < a.size() && j < b.size())
+		{
+			const unsigned char ca = static_cast<unsigned char>(a[i]);
+			const unsigned char cb = static_cast<unsigned char>(b[j]);
+			const bool da = std::isdigit(ca) != 0;
+			const bool db = std::isdigit(cb) != 0;
+			if (da && db)
+			{
+				size_t ai = i;
+				while (ai < a.size() && std::isdigit(static_cast<unsigned char>(a[ai])))
+					++ai;
+				size_t bj = j;
+				while (bj < b.size() && std::isdigit(static_cast<unsigned char>(b[bj])))
+					++bj;
+				unsigned long long va = 0;
+				for (size_t k = i; k < ai; ++k)
+					va = va * 10ull + static_cast<unsigned long long>(a[k] - '0');
+				unsigned long long vb = 0;
+				for (size_t k = j; k < bj; ++k)
+					vb = vb * 10ull + static_cast<unsigned long long>(b[k] - '0');
+				if (va != vb)
+					return va < vb;
+				i = ai;
+				j = bj;
+			}
+			else
+			{
+				const char la = static_cast<char>(std::tolower(ca));
+				const char lb = static_cast<char>(std::tolower(cb));
+				if (la != lb)
+					return la < lb;
+				++i;
+				++j;
+			}
+		}
+		return a.size() < b.size();
+	}
+
 	bool IsWinwsProcessRunning()
 	{
 		HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -189,6 +236,7 @@ namespace
 
 ZapretManager::ZapretManager()
 {
+	LoadRuntimeStrategies();
 	LoadStore();
 }
 
@@ -205,14 +253,170 @@ void ZapretManager::LoadStore()
 	InvalidateStrategyCache();
 }
 
+void ZapretManager::ReloadRuntimeStrategies()
+{
+	const std::string activeKey = GetActiveStrategyStoreKey();
+	LoadRuntimeStrategies();
+	if (!activeKey.empty())
+	{
+		for (int i = 0; i < static_cast<int>(m_strategies.size()); ++i)
+		{
+			if (m_strategies[static_cast<size_t>(i)].id == activeKey)
+			{
+				m_activeStrategyIndex = i;
+				break;
+			}
+		}
+	}
+	InvalidateStrategyCache();
+}
+
 void ZapretManager::SaveStore()
 {
 	m_store.Save();
 }
 
+void ZapretManager::RememberSelectedStrategy(int strategyIndex)
+{
+	if (!IsValidStrategyIndex(strategyIndex))
+		return;
+	m_store.SetLastStrategy(GetStrategyKey(strategyIndex));
+	SaveStore();
+}
+
+void ZapretManager::RememberSmartStrategySelected()
+{
+	m_store.SetLastStrategy(SmartStrategyEngine::kLabel);
+	SaveStore();
+}
+
 void ZapretManager::InvalidateStrategyCache()
 {
 	m_strategyCacheValid = false;
+}
+
+void ZapretManager::LoadRuntimeStrategies()
+{
+	m_strategies.clear();
+	const std::filesystem::path root(ZapretPaths::GetAntiZapretDirectory());
+	std::error_code error;
+	if (std::filesystem::is_directory(root, error))
+	{
+		for (const auto& entry : std::filesystem::directory_iterator(root, error))
+		{
+			if (error || !entry.is_regular_file(error))
+				continue;
+			const std::filesystem::path path = entry.path();
+			std::wstring extension = path.extension().wstring();
+			std::transform(extension.begin(), extension.end(), extension.begin(), ::towlower);
+			std::wstring stem = path.stem().wstring();
+			if (extension != L".bat" || stem.size() < 7
+				|| _wcsnicmp(stem.c_str(), L"general", 7) != 0)
+				continue;
+
+			RuntimeStrategy strategy;
+			strategy.id = ZapretPaths::WideToUtf8(stem);
+			strategy.label = strategy.id;
+			strategy.fileName = ZapretPaths::WideToUtf8(path.filename().wstring());
+			strategy.batPath = path.wstring();
+			m_strategies.push_back(std::move(strategy));
+		}
+	}
+
+	std::sort(m_strategies.begin(), m_strategies.end(),
+		[](const RuntimeStrategy& left, const RuntimeStrategy& right)
+		{
+			return CompareStrategyNamesNatural(left.label, right.label);
+		});
+
+	// If Flowseal bats are not deployed yet, fall back to compiled-in general strategies.
+	if (m_strategies.empty())
+	{
+		for (const ZapretStrategies::StrategyDefinition& strategy : ZapretStrategies::kStrategies)
+		{
+			if (strategy.isExtra)
+				continue;
+			RuntimeStrategy entry;
+			entry.id = std::string(strategy.id);
+			entry.label = std::string(strategy.label);
+			entry.fileName = std::string(strategy.file);
+			entry.staticDefinition = &strategy;
+			entry.isExtra = false;
+			m_strategies.push_back(std::move(entry));
+		}
+	}
+
+	for (const ZapretStrategies::StrategyDefinition& strategy : ZapretStrategies::kStrategies)
+	{
+		if (!strategy.isExtra)
+			continue;
+		RuntimeStrategy extra;
+		extra.id = std::string(strategy.id);
+		extra.label = std::string(strategy.label);
+		extra.fileName = std::string(strategy.file);
+		extra.staticDefinition = &strategy;
+		extra.isExtra = true;
+		m_strategies.push_back(std::move(extra));
+	}
+	m_strategyResultCache.assign(m_strategies.size(), nullptr);
+	InvalidateStrategyCache();
+}
+
+bool ZapretManager::IsValidStrategyIndex(int strategyIndex) const
+{
+	return strategyIndex >= 0 && strategyIndex < static_cast<int>(m_strategies.size());
+}
+
+const std::string& ZapretManager::GetStrategyKey(int strategyIndex) const
+{
+	static const std::string empty;
+	return IsValidStrategyIndex(strategyIndex) ? m_strategies[static_cast<size_t>(strategyIndex)].id : empty;
+}
+
+int ZapretManager::GetVisibleStrategyCount(bool showExtraStrategies) const
+{
+	int count = 0;
+	for (const RuntimeStrategy& strategy : m_strategies)
+		if (showExtraStrategies || !strategy.isExtra)
+			++count;
+	return count;
+}
+
+int ZapretManager::GetVisibleStrategyAt(int visibleIndex, bool showExtraStrategies) const
+{
+	int seen = 0;
+	for (size_t i = 0; i < m_strategies.size(); ++i)
+	{
+		if (!showExtraStrategies && m_strategies[i].isExtra)
+			continue;
+		if (seen++ == visibleIndex)
+			return static_cast<int>(i);
+	}
+	return -1;
+}
+
+bool ZapretManager::IsStrategyVisible(int strategyIndex, bool showExtraStrategies) const
+{
+	return IsValidStrategyIndex(strategyIndex)
+		&& (showExtraStrategies || !m_strategies[static_cast<size_t>(strategyIndex)].isExtra);
+}
+
+bool ZapretManager::IsBatchStrategy(int strategyIndex) const
+{
+	return IsValidStrategyIndex(strategyIndex)
+		&& !m_strategies[static_cast<size_t>(strategyIndex)].staticDefinition;
+}
+
+const std::string& ZapretManager::GetStrategyLabel(int strategyIndex) const
+{
+	static const std::string empty;
+	return IsValidStrategyIndex(strategyIndex) ? m_strategies[static_cast<size_t>(strategyIndex)].label : empty;
+}
+
+const std::string& ZapretManager::GetStrategyFileName(int strategyIndex) const
+{
+	static const std::string empty;
+	return IsValidStrategyIndex(strategyIndex) ? m_strategies[static_cast<size_t>(strategyIndex)].fileName : empty;
 }
 
 bool ZapretManager::ShowExtraStrategies() const
@@ -223,10 +427,10 @@ bool ZapretManager::ShowExtraStrategies() const
 int ZapretManager::ClampStrategyIndexToVisible(int strategyIndex) const
 {
 	const bool showExtra = ShowExtraStrategies();
-	if (ZapretStrategies::IsStrategyVisible(strategyIndex, showExtra))
+	if (IsStrategyVisible(strategyIndex, showExtra))
 		return strategyIndex;
 
-	const int fallback = ZapretStrategies::GetVisibleStrategyAt(0, showExtra);
+	const int fallback = GetVisibleStrategyAt(0, showExtra);
 	return fallback >= 0 ? fallback : 0;
 }
 
@@ -237,9 +441,9 @@ int ZapretManager::GetBestVisibleStrategyIndex() const
 	int maxScore = -1;
 	int bestPingMs = -1;
 
-	for (std::size_t i = 0; i < ZapretStrategies::kStrategyCount; ++i)
+	for (std::size_t i = 0; i < m_strategies.size(); ++i)
 	{
-		if (!ZapretStrategies::IsStrategyVisible(static_cast<int>(i), showExtra))
+		if (!IsStrategyVisible(static_cast<int>(i), showExtra))
 			continue;
 
 		const StrategyTestEntry* entry = m_strategyResultCache[static_cast<std::size_t>(i)];
@@ -281,11 +485,8 @@ void ZapretManager::EnsureStrategyCache() const
 	if (m_strategyCacheValid)
 		return;
 
-	for (std::size_t i = 0; i < ZapretStrategies::kStrategyCount; ++i)
-	{
-		const std::string name(ZapretStrategies::kStrategies[i].id);
-		m_strategyResultCache[i] = m_store.GetResult(name);
-	}
+	for (std::size_t i = 0; i < m_strategies.size(); ++i)
+		m_strategyResultCache[i] = m_store.GetResult(m_strategies[i].id);
 
 	m_cachedPreferredBestIndex = GetBestVisibleStrategyIndex();
 	m_strategyCacheValid = true;
@@ -294,6 +495,19 @@ void ZapretManager::EnsureStrategyCache() const
 int ZapretManager::GetPreferredStrategyIndex(bool autoSelectBest) const
 {
 	EnsureStrategyCache();
+
+	// Всегда предпочитаем последнюю запущенную/выбранную стратегию.
+	// autoSelectBest влияет на failover (FindFallbackStrategyIndex), а не на «забыть last».
+	const std::string& lastStrategy = m_store.GetLastStrategy();
+	if (!lastStrategy.empty() && lastStrategy != SmartStrategyEngine::kLabel)
+	{
+		for (size_t i = 0; i < m_strategies.size(); ++i)
+		{
+			if (m_strategies[i].id == lastStrategy)
+				return ClampStrategyIndexToVisible(static_cast<int>(i));
+		}
+	}
+
 	if (autoSelectBest)
 	{
 		const int statsBest = GetBestVisibleStrategyByStats(-1);
@@ -301,14 +515,14 @@ int ZapretManager::GetPreferredStrategyIndex(bool autoSelectBest) const
 			return statsBest;
 	}
 
-	return ClampStrategyIndexToVisible(m_store.GetPreferredStrategyIndex(false));
+	return ClampStrategyIndexToVisible(GetVisibleStrategyAt(0, ShowExtraStrategies()));
 }
 
 int ZapretManager::GetBestVisibleStrategyByStats(int excludeIndex) const
 {
 	EnsureStrategyCache();
 	const bool showExtra = ShowExtraStrategies();
-	const int visibleCount = ZapretStrategies::CountVisibleStrategies(showExtra);
+	const int visibleCount = GetVisibleStrategyCount(showExtra);
 
 	int bestIndex = -1;
 	int bestRuntime = 0;
@@ -317,7 +531,7 @@ int ZapretManager::GetBestVisibleStrategyByStats(int excludeIndex) const
 
 	for (int pass = 0; pass < visibleCount; ++pass)
 	{
-		const int idx = ZapretStrategies::GetVisibleStrategyAt(pass, showExtra);
+		const int idx = GetVisibleStrategyAt(pass, showExtra);
 		if (idx < 0 || idx == excludeIndex)
 			continue;
 
@@ -350,18 +564,24 @@ int ZapretManager::FindFallbackStrategyIndex(int failedIndex) const
 		return statsBest;
 
 	const bool showExtra = ShowExtraStrategies();
-	const int visibleCount = ZapretStrategies::CountVisibleStrategies(showExtra);
+	const int visibleCount = GetVisibleStrategyCount(showExtra);
 	if (visibleCount <= 1)
 		return failedIndex;
 
-	int failedPos = ZapretStrategies::FindVisibleStrategyPosition(failedIndex, showExtra);
+	int failedPos = -1;
+	for (int pass = 0; pass < visibleCount; ++pass)
+		if (GetVisibleStrategyAt(pass, showExtra) == failedIndex)
+		{
+			failedPos = pass;
+			break;
+		}
 	if (failedPos < 0)
 		failedPos = 0;
 
 	for (int step = 1; step <= visibleCount; ++step)
 	{
 		const int pass = (failedPos + step) % visibleCount;
-		const int idx = ZapretStrategies::GetVisibleStrategyAt(pass, showExtra);
+		const int idx = GetVisibleStrategyAt(pass, showExtra);
 		if (idx >= 0 && idx != failedIndex)
 			return idx;
 	}
@@ -404,8 +624,8 @@ void ZapretManager::MaybeAutoFailover(bool discordOk, bool youtubeOk)
 		msg,
 		sizeof msg,
 		"Автопереключение (сбой Discord+YouTube): %s -> %s",
-		ZapretStrategies::GetStrategyLabel(currentIndex).data(),
-		ZapretStrategies::GetStrategyLabel(fallbackIndex).data());
+		GetStrategyLabel(currentIndex).c_str(),
+		GetStrategyLabel(fallbackIndex).c_str());
 	AppLog::Instance().Append(LogSource::Zapret, msg);
 
 	m_connectivityObserved = false;
@@ -421,7 +641,7 @@ int ZapretManager::GetCachedBestStrategyIndex() const
 
 const StrategyTestEntry* ZapretManager::GetStrategyResult(int strategyIndex) const
 {
-	if (strategyIndex < 0 || strategyIndex >= static_cast<int>(ZapretStrategies::kStrategyCount))
+	if (!IsValidStrategyIndex(strategyIndex))
 		return nullptr;
 
 	EnsureStrategyCache();
@@ -458,11 +678,8 @@ std::string ZapretManager::GetActiveStrategyStoreKey() const
 	if (m_activeSmartStrategy)
 		return SmartStrategyEngine::kLabel;
 
-	if (m_activeStrategyIndex >= 0
-		&& m_activeStrategyIndex < static_cast<int>(ZapretStrategies::kStrategyCount))
-	{
-		return std::string(ZapretStrategies::kStrategies[m_activeStrategyIndex].id);
-	}
+	if (IsValidStrategyIndex(m_activeStrategyIndex))
+		return GetStrategyKey(m_activeStrategyIndex);
 
 	return {};
 }
@@ -542,10 +759,10 @@ void ZapretManager::ApplyDualOutageDetection(bool discordOk, bool youtubeOk, Str
 
 void ZapretManager::RecordStrategyResult(int strategyIndex, bool discord, bool youtube, bool telegram, int pingMs)
 {
-	if (strategyIndex < 0 || strategyIndex >= static_cast<int>(ZapretStrategies::kStrategyCount))
+	if (!IsValidStrategyIndex(strategyIndex))
 		return;
 
-	const std::string name(ZapretStrategies::kStrategies[strategyIndex].id);
+	const std::string& name = GetStrategyKey(strategyIndex);
 	StrategyTestEntry entry = LoadStrategyEntryOrDefault(name);
 	entry.discordOk = discord;
 	entry.youtubeOk = youtube;
@@ -571,9 +788,9 @@ void ZapretManager::RecordActiveStrategyResult(bool discord, bool youtube, bool 
 		const int strategyIndex = m_pendingConnectivityStrategyIndex >= 0
 			? m_pendingConnectivityStrategyIndex
 			: m_activeStrategyIndex;
-		if (strategyIndex < 0 || strategyIndex >= static_cast<int>(ZapretStrategies::kStrategyCount))
+		if (!IsValidStrategyIndex(strategyIndex))
 			return;
-		strategyKey = std::string(ZapretStrategies::kStrategies[strategyIndex].id);
+		strategyKey = GetStrategyKey(strategyIndex);
 	}
 
 	StrategyTestEntry entry = LoadStrategyEntryOrDefault(strategyKey);
@@ -724,6 +941,8 @@ void ZapretManager::HandleStrategyTestButton(ZapretStrategies::GameFilterMode ga
 		BeginStrategyTest(gameFilterMode, 0, true);
 		break;
 	case StrategyTestState::Running:
+		if (!CanStopStrategyTest())
+			break;
 		PauseStrategyTest();
 		break;
 	case StrategyTestState::Paused:
@@ -753,7 +972,9 @@ void ZapretManager::BeginStrategyTest(ZapretStrategies::GameFilterMode gameFilte
 
 	m_strategyTestGameFilterMode = gameFilterMode;
 	m_strategyTestStopRequested.store(false);
-	m_strategyTestTotal.store(ZapretStrategies::CountVisibleStrategies(ShowExtraStrategies()));
+	m_strategyTestFullStopRequested.store(false);
+	m_strategyTestStartTick.store(GetTickCount64());
+	m_strategyTestTotal.store(GetVisibleStrategyCount(ShowExtraStrategies()));
 	m_strategyTestCurrent.store(startIndex);
 	m_strategyTestState.store(StrategyTestState::Running);
 
@@ -772,6 +993,33 @@ void ZapretManager::ResumeStrategyTest()
 	if (m_strategyTestState.load() != StrategyTestState::Paused)
 		return;
 	BeginStrategyTest(m_strategyTestGameFilterMode, m_strategyTestResumeIndex.load(), false);
+}
+
+bool ZapretManager::CanStopStrategyTest() const
+{
+	if (m_strategyTestState.load() != StrategyTestState::Running)
+		return true;
+	const ULONGLONG elapsed = GetTickCount64() - m_strategyTestStartTick.load();
+	return elapsed >= static_cast<ULONGLONG>(kStrategyTestStopDelayMs);
+}
+
+void ZapretManager::RequestStopStrategyTest()
+{
+	const StrategyTestState state = m_strategyTestState.load();
+	if (state == StrategyTestState::Paused)
+	{
+		m_strategyTestResumeIndex.store(0);
+		m_strategyTestCurrent.store(0);
+		m_strategyTestState.store(StrategyTestState::Idle);
+		AppLog::Instance().Append(LogSource::Zapret, "Подбор стратегий остановлен");
+		return;
+	}
+
+	if (state != StrategyTestState::Running)
+		return;
+
+	m_strategyTestFullStopRequested.store(true);
+	m_strategyTestStopRequested.store(true);
 }
 
 void ZapretManager::InterruptibleSleepMs(int totalMs)
@@ -804,7 +1052,7 @@ void ZapretManager::RestoreStrategyAfterTest(int strategyIndex)
 	if (index < 0)
 		index = 0;
 
-	if (index < 0 || index >= static_cast<int>(ZapretStrategies::kStrategyCount))
+	if (!IsValidStrategyIndex(index))
 		return;
 
 	char msg[160] = {};
@@ -812,7 +1060,7 @@ void ZapretManager::RestoreStrategyAfterTest(int strategyIndex)
 		msg,
 		sizeof msg,
 		"Подбор завершён, восстановление стратегии: %s",
-		ZapretStrategies::GetStrategyLabel(index).data());
+		GetStrategyLabel(index).c_str());
 	AppLog::Instance().Append(LogSource::Zapret, msg);
 	Start(index, m_strategyTestGameFilterMode, true);
 }
@@ -825,7 +1073,7 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 	WaitForStoppedInterruptible(5000);
 
 	const bool showExtra = ShowExtraStrategies();
-	const int total = ZapretStrategies::CountVisibleStrategies(showExtra);
+	const int total = GetVisibleStrategyCount(showExtra);
 	int resumeFrom = startIndex;
 
 	for (int pass = startIndex; pass < total; ++pass)
@@ -836,7 +1084,7 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 			break;
 		}
 
-		const int idx = ZapretStrategies::GetVisibleStrategyAt(pass, showExtra);
+		const int idx = GetVisibleStrategyAt(pass, showExtra);
 		if (idx < 0)
 			break;
 
@@ -850,7 +1098,7 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 				"Подбор стратегий: %d/%d — %s",
 				pass + 1,
 				total,
-				ZapretStrategies::GetStrategyLabel(idx).data());
+				GetStrategyLabel(idx).c_str());
 			AppLog::Instance().Append(LogSource::Zapret, msg);
 		}
 
@@ -913,11 +1161,22 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 
 	const bool wasStopped = m_strategyTestStopRequested.load();
 	const bool allDone = resumeFrom >= total;
+	const bool fullStop = m_strategyTestFullStopRequested.exchange(false);
 
 	m_strategyTestActiveIndex.store(-1);
 
 	if (wasStopped && !allDone)
 	{
+		if (fullStop)
+		{
+			m_strategyTestResumeIndex.store(0);
+			m_strategyTestCurrent.store(0);
+			m_strategyTestState.store(StrategyTestState::Idle);
+			AppLog::Instance().Append(LogSource::Zapret, "Подбор стратегий остановлен");
+			RestoreStrategyAfterTest(m_strategyTestRestoreIndex);
+			return;
+		}
+
 		m_strategyTestResumeIndex.store(resumeFrom);
 		m_strategyTestState.store(StrategyTestState::Paused);
 		RestoreStrategyAfterTest(m_strategyTestRestoreIndex);
@@ -940,7 +1199,7 @@ const char* ZapretManager::GetSmartStrategyTuneButtonLabel() const
 	case SmartStrategyTuneState::Idle:
 	case SmartStrategyTuneState::Completed:
 	default:
-		return "Подбор умной";
+		return "Умная стратегия";
 	}
 }
 
@@ -1121,7 +1380,7 @@ void ZapretManager::RunSmartStrategyTuneLoop()
 
 bool ZapretManager::Start(int strategyIndex, ZapretStrategies::GameFilterMode gameFilterMode, bool saveLastStrategy)
 {
-	if (strategyIndex < 0 || strategyIndex >= static_cast<int>(ZapretStrategies::kStrategyCount))
+	if (!IsValidStrategyIndex(strategyIndex))
 	{
 		m_lastError = "Некорректная стратегия";
 		AppLog::Instance().Append(LogSource::Zapret, m_lastError);
@@ -1137,10 +1396,10 @@ bool ZapretManager::Start(int strategyIndex, ZapretStrategies::GameFilterMode ga
 	m_activeSmartStrategy = false;
 	m_activeStrategyIndex = strategyIndex;
 	m_activeGameFilterMode = gameFilterMode;
-	BeginRuntimeTracking(std::string(ZapretStrategies::kStrategies[strategyIndex].id));
+	BeginRuntimeTracking(GetStrategyKey(strategyIndex));
 	if (saveLastStrategy)
 	{
-		m_store.SetLastStrategy(std::string(ZapretStrategies::kStrategies[strategyIndex].id));
+		m_store.SetLastStrategy(GetStrategyKey(strategyIndex));
 		SaveStore();
 	}
 	RefreshRunStatus();
@@ -1362,14 +1621,24 @@ bool ZapretManager::LaunchProcess(int strategyIndex, ZapretStrategies::GameFilte
 
 	PrepareEnvironment();
 
-	const auto& strategy = ZapretStrategies::kStrategies[strategyIndex];
+	if (!IsValidStrategyIndex(strategyIndex))
+	{
+		m_lastError = "Некорректная стратегия";
+		AppLog::Instance().Append(LogSource::Zapret, m_lastError);
+		return false;
+	}
+	const RuntimeStrategy& strategy = m_strategies[static_cast<size_t>(strategyIndex)];
 	const std::wstring binDir = ZapretPaths::GetBinDirectory();
 	const std::wstring listsDir = ZapretPaths::GetListsDirectory();
-	const std::string argsUtf8 = StrategyArgumentBuilder::BuildCommandLine(
-		strategy,
-		gameFilterMode,
-		ZapretPaths::WideToUtf8(binDir),
-		ZapretPaths::WideToUtf8(listsDir));
+	const ZapretStrategies::GameFilterValues filters = ZapretStrategies::GetGameFilterValues(gameFilterMode);
+	const std::string binPath = ZapretPaths::WideToUtf8(binDir) + "\\";
+	const std::string listsPath = ZapretPaths::WideToUtf8(listsDir) + "\\";
+	const std::string argsUtf8 = strategy.staticDefinition
+		? StrategyArgumentBuilder::BuildCommandLine(
+			*strategy.staticDefinition, gameFilterMode, ZapretPaths::WideToUtf8(binDir), ZapretPaths::WideToUtf8(listsDir))
+		: StrategyBatParser::BuildExpandedArgsFromBat(
+			strategy.batPath, binPath, listsPath,
+			std::string(filters.gameFilterTcp), std::string(filters.gameFilterUdp));
 	if (argsUtf8.empty())
 	{
 		m_lastError = "Не удалось собрать аргументы стратегии";
@@ -1388,7 +1657,7 @@ bool ZapretManager::LaunchProcess(int strategyIndex, ZapretStrategies::GameFilte
 	si.wShowWindow = SW_HIDE;
 	PROCESS_INFORMATION pi = {};
 
-	if (!CreateProcessW(
+	if (!ProcessJob::CreateInJob(
 		nullptr,
 		commandBuffer.data(),
 		nullptr,
@@ -1430,7 +1699,7 @@ bool ZapretManager::LaunchProcess(int strategyIndex, ZapretStrategies::GameFilte
 
 	AppLog::Instance().Append(
 		LogSource::Zapret,
-		std::string("winws.exe запущен: ") + std::string(strategy.label));
+		std::string("winws.exe запущен: ") + strategy.label);
 	return true;
 }
 
@@ -1475,7 +1744,7 @@ bool ZapretManager::LaunchProcessGenome(
 	si.wShowWindow = SW_HIDE;
 	PROCESS_INFORMATION pi = {};
 
-	if (!CreateProcessW(
+	if (!ProcessJob::CreateInJob(
 		nullptr,
 		commandBuffer.data(),
 		nullptr,

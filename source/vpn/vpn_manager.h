@@ -21,8 +21,8 @@ enum class VpnRunStatus
 class VpnManager
 {
 public:
-	static constexpr int kMixedPort = 10800;
-	static constexpr int kApiPort = 19090;
+	static constexpr int kDefaultMixedPort = 10800;
+	static constexpr int kDefaultApiPort = 19090;
 
 	VpnManager();
 	~VpnManager();
@@ -37,15 +37,22 @@ public:
 	void Stop();
 	void RequestStop();
 
+	// RealPing: launch mihomo against already-written config.yaml (no system proxy).
+	bool StartFromExistingConfig(int mixedPort, int apiPort);
+	// Prefer preferred when free; otherwise ephemeral (v2rayN GetFreePort).
+	static int AllocateFreeTcpPort(int preferred);
+
 	VpnRunStatus GetRunStatus() const { return m_runStatus; }
 	bool IsOperationInFlight() const { return m_opInFlight.load(); }
 	bool IsRunning() const { return m_runStatus == VpnRunStatus::Running; }
 	int GetAppliedRoutingRevision() const { return m_appliedRoutingRevision; }
+	int GetMixedPort() const { return m_mixedPort; }
+	int GetApiPort() const { return m_apiPort; }
 	const std::string& GetErrorMessage() const { return m_lastError; }
 	const std::string& GetStatusMessage() const { return m_statusMessage; }
+	bool IsRuntimeReady(std::string& outError) const;
 
 private:
-	bool IsRuntimeReady(std::string& outError) const;
 	bool LaunchProcess();
 	void RefreshRunStatus();
 	void ApplySystemProxy(bool enable);
@@ -59,6 +66,7 @@ private:
 	void MarkSettingsApplied(const VpnStoreSettings& settings);
 	int ResolveActiveIndex(const std::vector<VpnNode>& nodes, const VpnStoreSettings& settings) const;
 	void RunReloadWorker();
+	void EnsurePortsAllocated();
 
 	HANDLE m_process = nullptr;
 	mutable std::mutex m_processMutex;
@@ -75,6 +83,8 @@ private:
 	int m_reloadActiveIndex = -1;
 	VpnStoreSettings m_reloadSettings {};
 	int m_appliedRoutingRevision = -1;
+	int m_mixedPort = kDefaultMixedPort;
+	int m_apiPort = kDefaultApiPort;
 	float m_statusPollTimer = 0.f;
 
 	bool m_savedProxySettings = false;

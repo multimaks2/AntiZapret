@@ -1,9 +1,17 @@
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include "vpn/vpn_manager.h"
 
 #include "app/app_log.h"
+#include "app/process_job.h"
 #include "vpn/vpn_config_builder.h"
 #include "vpn/vpn_mihomo_api.h"
 #include "vpn/vpn_routing.h"
+#include "vpn/vpn_rules_updater.h"
 #include "vpn/vpn_transport_settings.h"
 #include "zapret/zapret_paths.h"
 
@@ -14,12 +22,69 @@
 #include <thread>
 #include <vector>
 
+#pragma comment(lib, "ws2_32.lib")
+
 namespace
 {
 	void LogVpnMessage(const std::string& message)
 	{
 		if (!message.empty())
 			AppLog::Instance().Append(LogSource::VpnRouting, message);
+	}
+
+	void EnsureWinsock()
+	{
+		static bool ready = false;
+		if (ready)
+			return;
+		WSADATA data = {};
+		ready = (WSAStartup(MAKEWORD(2, 2), &data) == 0);
+	}
+
+	bool IsTcpPortFree(int port)
+	{
+		EnsureWinsock();
+		SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if (sock == INVALID_SOCKET)
+			return false;
+
+		sockaddr_in addr = {};
+		addr.sin_family = AF_INET;
+		addr.sin_port = htons(static_cast<u_short>(port));
+		inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+		const bool free = (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+		closesocket(sock);
+		return free;
+	}
+
+	// Prefer defaultPort when free; otherwise bind ephemeral like v2rayN Utils.GetFreePort.
+	int FindFreeTcpPort(int defaultPort)
+	{
+		EnsureWinsock();
+		if (defaultPort > 0 && IsTcpPortFree(defaultPort))
+			return defaultPort;
+
+		SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if (sock == INVALID_SOCKET)
+			return defaultPort > 0 ? defaultPort : 59090;
+
+		sockaddr_in addr = {};
+		addr.sin_family = AF_INET;
+		addr.sin_port = 0;
+		inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+		if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0)
+		{
+			closesocket(sock);
+			return defaultPort > 0 ? defaultPort : 59090;
+		}
+
+		sockaddr_in bound = {};
+		int len = sizeof(bound);
+		getsockname(sock, reinterpret_cast<sockaddr*>(&bound), &len);
+		const int port = ntohs(bound.sin_port);
+		closesocket(sock);
+		return port > 0 ? port : (defaultPort > 0 ? defaultPort : 59090);
 	}
 	std::wstring ToWide(const std::string& value)
 	{
@@ -46,10 +111,10 @@ namespace
 		return utf8;
 	}
 
-	bool RunMihomoTest(const std::wstring& vpnDirectory, std::string& outError)
+	bool RunMihomoTest(const std::wstring& vpnDirectory, const std::wstring& cacheDirectory, std::string& outError)
 	{
 		const std::filesystem::path mihomoExe = std::filesystem::path(vpnDirectory) / L"mihomo.exe";
-		const std::filesystem::path configPath = std::filesystem::path(vpnDirectory) / L"config.yaml";
+		const std::filesystem::path configPath = std::filesystem::path(cacheDirectory) / L"config.yaml";
 
 		SECURITY_ATTRIBUTES securityAttributes = {};
 		securityAttributes.nLength = sizeof(securityAttributes);
@@ -67,7 +132,7 @@ namespace
 		commandLine += L"\" -f \"";
 		commandLine += configPath.wstring();
 		commandLine += L"\" -d \"";
-		commandLine += std::filesystem::path(vpnDirectory).wstring();
+		commandLine += cacheDirectory;
 		commandLine += L"\" -t";
 
 		std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
@@ -88,7 +153,7 @@ namespace
 			TRUE,
 			CREATE_NO_WINDOW,
 			nullptr,
-			vpnDirectory.c_str(),
+			cacheDirectory.c_str(),
 			&startupInfo,
 			&processInfo);
 
@@ -176,18 +241,25 @@ bool VpnManager::ResolveActiveNode(
 
 bool VpnManager::IsRuntimeReady(std::string& outError) const
 {
-	const std::filesystem::path root(ZapretPaths::GetVpnDirectory());
-	const std::filesystem::path mihomoExe = root / L"mihomo.exe";
-	const std::filesystem::path blockedRules = root / L"srss" / L"geosite-ru-blocked.srs";
+	const std::filesystem::path vpnRoot(ZapretPaths::GetVpnDirectory());
+	const std::filesystem::path mihomoExe = vpnRoot / L"mihomo.exe";
+	const std::filesystem::path wintunDll = vpnRoot / L"wintun.dll";
 
 	if (!std::filesystem::exists(mihomoExe))
 	{
-		outError = "Не найден mihomo.exe в папке vpn/. Скопируйте runtime из v2rayN.";
+		outError = "Не найден mihomo.exe в папке vpn/.";
 		return false;
 	}
-	if (!std::filesystem::exists(blockedRules))
+	if (!std::filesystem::exists(wintunDll))
 	{
-		outError = "Не найдены rule-set файлы в vpn/srss/. Дождитесь автообновления при запуске или проверьте интернет.";
+		outError = "Не найден wintun.dll в папке vpn/.";
+		return false;
+	}
+	if (!VpnRulesUpdater::AreCoreRulesReady())
+	{
+		outError = VpnRulesUpdater::IsUpdateInProgress()
+			? "Ожидание загрузки правил маршрутизации..."
+			: "Нет rule-set файлов в cache/srss/. Дождитесь автообновления или проверьте интернет.";
 		return false;
 	}
 
@@ -195,18 +267,27 @@ bool VpnManager::IsRuntimeReady(std::string& outError) const
 	return true;
 }
 
+void VpnManager::EnsurePortsAllocated()
+{
+	m_mixedPort = FindFreeTcpPort(kDefaultMixedPort);
+	m_apiPort = FindFreeTcpPort(kDefaultApiPort);
+	if (m_apiPort == m_mixedPort)
+		m_apiPort = FindFreeTcpPort(0);
+}
+
 bool VpnManager::LaunchProcess()
 {
 	const std::wstring vpnDirectory = ZapretPaths::GetVpnDirectory();
+	const std::wstring cacheDirectory = ZapretPaths::GetCacheDirectory();
 	const std::filesystem::path mihomoExe = std::filesystem::path(vpnDirectory) / L"mihomo.exe";
-	const std::filesystem::path configPath = std::filesystem::path(vpnDirectory) / L"config.yaml";
+	const std::filesystem::path configPath = std::filesystem::path(cacheDirectory) / L"config.yaml";
 
 	std::wstring commandLine = L"\"";
 	commandLine += mihomoExe.wstring();
 	commandLine += L"\" -f \"";
 	commandLine += configPath.wstring();
 	commandLine += L"\" -d \"";
-	commandLine += vpnDirectory;
+	commandLine += cacheDirectory;
 	commandLine += L"\"";
 
 	std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
@@ -216,7 +297,7 @@ bool VpnManager::LaunchProcess()
 	startupInfo.cb = sizeof(startupInfo);
 	PROCESS_INFORMATION processInfo = {};
 
-	const BOOL created = CreateProcessW(
+	const BOOL created = ProcessJob::CreateInJob(
 		mihomoExe.c_str(),
 		mutableCommandLine.data(),
 		nullptr,
@@ -224,7 +305,7 @@ bool VpnManager::LaunchProcess()
 		FALSE,
 		CREATE_NO_WINDOW,
 		nullptr,
-		vpnDirectory.c_str(),
+		cacheDirectory.c_str(),
 		&startupInfo,
 		&processInfo);
 
@@ -284,7 +365,7 @@ void VpnManager::ApplySystemProxy(bool enable)
 	if (enable)
 	{
 		const DWORD proxyEnable = 1;
-		const std::wstring proxyServer = L"127.0.0.1:" + std::to_wstring(kMixedPort);
+		const std::wstring proxyServer = L"127.0.0.1:" + std::to_wstring(m_mixedPort);
 		RegSetValueExW(key, L"ProxyEnable", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&proxyEnable), sizeof(proxyEnable));
 		RegSetValueExW(
 			key,
@@ -380,17 +461,19 @@ bool VpnManager::WriteAndReloadConfig(
 	std::string& outError)
 {
 	const VpnRoutingPreset preset = VpnRouting::PresetFromWorkMode(settings.workMode);
-	const std::wstring vpnDirectory = ZapretPaths::GetVpnDirectory();
+	const std::wstring cacheDirectory = ZapretPaths::GetCacheDirectory();
 	if (!VpnConfigBuilder::WriteRuntimeConfig(
 			node,
 			preset,
 			settings,
-			vpnDirectory,
+			cacheDirectory,
+			m_mixedPort,
+			m_apiPort,
 			outError,
 			coldStart))
 		return false;
 
-	if (coldStart && !RunMihomoTest(vpnDirectory, outError))
+	if (coldStart && !RunMihomoTest(ZapretPaths::GetVpnDirectory(), cacheDirectory, outError))
 		return false;
 
 	return true;
@@ -422,10 +505,13 @@ bool VpnManager::Start(const std::vector<VpnNode>& nodes, int activeIndex, const
 	std::string runtimeError;
 	if (!IsRuntimeReady(runtimeError))
 	{
+		// Soft wait — SyncVpnRuntime retries by readiness; don't treat as hard crash spam.
 		m_lastError = runtimeError;
-		LogVpnMessage(m_lastError);
+		m_statusMessage = runtimeError;
 		return false;
 	}
+
+	EnsurePortsAllocated();
 
 	const VpnNode* activeNode = nullptr;
 	std::string selectionMessage;
@@ -486,11 +572,10 @@ bool VpnManager::Reload(const std::vector<VpnNode>& nodes, int activeIndex, cons
 		return false;
 	}
 
-	const std::wstring vpnDirectory = ZapretPaths::GetVpnDirectory();
-	const std::filesystem::path configPath = std::filesystem::path(vpnDirectory) / L"config.yaml";
-	if (MihomoApi::ReloadConfig(configPath.wstring(), kApiPort, m_lastError))
+	const std::filesystem::path configPath = std::filesystem::path(ZapretPaths::GetCacheDirectory()) / L"config.yaml";
+	if (MihomoApi::ReloadConfig(configPath.wstring(), m_apiPort, m_lastError))
 	{
-		MihomoApi::FlushConnections(kApiPort);
+		MihomoApi::FlushConnections(m_apiPort);
 		MarkSettingsApplied(settings);
 		m_lastError.clear();
 		m_statusMessage = "Маршрутизация обновлена.";
@@ -620,4 +705,56 @@ void VpnManager::RequestStop()
 		Stop();
 		m_opInFlight.store(false);
 	}).detach();
+}
+
+int VpnManager::AllocateFreeTcpPort(int preferred)
+{
+	return FindFreeTcpPort(preferred);
+}
+
+bool VpnManager::StartFromExistingConfig(int mixedPort, int apiPort)
+{
+	std::lock_guard<std::mutex> lock(m_opMutex);
+	m_opInFlight.store(true);
+
+	Stop();
+
+	std::string runtimeError;
+	if (!IsRuntimeReady(runtimeError))
+	{
+		m_lastError = runtimeError;
+		m_statusMessage = runtimeError;
+		m_opInFlight.store(false);
+		return false;
+	}
+
+	m_mixedPort = mixedPort > 0 ? mixedPort : FindFreeTcpPort(kDefaultMixedPort);
+	m_apiPort = apiPort > 0 ? apiPort : FindFreeTcpPort(kDefaultApiPort);
+	if (m_apiPort == m_mixedPort)
+		m_apiPort = FindFreeTcpPort(0);
+
+	std::string testError;
+	if (!RunMihomoTest(ZapretPaths::GetVpnDirectory(), ZapretPaths::GetCacheDirectory(), testError))
+	{
+		m_lastError = testError.empty() ? "mihomo -t не прошёл для probe-конфига." : testError;
+		LogVpnMessage(m_lastError);
+		m_opInFlight.store(false);
+		return false;
+	}
+
+	m_runStatus = VpnRunStatus::Starting;
+	m_statusMessage = "RealPing: запуск mihomo...";
+	if (!LaunchProcess())
+	{
+		m_runStatus = VpnRunStatus::Stopped;
+		m_opInFlight.store(false);
+		return false;
+	}
+
+	// Probe session: never touch system proxy.
+	m_runStatus = VpnRunStatus::Running;
+	m_lastError.clear();
+	m_statusMessage = "RealPing: mihomo готов.";
+	m_opInFlight.store(false);
+	return true;
 }

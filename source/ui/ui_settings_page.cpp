@@ -49,6 +49,12 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		m_confirmAdultMix = m_appSettings->GetConfirmAdult() ? 1.f : 0.f;
 		m_discordPresenceMix = m_appSettings->GetDiscordPresenceEnabled() ? 1.f : 0.f;
 		m_discordShareButtonMix = m_appSettings->GetDiscordShareButtonEnabled() ? 1.f : 0.f;
+		m_discordDownloadButtonMix = m_appSettings->GetDiscordDownloadButtonEnabled() ? 1.f : 0.f;
+		strncpy_s(
+			m_discordDownloadUrl,
+			sizeof m_discordDownloadUrl,
+			m_appSettings->GetDiscordDownloadUrl().c_str(),
+			_TRUNCATE);
 		m_loadedFromSettings = true;
 	}
 
@@ -87,6 +93,11 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 	m_discordShareButtonMix = UiCommon::AnimateMix(
 		m_discordShareButtonMix,
 		m_appSettings && m_appSettings->GetDiscordShareButtonEnabled(),
+		deltaTime,
+		kToggleAnimSpeed);
+	m_discordDownloadButtonMix = UiCommon::AnimateMix(
+		m_discordDownloadButtonMix,
+		m_appSettings && m_appSettings->GetDiscordDownloadButtonEnabled(),
 		deltaTime,
 		kToggleAnimSpeed);
 
@@ -163,6 +174,32 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 	{
 		if (m_appSettings)
 			m_appSettings->SetDiscordShareButtonEnabled(!m_appSettings->GetDiscordShareButtonEnabled());
+	}
+
+	if (UiCommon::SettingRow("Кнопка «Скачать» в Discord", width, colors, m_discordDownloadButtonMix))
+	{
+		if (m_appSettings)
+			m_appSettings->SetDiscordDownloadButtonEnabled(!m_appSettings->GetDiscordDownloadButtonEnabled());
+	}
+
+	if (m_appSettings && m_appSettings->GetDiscordDownloadButtonEnabled())
+	{
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+		UiCommon::CaptionText("Ссылка кнопки «Скачать AntiZapret»:", colors, width);
+		UiCommon::PushInputStyle(colors);
+		ImGui::SetNextItemWidth(width);
+		if (ImGui::InputTextWithHint(
+				"##discord_download_url",
+				"https://github.com/.../releases/latest",
+				m_discordDownloadUrl,
+				sizeof m_discordDownloadUrl,
+				ImGuiInputTextFlags_EnterReturnsTrue))
+		{
+			m_appSettings->SetDiscordDownloadUrl(m_discordDownloadUrl);
+		}
+		if (ImGui::IsItemDeactivatedAfterEdit())
+			m_appSettings->SetDiscordDownloadUrl(m_discordDownloadUrl);
+		UiCommon::PopInputStyle();
 	}
 
 	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });

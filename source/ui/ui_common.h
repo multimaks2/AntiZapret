@@ -17,6 +17,30 @@ namespace UiCommon
 		const char* title,
 		const char* subtitle,
 		const UiThemeColors& colors);
+	// Optional version chip next to the title (colored frame by update status).
+	void PageTitle(
+		FontManager& fonts,
+		uint32_t iconCode,
+		const char* title,
+		const char* subtitle,
+		const UiThemeColors& colors,
+		const char* version,
+		const ImVec4& versionAccent);
+	// Same as above, plus optional update button immediately after the version badge.
+	// Returns true if the update button was clicked.
+	bool PageTitle(
+		FontManager& fonts,
+		uint32_t iconCode,
+		const char* title,
+		const char* subtitle,
+		const UiThemeColors& colors,
+		const char* version,
+		const ImVec4& versionAccent,
+		const char* updateButtonLabel,
+		bool updateButtonEnabled);
+	void VersionBadge(const char* version, const ImVec4& accent, const UiThemeColors& colors);
+	// When centerInLine is false, badge top aligns to the current cursor (use after SameLine with text).
+	void VersionBadge(const char* version, const ImVec4& accent, const UiThemeColors& colors, bool centerInLine);
 	void SectionHeader(const char* title, const UiThemeColors& colors);
 	void CaptionText(const char* text, const UiThemeColors& colors, float wrapWidth = 0.f);
 	void CardGap();

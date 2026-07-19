@@ -10,5 +10,6 @@ struct StrategyDescription
 namespace StrategyDescriptions
 {
 	const StrategyDescription* GetByIndex(int strategyIndex);
+	const StrategyDescription* GetById(const char* strategyId);
 	const StrategyDescription* GetSmartStrategy();
 }

@@ -1,5 +1,7 @@
 #include "app/application.h"
 
+#include "app/process_job.h"
+#include "app/protocol_handler.h"
 #include "gfx/d3d11_renderer.h"
 #include "gfx/font_manager.h"
 #include "gfx/theme_manager.h"
@@ -36,6 +38,17 @@ public:
 
 int RunApplication()
 {
+	if (ProtocolHandler::ForwardToExistingInstanceAndShouldExit())
+		return 0;
+
+	ProtocolHandler::RegisterUrlProtocol();
+
+	const std::wstring cmdLine = GetCommandLineW() ? GetCommandLineW() : L"";
+	ProtocolHandler::SetStartupFromAutostart(ProtocolHandler::CommandLineHasAutostartFlag(cmdLine));
+
+	if (const ProtocolCommand startup = ProtocolHandler::ParseCommandLine(cmdLine); startup.valid)
+		ProtocolHandler::Enqueue(startup);
+
 	Application app;
 	return app.Run();
 }
@@ -78,6 +91,9 @@ int Application::Run()
 bool Application::Initialize()
 {
 	m_components = new Components();
+
+	ProcessJob::EnsureInitialized();
+	ProcessJob::CleanupOrphansAtStartup();
 
 	CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 	ImGui_ImplWin32_EnableDpiAwareness();

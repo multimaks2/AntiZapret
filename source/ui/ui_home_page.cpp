@@ -839,8 +839,12 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 			m_autoSelect = m_settings->GetAutoSelectBestStrategy();
 		if (m_zapret)
 		{
-			m_selectedStrategy = m_zapret->GetPreferredStrategyIndex(m_autoSelect);
 			m_hasSmartStrategy = m_zapret->IsSmartStrategyEnabled();
+			const std::string& last = m_zapret->GetStore().GetLastStrategy();
+			if (m_hasSmartStrategy && last == SmartStrategyEngine::kLabel)
+				m_selectedStrategy = m_zapret->GetPreferredStrategyIndex(false);
+			else
+				m_selectedStrategy = m_zapret->GetPreferredStrategyIndex(m_autoSelect);
 		}
 		m_preferencesLoaded = true;
 	}
@@ -913,7 +917,7 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 					buf,
 					sizeof buf,
 					"Тест: %s (%d/%d)",
-					ZapretStrategies::GetStrategyLabel(testingIndex).data(),
+					m_zapret->GetStrategyLabel(testingIndex).c_str(),
 					current,
 					total);
 			}
@@ -927,7 +931,7 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 		if (m_zapret->IsActiveSmartStrategy())
 			strategyNote = std::string("Стратегия: ") + SmartStrategyEngine::kLabel;
 		else if (activeStrategy >= 0)
-			strategyNote = std::string("Стратегия: ") + ZapretStrategies::GetStrategyLabel(activeStrategy).data();
+			strategyNote = std::string("Стратегия: ") + m_zapret->GetStrategyLabel(activeStrategy);
 	}
 
 	const char* azStatusText = RunStatusLabel(azStatus);
@@ -964,6 +968,16 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 					m_zapret && !m_zapret->IsOperationInFlight()) && m_zapret)
 				{
 					m_zapret->HandleStrategyTestButton(ZapretStrategies::GameFilterMode::Disabled);
+				}
+				if (strategyTestRunning)
+				{
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+					{
+						ImGui::SetTooltip(
+							"Можно полностью остановить, нажав правой кнопкой мыши.");
+					}
+					if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && m_zapret)
+						m_zapret->RequestStopStrategyTest();
 				}
 			}
 			else if (azRunning)

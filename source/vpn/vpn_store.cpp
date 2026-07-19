@@ -1,11 +1,13 @@
 #include "vpn/vpn_store.h"
 
+#include "app/settings_document.h"
 #include "vpn/vpn_import.h"
 #include "vpn/vpn_geo.h"
 #include "zapret/zapret_paths.h"
 
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <unordered_map>
 
@@ -46,7 +48,7 @@ namespace
 
 std::filesystem::path VpnStore::CacheDirectory() const
 {
-	return std::filesystem::path(ZapretPaths::GetVpnDirectory()) / L"cache";
+	return std::filesystem::path(ZapretPaths::GetCacheDirectory());
 }
 
 std::filesystem::path VpnStore::NodesFile() const
@@ -57,11 +59,6 @@ std::filesystem::path VpnStore::NodesFile() const
 std::filesystem::path VpnStore::StateFile() const
 {
 	return CacheDirectory() / L"state.ini";
-}
-
-std::filesystem::path VpnStore::SettingsFile() const
-{
-	return CacheDirectory() / L"settings.ini";
 }
 
 void VpnStore::ParseSettingsLine(const std::string& key, const std::string& value, VpnStoreSettings& settings) const
@@ -96,48 +93,33 @@ void VpnStore::LoadSettings(VpnStoreSettings& settings) const
 {
 	settings = VpnStoreSettings {};
 
-	std::ifstream settingsInput(SettingsFile(), std::ios::binary);
-	if (!settingsInput)
-		return;
-
-	std::string line;
-	while (std::getline(settingsInput, line))
+	SettingsDocument::Doc doc;
 	{
-		line = Trim(line);
-		if (line.empty() || line[0] == ';' || line[0] == '#')
-			continue;
-
-		const size_t eq = line.find('=');
-		if (eq == std::string::npos)
-			continue;
-
-		ParseSettingsLine(Trim(line.substr(0, eq)), Trim(line.substr(eq + 1)), settings);
+		std::lock_guard<std::mutex> lock(SettingsDocument::Mutex());
+		SettingsDocument::Load(doc);
 	}
+
+	const SettingsDocument::KeyMap keys = SettingsDocument::GetSection(doc, "vpn");
+	for (const auto& kv : keys)
+		ParseSettingsLine(kv.first, kv.second, settings);
 }
 
 void VpnStore::SaveSettings(const VpnStoreSettings& settings) const
 {
-	const std::filesystem::path cacheDir = CacheDirectory();
-	std::error_code ec;
-	std::filesystem::create_directories(cacheDir, ec);
-
-	std::ofstream output(SettingsFile(), std::ios::binary | std::ios::trunc);
-	if (!output)
-		return;
-
-	output << "; AntiZapret VPN settings\r\n";
-	output << "active_uri=" << settings.activeUri << "\r\n";
-	output << "work_mode=" << settings.workMode << "\r\n";
-	output << "transport_mode=" << settings.transportMode << "\r\n";
-	output << "dns_mode=" << settings.dnsMode << "\r\n";
-	output << "bootstrap_dns=" << settings.bootstrapDns << "\r\n";
-	output << "bootstrap_type=" << settings.bootstrapType << "\r\n";
-	output << "proxy_dns=" << settings.proxyDns << "\r\n";
-	output << "proxy_type=" << settings.proxyType << "\r\n";
-	output << "routing_revision=" << settings.routingRevision << "\r\n";
-	output << "fix_discord=" << (settings.fixDiscord ? "1" : "0") << "\r\n";
-	output << "last_subscription_url=" << settings.lastSubscriptionUrl << "\r\n";
-	output << "subscription_expire_unix=" << settings.subscriptionExpireUnix << "\r\n";
+	SettingsDocument::KeyMap keys;
+	keys["active_uri"] = settings.activeUri;
+	keys["work_mode"] = std::to_string(settings.workMode);
+	keys["transport_mode"] = std::to_string(settings.transportMode);
+	keys["dns_mode"] = std::to_string(settings.dnsMode);
+	keys["bootstrap_dns"] = std::to_string(settings.bootstrapDns);
+	keys["bootstrap_type"] = std::to_string(settings.bootstrapType);
+	keys["proxy_dns"] = std::to_string(settings.proxyDns);
+	keys["proxy_type"] = std::to_string(settings.proxyType);
+	keys["routing_revision"] = std::to_string(settings.routingRevision);
+	keys["fix_discord"] = settings.fixDiscord ? "1" : "0";
+	keys["last_subscription_url"] = settings.lastSubscriptionUrl;
+	keys["subscription_expire_unix"] = std::to_string(settings.subscriptionExpireUnix);
+	SettingsDocument::UpsertSection("vpn", keys);
 }
 
 void VpnStore::Load(std::vector<VpnNode>& nodes, VpnStoreSettings* settings)
@@ -292,23 +274,5 @@ void VpnStore::Save(const std::vector<VpnNode>& nodes, const VpnStoreSettings* s
 	}
 
 	if (settings)
-	{
-		std::ofstream output(SettingsFile(), std::ios::binary | std::ios::trunc);
-		if (output)
-		{
-			output << "; AntiZapret VPN settings\r\n";
-			output << "active_uri=" << settings->activeUri << "\r\n";
-			output << "work_mode=" << settings->workMode << "\r\n";
-			output << "transport_mode=" << settings->transportMode << "\r\n";
-			output << "dns_mode=" << settings->dnsMode << "\r\n";
-			output << "bootstrap_dns=" << settings->bootstrapDns << "\r\n";
-			output << "bootstrap_type=" << settings->bootstrapType << "\r\n";
-			output << "proxy_dns=" << settings->proxyDns << "\r\n";
-			output << "proxy_type=" << settings->proxyType << "\r\n";
-			output << "routing_revision=" << settings->routingRevision << "\r\n";
-			output << "fix_discord=" << (settings->fixDiscord ? "1" : "0") << "\r\n";
-			output << "last_subscription_url=" << settings->lastSubscriptionUrl << "\r\n";
-			output << "subscription_expire_unix=" << settings->subscriptionExpireUnix << "\r\n";
-		}
-	}
+		SaveSettings(*settings);
 }

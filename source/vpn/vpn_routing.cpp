@@ -102,11 +102,10 @@ VpnRoutingPreset VpnRouting::PresetFromWorkMode(int workMode)
 {
 	switch (workMode)
 	{
-	case 1: return VpnRoutingPreset::Ruv1Blocked;
 	case 2: return VpnRoutingPreset::Ruv1ExceptRu;
 	case 3: return VpnRoutingPreset::Ruv1All;
 	case 4: return VpnRoutingPreset::Custom;
-	default: return VpnRoutingPreset::Ruv1Blocked;
+	default: return VpnRoutingPreset::Ruv1Blocked; // 0 (legacy) и 1
 	}
 }
 
@@ -183,7 +182,7 @@ void VpnRouting::AppendRuleProviders(
 		"    format: mrs\n"
 		"    path: ./srss/geoip-ru.srs\n";
 
-	if (preset == VpnRoutingPreset::Ruv1Blocked || preset == VpnRoutingPreset::RegionalPresets)
+	if (preset == VpnRoutingPreset::Ruv1Blocked)
 	{
 		const std::filesystem::path root(vpnDirectory);
 		if (std::filesystem::exists(root / L"srss" / L"geosite-google.srs"))
@@ -307,7 +306,7 @@ void VpnRouting::AppendRules(
 	if (fixDiscord)
 		VpnDiscordVoiceRules::AppendDomainAndVoiceRules(yaml, "PROXY");
 
-	if (preset == VpnRoutingPreset::Ruv1Blocked || preset == VpnRoutingPreset::RegionalPresets)
+	if (preset == VpnRoutingPreset::Ruv1Blocked)
 	{
 		yaml += "  - IP-CIDR,1.0.0.1/32,PROXY\n";
 		yaml += "  - IP-CIDR,1.1.1.1/32,PROXY\n";

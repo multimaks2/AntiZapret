@@ -87,7 +87,8 @@ function Copy-RuntimeFile {
 $TargetAntiZapret = Join-Path $TargetRoot 'anti-zapret'
 $TargetBin = Join-Path $TargetAntiZapret 'bin'
 $TargetLists = Join-Path $TargetAntiZapret 'lists'
-New-Item -ItemType Directory -Force -Path $TargetBin, $TargetLists | Out-Null
+$TargetService = Join-Path $TargetAntiZapret '.service'
+New-Item -ItemType Directory -Force -Path $TargetBin, $TargetLists, $TargetService | Out-Null
 
 $copied = 0
 $skipped = 0
@@ -108,6 +109,48 @@ foreach ($file in $ListFiles) {
 		'locked' { ++$locked }
 	}
 }
+
+# Flowseal root: strategies + version (same layout as downloaded github repo).
+Get-ChildItem -LiteralPath $Vendor -Filter 'general*.bat' -File -ErrorAction SilentlyContinue | ForEach-Object {
+	switch (Copy-RuntimeFile -Source $_.FullName -Destination (Join-Path $TargetAntiZapret $_.Name)) {
+		'copied' { ++$copied }
+		'skipped' { ++$skipped }
+		'locked' { ++$locked }
+	}
+}
+
+foreach ($rootFile in @('service.bat')) {
+	$src = Join-Path $Vendor $rootFile
+	if (Test-Path -LiteralPath $src) {
+		switch (Copy-RuntimeFile -Source $src -Destination (Join-Path $TargetAntiZapret $rootFile)) {
+			'copied' { ++$copied }
+			'skipped' { ++$skipped }
+			'locked' { ++$locked }
+		}
+	}
+}
+
+$versionSrc = Join-Path $Vendor '.service\version.txt'
+if (Test-Path -LiteralPath $versionSrc) {
+	switch (Copy-RuntimeFile -Source $versionSrc -Destination (Join-Path $TargetService 'version.txt')) {
+		'copied' { ++$copied }
+		'skipped' { ++$skipped }
+		'locked' { ++$locked }
+	}
+}
+
+# App version.txt next to AntiZapret.exe / z-updater.exe (from source/version.h).
+$appVersion = '0.0.0'
+$versionHeader = Join-Path $Root 'source\version.h'
+if (Test-Path -LiteralPath $versionHeader) {
+	$headerText = Get-Content -LiteralPath $versionHeader -Raw
+	if ($headerText -match 'ANTIZAPRET_VERSION\s+"([^"]+)"') {
+		$appVersion = $Matches[1]
+	}
+}
+$appVersionPath = Join-Path $TargetRoot 'version.txt'
+Set-Content -LiteralPath $appVersionPath -Value $appVersion -NoNewline -Encoding ascii
+Write-Host "Wrote app version.txt: $appVersion"
 
 Write-Host "Deployed zapret runtime to $TargetRoot (copied=$copied skipped=$skipped locked=$locked)"
 if ($locked -gt 0) {

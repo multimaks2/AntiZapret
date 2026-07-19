@@ -4,6 +4,7 @@
 #include "vpn/vpn_store.h"
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -31,11 +32,16 @@ public:
 	void SetVpnEnabled(bool enabled) { m_vpnEnabled = enabled; }
 	bool HasActiveServer() const;
 	std::string GetActiveServerLabel() const;
+	// Discord Rich Presence details: "Country · Name" or empty if no active server.
+	std::string GetActiveServerPresenceLabel() const;
+	// Deep-link / protocol import: subscription URL or share-URI text.
+	void ImportSubscriptionUrl(const std::string& urlOrText);
 
 private:
 	void EnsureStoreLoaded();
 	void SaveStore();
 	void StartImportFromClipboard();
+	void StartImportFromText(const std::string& text, const char* statusLabel);
 	void StartRefreshSubscriptions(const std::string& sourceUrl = {});
 	void ApplyPendingImportIfAny();
 	void ApplyRefreshResult(
@@ -60,9 +66,13 @@ private:
 
 	void StartPing(bool selectedOnly);
 	void StartPingIndices(std::vector<int> indices);
+	void StartTcpPingIndices(std::vector<int> indices);
+	void StartRealPingIndices(std::vector<int> indices);
 	void StartSpeedTest(bool selectedOnly);
 	void StartSpeedTestIndices(std::vector<int> indices);
 	void StopSpeedTest();
+	void DeleteSelectedServer();
+	void DeleteGroupServers(const std::vector<int>& indices);
 	void ExportOutboundJson(int nodeIndex);
 	void ExportRuntimeConfig(int nodeIndex);
 	void OpenSelectedDetails();
@@ -73,6 +83,7 @@ private:
 	View m_view = View::List;
 	char m_search[128] = {};
 	int m_workMode = 1;
+	int m_transportMode = 1; // 0 = Proxy, 1 = Tunnel
 	int m_selected = -1;
 	int m_activeIndex = -1;
 	int m_detailIndex = -1;
@@ -89,6 +100,8 @@ private:
 	int m_lastAppliedWorkMode = 1;
 	int m_lastAppliedActiveIndex = -1;
 	VpnStoreSettings m_lastAppliedSettings {};
+	uint64_t m_vpnRetryAfterTick = 0;
+	bool m_waitingForRuntime = false;
 
 	std::atomic<bool> m_importRunning { false };
 	std::mutex m_importMutex;
@@ -125,8 +138,12 @@ private:
 		int pingMs = -2; // -2 = unchanged
 		float speedMbps = -2.f;
 		bool ready = false;
+		bool live = false; // progress sample — update UI only, skip history/disk spam
 	};
 	std::vector<PendingProbeResult> m_pendingProbe;
 	// 1 → 0 fade after a probe result lands (row highlight).
 	std::unordered_map<int, float> m_probeFlash;
+	bool m_probeDirty = false;
+	// Persistent group open state (avoid CollapsingHeader false when clipped).
+	std::unordered_map<std::string, bool> m_groupOpen;
 };

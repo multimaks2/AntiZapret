@@ -1,23 +1,19 @@
 #include "zapret/smart_strategy_engine.h"
 
-#include "zapret/zapret_paths.h"
+#include "app/settings_document.h"
 
 #include <Windows.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
+#include <mutex>
 #include <sstream>
+#include <string>
+#include <vector>
 
 namespace
 {
-	std::filesystem::path ProfilePath()
-	{
-		return std::filesystem::path(ZapretPaths::GetAppDirectory()) / L"smart_strategy.ini";
-	}
-
 	std::string TrimLine(std::string line)
 	{
 		while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
@@ -241,37 +237,39 @@ void SmartStrategyEngine::Load()
 	m_enabled = false;
 	m_lastExplanation.clear();
 
-	const std::filesystem::path path = ProfilePath();
-	std::ifstream input(path, std::ios::binary);
-	if (!input)
+	SettingsDocument::Doc doc;
+	{
+		std::lock_guard<std::mutex> lock(SettingsDocument::Mutex());
+		SettingsDocument::Load(doc);
+	}
+
+	const SettingsDocument::KeyMap keys = SettingsDocument::GetSection(doc, "smart_strategy");
+	if (keys.empty())
 	{
 		ResetFromTemplate();
 		return;
 	}
 
-	std::vector<std::string> loadedArgs;
-	std::string line;
-	while (std::getline(input, line))
+	std::vector<std::pair<int, std::string>> indexedArgs;
+	for (const auto& kv : keys)
 	{
-		line = TrimLine(line);
-		if (line.empty() || line[0] == ';' || line[0] == '#')
-			continue;
-
-		const size_t eq = line.find('=');
-		if (eq == std::string::npos)
-			continue;
-
-		const std::string key = TrimLine(line.substr(0, eq));
-		const std::string value = TrimLine(line.substr(eq + 1));
-		if (key == "enabled")
-			m_enabled = ParseBool(value);
-		else if (key == "best_score")
-			m_bestScore = static_cast<float>(std::strtod(value.c_str(), nullptr));
-		else if (key == "explanation")
-			m_lastExplanation = value;
-		else if (StartsWith(key, "arg_"))
-			loadedArgs.push_back(value);
+		if (kv.first == "enabled")
+			m_enabled = ParseBool(kv.second);
+		else if (kv.first == "best_score")
+			m_bestScore = static_cast<float>(std::strtod(kv.second.c_str(), nullptr));
+		else if (kv.first == "explanation")
+			m_lastExplanation = kv.second;
+		else if (StartsWith(kv.first, "arg_"))
+			indexedArgs.emplace_back(std::atoi(kv.first.c_str() + 4), kv.second);
 	}
+
+	std::sort(indexedArgs.begin(), indexedArgs.end(),
+		[](const auto& a, const auto& b) { return a.first < b.first; });
+
+	std::vector<std::string> loadedArgs;
+	loadedArgs.reserve(indexedArgs.size());
+	for (const auto& pair : indexedArgs)
+		loadedArgs.push_back(pair.second);
 
 	if (!loadedArgs.empty())
 		m_activeGenome.args = std::move(loadedArgs);
@@ -281,30 +279,13 @@ void SmartStrategyEngine::Load()
 
 void SmartStrategyEngine::Save()
 {
-	const std::filesystem::path path = ProfilePath();
-	const std::filesystem::path tmpPath = path.string() + ".tmp";
-
-	std::error_code ec;
-	std::filesystem::create_directories(path.parent_path(), ec);
-	std::filesystem::remove(tmpPath, ec);
-
-	{
-		std::ofstream output(tmpPath, std::ios::out | std::ios::trunc | std::ios::binary);
-		if (!output)
-			return;
-
-		output << "; Smart strategy genome (custom winws args)\r\n";
-		output << "enabled=" << (m_enabled ? "1" : "0") << "\r\n";
-		output << "best_score=" << m_bestScore << "\r\n";
-		output << "explanation=" << m_lastExplanation << "\r\n";
-		for (size_t i = 0; i < m_activeGenome.args.size(); ++i)
-			output << "arg_" << i << "=" << m_activeGenome.args[i] << "\r\n";
-	}
-
-	ec.clear();
-	std::filesystem::remove(path, ec);
-	ec.clear();
-	std::filesystem::rename(tmpPath, path, ec);
+	SettingsDocument::KeyMap keys;
+	keys["enabled"] = m_enabled ? "1" : "0";
+	keys["best_score"] = std::to_string(m_bestScore);
+	keys["explanation"] = m_lastExplanation;
+	for (size_t i = 0; i < m_activeGenome.args.size(); ++i)
+		keys["arg_" + std::to_string(i)] = m_activeGenome.args[i];
+	SettingsDocument::UpsertSection("smart_strategy", keys);
 }
 
 void SmartStrategyEngine::SetEnabled(bool enabled)

@@ -1,22 +1,17 @@
 #include "zapret/zapret_store.h"
 
+#include "app/settings_document.h"
 #include "zapret/strategies.hpp"
-#include "zapret/zapret_paths.h"
 
 #include <Windows.h>
 
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
+#include <mutex>
+#include <string>
 #include <vector>
 
 namespace
 {
-	std::filesystem::path GetStorePath()
-	{
-		return std::filesystem::path(ZapretPaths::GetAppDirectory()) / L"result.ini";
-	}
-
 	std::string TrimLine(std::string line)
 	{
 		while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
@@ -46,6 +41,39 @@ namespace
 		}
 		return parts;
 	}
+
+	bool ParseResultValue(const std::string& name, const std::string& value, StrategyTestEntry& outEntry)
+	{
+		if (name.empty())
+			return false;
+
+		const std::vector<std::string> parts = SplitPipeFields(value);
+		if (parts.size() < 3)
+			return false;
+
+		// r.<id>=D|Y|T|ping|runtime|dual  OR legacy name|D|Y|T...
+		size_t offset = 0;
+		if (parts.size() >= 4 && parts[0].size() == 1 && (parts[0][0] == '0' || parts[0][0] == '1'))
+			offset = 0;
+		else if (parts.size() >= 4)
+			offset = 1; // ignore embedded name if present
+
+		if (parts.size() < offset + 3)
+			return false;
+		if (parts[offset].size() != 1 || parts[offset + 1].size() != 1 || parts[offset + 2].size() != 1)
+			return false;
+
+		outEntry.discordOk = parts[offset][0] == '1';
+		outEntry.youtubeOk = parts[offset + 1][0] == '1';
+		outEntry.telegramOk = parts[offset + 2][0] == '1';
+		if (parts.size() >= offset + 4)
+			outEntry.pingMs = std::atoi(parts[offset + 3].c_str());
+		if (parts.size() >= offset + 5)
+			outEntry.runtimeSec = std::atoi(parts[offset + 4].c_str());
+		if (parts.size() >= offset + 6)
+			outEntry.providerDualOutageCount = std::atoi(parts[offset + 5].c_str());
+		return true;
+	}
 }
 
 void ZapretStore::Load()
@@ -53,97 +81,52 @@ void ZapretStore::Load()
 	m_results.clear();
 	m_lastStrategy.clear();
 
-	const std::filesystem::path iniPath = GetStorePath();
-	std::ifstream input(iniPath, std::ios::binary);
-	if (!input)
-		return;
-
-	std::string line;
-	while (std::getline(input, line))
+	SettingsDocument::Doc doc;
 	{
-		line = TrimLine(line);
-		if (line.empty())
-			continue;
+		std::lock_guard<std::mutex> lock(SettingsDocument::Mutex());
+		SettingsDocument::Load(doc);
+	}
 
-		if (line.rfind("; last_strategy=", 0) == 0)
+	const SettingsDocument::KeyMap keys = SettingsDocument::GetSection(doc, "zapret_results");
+	for (const auto& kv : keys)
+	{
+		if (kv.first == "last_strategy")
 		{
-			m_lastStrategy = TrimLine(line.substr(16));
+			m_lastStrategy = kv.second;
 			continue;
 		}
 
-		if (line[0] == ';' || line[0] == '#')
-			continue;
-
-		const std::vector<std::string> parts = SplitPipeFields(line);
-		if (parts.size() < 4)
-			continue;
-
-		const std::string& name = parts[0];
-		if (name.empty() || parts[1].size() != 1 || parts[2].size() != 1 || parts[3].size() != 1)
-			continue;
+		std::string name = kv.first;
+		std::string value = kv.second;
+		if (name.rfind("r.", 0) == 0)
+			name = name.substr(2);
 
 		StrategyTestEntry entry;
-		entry.discordOk = parts[1][0] == '1';
-		entry.youtubeOk = parts[2][0] == '1';
-		entry.telegramOk = parts[3][0] == '1';
-		if (parts.size() >= 5)
-			entry.pingMs = std::atoi(parts[4].c_str());
-		if (parts.size() >= 6)
-			entry.runtimeSec = std::atoi(parts[5].c_str());
-		if (parts.size() >= 7)
-			entry.providerDualOutageCount = std::atoi(parts[6].c_str());
-
+		if (!ParseResultValue(name, value, entry))
+			continue;
 		m_results[name] = entry;
 	}
 }
 
 void ZapretStore::Save()
 {
-	const std::filesystem::path iniPath = GetStorePath();
-	const std::filesystem::path tmpPath = iniPath.string() + ".tmp";
+	SettingsDocument::KeyMap keys;
+	if (!m_lastStrategy.empty())
+		keys["last_strategy"] = m_lastStrategy;
 
-	std::error_code ec;
-	std::filesystem::create_directories(iniPath.parent_path(), ec);
-	std::filesystem::remove(tmpPath, ec);
-
+	for (const auto& pair : m_results)
 	{
-		std::ofstream output(tmpPath, std::ios::out | std::ios::trunc | std::ios::binary);
-		if (!output)
-			return;
-
-		output << "; AntiZapret strategy test results: name|D|Y|T|pingMs|runtimeSec|dualOutages\r\n";
-		output << "; D/Y/T: 1=ok; pingMs=-1 если ICMP недоступен; runtimeSec=время работы; dualOutages=Discord+YouTube одновременно недоступны\r\n";
-		if (!m_lastStrategy.empty())
-			output << "; last_strategy=" << m_lastStrategy << "\r\n";
-
-		for (std::size_t i = 0; i < ZapretStrategies::kStrategyCount; ++i)
-		{
-			const std::string name(ZapretStrategies::kStrategies[i].id);
-			const auto it = m_results.find(name);
-			if (it == m_results.end())
-				continue;
-
-			const StrategyTestEntry& entry = it->second;
-			output << name << '|'
-				<< (entry.discordOk ? '1' : '0') << '|'
-				<< (entry.youtubeOk ? '1' : '0') << '|'
-				<< (entry.telegramOk ? '1' : '0') << '|'
-				<< entry.pingMs << '|'
-				<< entry.runtimeSec << '|'
-				<< entry.providerDualOutageCount << "\r\n";
-		}
+		const StrategyTestEntry& entry = pair.second;
+		keys["r." + pair.first] =
+			std::string(entry.discordOk ? "1" : "0") + "|"
+			+ (entry.youtubeOk ? "1" : "0") + "|"
+			+ (entry.telegramOk ? "1" : "0") + "|"
+			+ std::to_string(entry.pingMs) + "|"
+			+ std::to_string(entry.runtimeSec) + "|"
+			+ std::to_string(entry.providerDualOutageCount);
 	}
 
-	ec.clear();
-	std::filesystem::remove(iniPath, ec);
-	ec.clear();
-	std::filesystem::rename(tmpPath, iniPath, ec);
-	if (ec)
-	{
-		std::error_code ec2;
-		std::filesystem::remove(iniPath, ec2);
-		std::filesystem::rename(tmpPath, iniPath, ec2);
-	}
+	SettingsDocument::UpsertSection("zapret_results", keys);
 }
 
 void ZapretStore::SetLastStrategy(const std::string& strategyName)

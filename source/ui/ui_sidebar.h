@@ -1,19 +1,35 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include "imgui.h"
 #include "ui/ui_types.h"
+#include "zapret/zapret_update_check.h"
 
 class FontManager;
 class ThemeManager;
 struct UiThemeColors;
+struct UiAccentColors;
+
+// Version/update-status info for a nav tab (AntiZapret or TG WS Proxy).
+struct UiSidebarVersionInfo
+{
+	ComponentUpdateStatus status = ComponentUpdateStatus::Unknown;
+	std::string version;
+};
 
 class UiSidebar
 {
 public:
 	void Update(float deltaTime);
-	float Draw(UiTab& activeTab, ThemeManager& theme, FontManager& fonts, float height);
+	float Draw(
+		UiTab& activeTab,
+		ThemeManager& theme,
+		FontManager& fonts,
+		float height,
+		const UiSidebarVersionInfo& antiZapretVersion = {},
+		const UiSidebarVersionInfo& tgWsProxyVersion = {});
 	float Width() const { return m_width; }
 
 private:
@@ -35,10 +51,13 @@ private:
 		float collapseMix,
 		UiTab activeTab,
 		const UiThemeColors& colors,
-		ImFont* iconFont);
+		const UiAccentColors& accents,
+		ImFont* iconFont,
+		const UiSidebarVersionInfo* versionInfo);
 	void DrawMdl2Icon(ImDrawList* drawList, ImFont* iconFont, float x, float y, uint32_t codepoint, ImU32 color, float size) const;
 	static ImU32 WithAlpha(ImU32 color, float alpha);
 	static ImU32 ToU32(const ImVec4& color, float alpha = 1.f);
+	static ImU32 StatusColor(ComponentUpdateStatus status, const UiThemeColors& colors, const UiAccentColors& accents);
 
 	static constexpr float kExpandedWidth = 160.f;
 	static constexpr float kCollapsedWidth = 52.f;

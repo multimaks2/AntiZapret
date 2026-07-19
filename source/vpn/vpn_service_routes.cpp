@@ -58,7 +58,7 @@ namespace
 
 	std::filesystem::path RoutesFile()
 	{
-		return std::filesystem::path(ZapretPaths::GetVpnDirectory()) / L"cache" / L"service-routes.ini";
+		return std::filesystem::path(ZapretPaths::GetCacheDirectory()) / L"service-routes.ini";
 	}
 
 	const ServiceCatalogEntry kCatalog[] = {

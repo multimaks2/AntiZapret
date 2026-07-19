@@ -8,7 +8,6 @@
 
 enum class VpnRoutingPreset
 {
-	RegionalPresets = 0,
 	Ruv1Blocked = 1,
 	Ruv1ExceptRu = 2,
 	Ruv1All = 3,

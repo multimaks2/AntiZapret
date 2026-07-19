@@ -3,11 +3,15 @@
 #include "vpn/vpn_node.h"
 
 #include <atomic>
+#include <functional>
 #include <string>
 #include <vector>
 
 namespace VpnNodeProbe
 {
+	// ICMP echo like `ping` in cmd. Resolves host to real IPv4 (DoH). -1 on failure.
+	int IcmpPingMs(const std::string& host, int timeoutMs = 4000);
+
 	// TCP connect RTT to server:port (v2rayN Tcping). Default timeout 5s. -1 on failure.
 	int TcpPingMs(const std::string& host, int port, int timeoutMs = 5000);
 
@@ -23,12 +27,14 @@ namespace VpnNodeProbe
 		int timeoutMs = 9000);
 
 	// Peak download speed in MB/s via HTTP proxy (v2rayN Speedtest-style). -1 on failure.
+	// Optional onProgress is called as the running peak updates (for live UI).
 	float MeasureDownloadPeakMBps(
 		const std::string& proxyHost,
 		int proxyPort,
 		const char* url,
 		int timeoutMs,
-		std::atomic_bool* cancelFlag);
+		std::atomic_bool* cancelFlag,
+		const std::function<void(float peakMBps)>& onProgress = {});
 
 	bool CopyUtf8ToClipboard(const std::string& text);
 	std::string BuildOutboundJson(const VpnNode& node);

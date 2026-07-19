@@ -1,5 +1,6 @@
 #include "window/window_manager.h"
 
+#include "app/protocol_handler.h"
 #include "image/resource.h"
 #include "imgui_impl_win32.h"
 
@@ -311,6 +312,13 @@ LRESULT WindowManager::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 		m_drag.Release(hwnd);
 		if (msg == WM_LBUTTONUP)
 			return 0;
+	}
+
+	if (msg == WM_COPYDATA)
+	{
+		const auto* cds = reinterpret_cast<const COPYDATASTRUCT*>(lParam);
+		if (ProtocolHandler::HandleCopyData(cds))
+			return TRUE;
 	}
 
 	if (m_inputHandler && m_inputHandler(msg, wParam, lParam))

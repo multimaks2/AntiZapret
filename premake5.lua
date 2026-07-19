@@ -78,8 +78,16 @@ project "AntiZapret"
 		"source/app/application.cpp",
 		"source/app/app_settings.h",
 		"source/app/app_settings.cpp",
+		"source/app/app_version.h",
+		"source/app/app_version.cpp",
+		"source/app/settings_document.h",
+		"source/app/settings_document.cpp",
 		"source/app/app_log.h",
 		"source/app/app_log.cpp",
+		"source/app/process_job.h",
+		"source/app/process_job.cpp",
+		"source/app/protocol_handler.h",
+		"source/app/protocol_handler.cpp",
 		"source/net/traffic_monitor.h",
 		"source/net/traffic_monitor.cpp",
 		"source/ui/ui_types.h",
@@ -159,6 +167,10 @@ project "AntiZapret"
 		"source/vpn/vpn_routing.cpp",
 		"source/vpn/vpn_rules_updater.h",
 		"source/vpn/vpn_rules_updater.cpp",
+		"source/vpn/vpn_module_update_check.h",
+		"source/vpn/vpn_module_update_check.cpp",
+		"source/vpn/vpn_module_update_apply.h",
+		"source/vpn/vpn_module_update_apply.cpp",
 		"source/vpn/vpn_store.h",
 		"source/vpn/vpn_store.cpp",
 		"source/vpn/vpn_service_routes.h",
@@ -306,3 +318,34 @@ project "AntiZapret"
 		}
 
 	filter {}
+
+project "z-updater"
+	kind "ConsoleApp"
+	location "build"
+	targetname "z-updater"
+	objdir ("build/obj/%{prj.name}/%{cfg.buildcfg}/%{cfg.platform}")
+
+	filter "configurations:Release"
+		targetdir "bin/x32"
+		debugdir "bin/x32"
+
+	filter "configurations:Debug"
+		targetdir "bin/x32/Debug"
+		debugdir "bin/x32/Debug"
+
+	filter {}
+
+	includedirs {
+		"source",
+	}
+
+	linkoptions { "/MANIFESTUAC:level='requireAdministrator'" }
+
+	files {
+		"source/z-updater/main.cpp",
+	}
+
+	links {
+		"wininet",
+		"shell32",
+	}

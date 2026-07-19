@@ -12,6 +12,8 @@ namespace
 	constexpr char kApplicationId[] = "1526697979879231658";
 	constexpr char kShareButtonLabel[] = "Импорт";
 	constexpr char kShareButtonUrl[] = "https://github.com/multimaks2/AntiZapret/releases/latest";
+	constexpr char kDownloadButtonLabel[] = "Скачать AntiZapret";
+	constexpr char kDefaultDownloadUrl[] = "https://github.com/multimaks2/AntiZapret/releases/latest";
 	constexpr float kCallbackIntervalSec = 0.5f;
 	constexpr float kForceRefreshSec = 12.f;
 
@@ -39,6 +41,11 @@ namespace
 		if (tg)
 			append("tg-ws-proxy");
 	}
+
+	bool LooksLikeHttpUrl(const std::string& url)
+	{
+		return url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
+	}
 }
 
 AppRichPresence::AppRichPresence()
@@ -50,6 +57,7 @@ AppRichPresence::AppRichPresence()
 	, m_lastVpn(false)
 	, m_lastEnabled(false)
 	, m_lastShareButton(true)
+	, m_lastDownloadButton(true)
 	, m_callbackAge(0.f)
 	, m_refreshAge(0.f)
 	, m_sessionStartedAt(0)
@@ -87,8 +95,11 @@ void AppRichPresence::Update(
 	bool zapretRunning,
 	bool tgRunning,
 	bool vpnRunning,
+	const std::string& detailsText,
 	bool enabled,
 	bool shareButtonEnabled,
+	bool downloadButtonEnabled,
+	const std::string& downloadUrl,
 	float deltaTime)
 {
 	if (!enabled)
@@ -129,18 +140,32 @@ void AppRichPresence::Update(
 		|| zapretRunning != m_lastZapret
 		|| tgRunning != m_lastTg
 		|| vpnRunning != m_lastVpn
-		|| shareButtonEnabled != m_lastShareButton;
+		|| shareButtonEnabled != m_lastShareButton
+		|| downloadButtonEnabled != m_lastDownloadButton
+		|| detailsText != m_lastDetails
+		|| downloadUrl != m_lastDownloadUrl;
 
 	if (!changed && m_refreshAge < kForceRefreshSec)
 		return;
 
-	PushPresence(activeTab, zapretRunning, tgRunning, vpnRunning, shareButtonEnabled);
+	PushPresence(
+		activeTab,
+		zapretRunning,
+		tgRunning,
+		vpnRunning,
+		detailsText,
+		shareButtonEnabled,
+		downloadButtonEnabled,
+		downloadUrl);
 	m_lastTab = activeTab;
 	m_lastZapret = zapretRunning;
 	m_lastTg = tgRunning;
 	m_lastVpn = vpnRunning;
 	m_lastEnabled = true;
 	m_lastShareButton = shareButtonEnabled;
+	m_lastDownloadButton = downloadButtonEnabled;
+	m_lastDetails = detailsText;
+	m_lastDownloadUrl = downloadUrl;
 	m_hasPresence = true;
 	m_refreshAge = 0.f;
 }
@@ -150,13 +175,16 @@ void AppRichPresence::PushPresence(
 	bool zapret,
 	bool tg,
 	bool vpn,
-	bool shareButton) const
+	const std::string& detailsText,
+	bool shareButton,
+	bool downloadButton,
+	const std::string& downloadUrl) const
 {
 	char details[128] = {};
 	char state[128] = {};
 	char largeText[128] = {};
 
-	snprintf(details, sizeof details, "%s", TabLabel(tab));
+	strncpy_s(details, sizeof details, detailsText.c_str(), _TRUNCATE);
 	BuildServicesState(zapret, tg, vpn, state, sizeof state);
 	snprintf(largeText, sizeof largeText, "AntiZapret %s", ANTIZAPRET_VERSION);
 
@@ -169,13 +197,21 @@ void AppRichPresence::PushPresence(
 	presence.largeImageText = largeText;
 	presence.smallImageKey = TabImageKey(tab);
 	presence.smallImageText = TabLabel(tab);
+
 	if (shareButton)
 	{
 		presence.button1Label = kShareButtonLabel;
 		presence.button1Url = kShareButtonUrl;
 	}
-	presence.instance = 0;
 
+	if (downloadButton)
+	{
+		m_pushDownloadUrl = LooksLikeHttpUrl(downloadUrl) ? downloadUrl : kDefaultDownloadUrl;
+		presence.button2Label = kDownloadButtonLabel;
+		presence.button2Url = m_pushDownloadUrl.c_str();
+	}
+
+	presence.instance = 0;
 	Discord_UpdatePresence(&presence);
 }
 

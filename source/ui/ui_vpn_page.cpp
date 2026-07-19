@@ -9,17 +9,23 @@
 #include "vpn/vpn_geo.h"
 #include "vpn/vpn_import.h"
 #include "vpn/vpn_manager.h"
+#include "vpn/vpn_mihomo_api.h"
+#include "vpn/vpn_module_update_apply.h"
+#include "vpn/vpn_module_update_check.h"
 #include "vpn/vpn_node_probe.h"
 #include "vpn/vpn_routing.h"
 #include "zapret/zapret_paths.h"
+#include "zapret/zapret_update_check.h"
 #include "imgui.h"
 
 #include <Windows.h>
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <mutex>
 #include <thread>
@@ -29,12 +35,31 @@
 namespace
 {
 	const char* kWorkModes[] = {
-		"региональные прессеты",
 		"RUv1- Заблокированное",
 		"RUv1- Все, кроме рф",
 		"RUv1- Все",
 		"Своя Маршрутизация",
 	};
+
+	const char* kTransportModes[] = {
+		"Режим - Proxy",
+		"Режим - Tunnel",
+	};
+
+	// Store: 1=Blocked … 4=Custom (0 — старый мёртвый «региональные прессеты»).
+	int WorkModeToUiIndex(int workMode)
+	{
+		if (workMode < 1 || workMode > 4)
+			return 0;
+		return workMode - 1;
+	}
+
+	int UiIndexToWorkMode(int uiIndex)
+	{
+		if (uiIndex < 0 || uiIndex > 3)
+			return 1;
+		return uiIndex + 1;
+	}
 
 	constexpr float kColNum = 30.f;
 
@@ -395,6 +420,134 @@ namespace
 		ImGui::Dummy({ width, 0.f });
 		return fixChanged;
 	}
+
+	ImVec4 ModuleVersionAccent(ComponentUpdateStatus status, const UiAccentColors& accents)
+	{
+		switch (status)
+		{
+		case ComponentUpdateStatus::UpToDate:
+			return accents.ok;
+		case ComponentUpdateStatus::Checking:
+		case ComponentUpdateStatus::UpdateAvailable:
+			return accents.warn;
+		case ComponentUpdateStatus::Unknown:
+		case ComponentUpdateStatus::Error:
+		default:
+			return accents.fail;
+		}
+	}
+
+	bool IsDisplayVersion(const std::string& raw)
+	{
+		if (raw.empty() || raw == "—" || raw == "Unknown" || raw == "Установлен")
+			return false;
+		for (unsigned char ch : raw)
+		{
+			if (ch >= '0' && ch <= '9')
+				return true;
+		}
+		return false;
+	}
+
+	bool ModuleNeedsUpdate(
+		ComponentUpdateStatus status,
+		const std::string& local,
+		const std::string& remote,
+		bool applying)
+	{
+		if (applying)
+			return true;
+		if (status == ComponentUpdateStatus::UpdateAvailable)
+			return true;
+		return IsDisplayVersion(local) && IsDisplayVersion(remote) && local != remote;
+	}
+
+	// One compact line, only when mihomo and/or wintun have updates:
+	// Модули: mihomo 1.x, wintun 0.x   [Скачать обновление]
+	void DrawVpnModulesUpdateRow(VpnManager* manager, const UiThemeColors& colors, const UiAccentColors& accents)
+	{
+		auto& check = VpnModuleUpdateCheck::Instance();
+		auto& apply = VpnModuleUpdateApply::Instance();
+
+		std::string mihomoVer = check.GetMihomoLocalVersion();
+		if (!IsDisplayVersion(mihomoVer))
+			mihomoVer.clear();
+		std::string wintunVer = check.GetWintunLocalVersion();
+		if (!IsDisplayVersion(wintunVer))
+			wintunVer.clear();
+
+		const bool mihomoNeeds = ModuleNeedsUpdate(
+			check.GetMihomoStatus(),
+			mihomoVer,
+			check.GetMihomoRemoteVersion(),
+			apply.IsApplyingMihomo());
+		const bool wintunNeeds = ModuleNeedsUpdate(
+			check.GetWintunStatus(),
+			wintunVer,
+			check.GetWintunRemoteVersion(),
+			apply.IsApplyingWintun());
+
+		if (!mihomoNeeds && !wintunNeeds)
+			return;
+
+		const bool applying = apply.IsApplyingAny();
+
+		ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
+		ImGui::TextUnformatted("Модули:");
+		ImGui::PopStyleColor();
+
+		bool first = true;
+		auto appendModule = [&](const char* name, const std::string& ver, ComponentUpdateStatus status) {
+			if (!first)
+			{
+				ImGui::SameLine(0.f, 0.f);
+				ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+				ImGui::TextUnformatted(",");
+				ImGui::PopStyleColor();
+				ImGui::SameLine(0.f, 6.f);
+			}
+			else
+			{
+				ImGui::SameLine(0.f, 6.f);
+			}
+			first = false;
+
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+			ImGui::TextUnformatted(name);
+			ImGui::PopStyleColor();
+			if (!ver.empty())
+			{
+				ImGui::SameLine(0.f, 4.f);
+				// Match "mihomo" text top — default VersionBadge centers in lineH and sits too high here.
+				const float nameTop = ImGui::GetItemRectMin().y;
+				const ImVec2 cur = ImGui::GetCursorScreenPos();
+				ImGui::SetCursorScreenPos({ cur.x, nameTop });
+				UiCommon::VersionBadge(ver.c_str(), ModuleVersionAccent(status, accents), colors, false);
+			}
+		};
+
+		if (mihomoNeeds)
+			appendModule("mihomo", mihomoVer, check.GetMihomoStatus());
+		if (wintunNeeds)
+			appendModule("wintun", wintunVer, check.GetWintunStatus());
+
+		ImGui::SameLine(0.f, 12.f);
+		const char* btnLabel = applying ? "Скачивание..." : "Скачать обновление";
+		const float btnW = ImGui::CalcTextSize(btnLabel).x + 24.f;
+		const float btnH = UiMetrics::kSmallBtnHeight;
+		const float lineH = ImGui::GetTextLineHeight();
+		if (btnH != lineH)
+			ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (lineH - btnH) * 0.5f);
+		if (UiCommon::SecondaryButton(btnLabel, { btnW, btnH }, colors, !applying))
+		{
+			if (mihomoNeeds && !apply.IsApplyingMihomo())
+				apply.RequestApplyMihomo(manager);
+			if (wintunNeeds && !apply.IsApplyingWintun())
+				apply.RequestApplyWintun(manager);
+		}
+
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+	}
 }
 
 void UiVpnPage::EnsureStoreLoaded()
@@ -405,9 +558,12 @@ void UiVpnPage::EnsureStoreLoaded()
 	VpnStoreSettings settings;
 	m_store.Load(m_nodes, &settings);
 	m_workMode = settings.workMode;
+	if (m_workMode < 1 || m_workMode > 4)
+		m_workMode = 1; // 0 был мёртвый «региональные прессеты» → RUv1 Blocked
+	m_transportMode = settings.transportMode;
 	m_fixDiscord = settings.fixDiscord;
 
-	bool normalized = false;
+	bool normalized = m_workMode != settings.workMode;
 	for (VpnNode& node : m_nodes)
 	{
 		const std::string beforeName = node.name;
@@ -437,6 +593,7 @@ VpnStoreSettings UiVpnPage::BuildStoreSettings() const
 	VpnStoreSettings settings;
 	m_store.LoadSettings(settings);
 	settings.workMode = m_workMode;
+	settings.transportMode = m_transportMode;
 	settings.fixDiscord = m_fixDiscord;
 	if (m_activeIndex >= 0 && m_activeIndex < static_cast<int>(m_nodes.size()))
 		settings.activeUri = m_nodes[static_cast<size_t>(m_activeIndex)].originalUri;
@@ -814,19 +971,55 @@ void UiVpnPage::StartImportFromClipboard()
 		return;
 	}
 
+	StartImportFromText(clipboardText, "Импорт из буфера обмена...");
+}
+
+void UiVpnPage::ImportSubscriptionUrl(const std::string& urlOrText)
+{
+	std::string text = urlOrText;
+	while (!text.empty() && (text.front() == '"' || text.front() == '\'' || text.front() == ' ' || text.front() == '\t'))
+		text.erase(text.begin());
+	while (!text.empty() && (text.back() == '"' || text.back() == '\'' || text.back() == ' ' || text.back() == '\t' || text.back() == '\r' || text.back() == '\n'))
+		text.pop_back();
+	if (text.empty() || m_importRunning.load())
+		return;
+
+	EnsureStoreLoaded();
+
+	auto startsWithHttp = [](const std::string& s) {
+		if (s.size() < 7)
+			return false;
+		std::string head = s.substr(0, 8);
+		for (char& c : head)
+			c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+		return head.rfind("http://", 0) == 0 || head.rfind("https://", 0) == 0;
+	};
+
+	AppLog::Instance().Append(LogSource::VpnRouting, "Protocol import: " + text);
+	if (startsWithHttp(text))
+		StartRefreshSubscriptions(text);
+	else
+		StartImportFromText(text, "Импорт по протоколу...");
+}
+
+void UiVpnPage::StartImportFromText(const std::string& text, const char* statusLabel)
+{
+	if (m_importRunning.load() || text.empty())
+		return;
+
 	{
 		std::lock_guard<std::mutex> lock(m_importMutex);
-		m_importStatus = "Импорт из буфера обмена...";
+		m_importStatus = statusLabel ? statusLabel : "Импорт...";
 	}
 	m_importRunning.store(true);
 	AppLog::Instance().Append(
 		LogSource::VpnRouting,
-		"Импорт: запуск из буфера обмена (" + std::to_string(clipboardText.size()) + " байт).");
+		std::string("Импорт: запуск (") + std::to_string(text.size()) + " байт).");
 
 	const int nextNodeIndex = static_cast<int>(m_nodes.size()) + 1;
-	std::thread([this, clipboardText, nextNodeIndex]()
+	std::thread([this, text, nextNodeIndex]()
 	{
-		const VpnImportResult result = VpnImport::ImportFromText(clipboardText, nextNodeIndex);
+		const VpnImportResult result = VpnImport::ImportFromText(text, nextNodeIndex);
 		{
 			std::lock_guard<std::mutex> lock(m_importMutex);
 			m_pendingImport.nodes = std::move(result.nodes);
@@ -935,9 +1128,6 @@ void UiVpnPage::ApplyPendingProbeResults()
 		pending.swap(m_pendingProbe);
 	}
 
-	if (pending.empty())
-		return;
-
 	bool changed = false;
 	for (const PendingProbeResult& item : pending)
 	{
@@ -957,14 +1147,22 @@ void UiVpnPage::ApplyPendingProbeResults()
 		if (item.speedMbps > -1.5f)
 		{
 			node.speedMbps = item.speedMbps;
-			PushSpeedHistory(node, item.speedMbps);
+			if (!item.live)
+				PushSpeedHistory(node, item.speedMbps);
 			m_probeFlash[item.nodeIndex] = 1.f;
 			changed = true;
 		}
 	}
 
 	if (changed)
+		m_probeDirty = true;
+
+	// Don't block UI frames with disk I/O while probes are in flight.
+	if (m_probeDirty && !m_probeRunning.load())
+	{
 		SaveStore();
+		m_probeDirty = false;
+	}
 }
 
 void UiVpnPage::OpenSelectedDetails()
@@ -993,45 +1191,77 @@ void UiVpnPage::StartPing(bool selectedOnly)
 	StartPingIndices(std::move(indices));
 }
 
-void UiVpnPage::StartPingIndices(std::vector<int> indices)
+void UiVpnPage::StartTcpPingIndices(std::vector<int> indices)
 {
 	if (m_probeRunning.load() || indices.empty())
 		return;
 
-	const bool useRealPing =
+	std::vector<std::pair<int, std::pair<std::string, int>>> targets;
+	targets.reserve(indices.size());
+	for (int index : indices)
+	{
+		if (index < 0 || index >= static_cast<int>(m_nodes.size()))
+			continue;
+		const VpnNode& node = m_nodes[static_cast<size_t>(index)];
+		targets.push_back({ index, { node.server, node.port } });
+	}
+	if (targets.empty())
+		return;
+
+	const bool resumeVpn =
 		m_vpnEnabled
 		&& m_manager
 		&& m_manager->IsRunning();
+	const std::vector<VpnNode> nodesSnapshot = m_nodes;
+	const VpnStoreSettings settings = BuildStoreSettings();
+	const int originalActive = m_activeIndex;
 
-	if (!useRealPing)
+	m_probeCancel.store(false);
+	m_probeRunning.store(true);
+	SetToolbarStatus(
+		targets.size() == 1
+			? (resumeVpn ? "Пауза VPN → TCP ping..." : "TCP ping...")
+			: (resumeVpn ? "Пауза VPN → TCP ping группы..." : "TCP ping группы..."));
+
+	std::thread([this, targets, resumeVpn, nodesSnapshot, settings, originalActive]()
 	{
-		// VPN off: direct Tcping to real IP (DoH). With TUN on this path is unreliable.
-		std::vector<std::pair<int, std::pair<std::string, int>>> targets;
-		targets.reserve(indices.size());
-		for (int index : indices)
+		if (resumeVpn && m_manager)
 		{
-			if (index < 0 || index >= static_cast<int>(m_nodes.size()))
-				continue;
-			const VpnNode& node = m_nodes[static_cast<size_t>(index)];
-			targets.push_back({ index, { node.server, node.port } });
+			SetToolbarStatus("Остановка VPN для TCP ping...");
+			m_manager->RequestStop();
+			for (int i = 0; i < 80; ++i)
+			{
+				if (!m_manager->IsRunning() && !m_manager->IsOperationInFlight())
+					break;
+				Sleep(50);
+			}
+			Sleep(150);
 		}
-		if (targets.empty())
-			return;
 
-		m_probeCancel.store(false);
-		m_probeRunning.store(true);
-		SetToolbarStatus(targets.size() == 1 ? "Tcping..." : "Tcping группы...");
-
-		std::thread([this, targets]()
+		if (m_probeCancel.load())
 		{
-			int ok = 0;
-			for (const auto& target : targets)
+			if (resumeVpn && m_manager && m_vpnEnabled)
+				m_manager->RequestStart(nodesSnapshot, originalActive, settings);
+			m_probeRunning.store(false);
+			SetToolbarStatus("TCP ping остановлен.");
+			return;
+		}
+
+		SetToolbarStatus(targets.size() == 1 ? "TCP ping с ПК..." : "TCP ping с ПК (параллельно)...");
+
+		std::atomic<int> ok { 0 };
+		std::vector<std::thread> workers;
+		workers.reserve(targets.size());
+
+		for (const auto& target : targets)
+		{
+			workers.emplace_back([this, target, &ok]()
 			{
 				if (m_probeCancel.load())
-					break;
+					return;
 				const int pingMs = VpnNodeProbe::TcpPingMs(target.second.first, target.second.second, 5000);
 				if (pingMs >= 0)
-					++ok;
+					ok.fetch_add(1);
 
 				PendingProbeResult result;
 				result.nodeIndex = target.first;
@@ -1042,17 +1272,52 @@ void UiVpnPage::StartPingIndices(std::vector<int> indices)
 					std::lock_guard<std::mutex> lock(m_probeMutex);
 					m_pendingProbe.push_back(result);
 				}
-			}
+			});
+		}
 
-			char status[96];
-			snprintf(status, sizeof status, "Tcping завершён: %d/%zu OK", ok, targets.size());
-			SetToolbarStatus(status);
-			m_probeRunning.store(false);
-		}).detach();
+		for (std::thread& worker : workers)
+		{
+			if (worker.joinable())
+				worker.join();
+		}
+
+		if (resumeVpn && m_manager && m_vpnEnabled && !m_probeCancel.load())
+		{
+			SetToolbarStatus("Восстановление VPN...");
+			m_manager->RequestStart(nodesSnapshot, originalActive, settings);
+		}
+
+		char status[96];
+		if (m_probeCancel.load())
+			snprintf(status, sizeof status, "TCP ping остановлен.");
+		else
+			snprintf(status, sizeof status, "TCP ping: %d/%zu OK", ok.load(), targets.size());
+		SetToolbarStatus(status);
+		m_probeRunning.store(false);
+	}).detach();
+}
+
+void UiVpnPage::StartPingIndices(std::vector<int> indices)
+{
+	if (m_probeRunning.load() || indices.empty())
 		return;
-	}
 
-	// v2rayN Realping: switch node → HTTP GET via mixed-port → best of 2.
+	std::vector<std::pair<int, std::string>> targets;
+	targets.reserve(indices.size());
+	for (int index : indices)
+	{
+		if (index < 0 || index >= static_cast<int>(m_nodes.size()))
+			continue;
+		const VpnNode& node = m_nodes[static_cast<size_t>(index)];
+		targets.push_back({ index, node.server });
+	}
+	if (targets.empty())
+		return;
+
+	const bool resumeVpn =
+		m_vpnEnabled
+		&& m_manager
+		&& m_manager->IsRunning();
 	const std::vector<VpnNode> nodesSnapshot = m_nodes;
 	const VpnStoreSettings settings = BuildStoreSettings();
 	const int originalActive = m_activeIndex;
@@ -1060,73 +1325,303 @@ void UiVpnPage::StartPingIndices(std::vector<int> indices)
 	m_probeCancel.store(false);
 	m_probeRunning.store(true);
 	SetToolbarStatus(
-		indices.size() == 1 ? "Реальная задержка..." : "Реальная задержка группы...");
+		targets.size() == 1
+			? (resumeVpn ? "Пауза VPN → ping..." : "ping...")
+			: (resumeVpn ? "Пауза VPN → ping группы..." : "ping группы..."));
 
-	std::thread([this, indices, nodesSnapshot, settings, originalActive]()
+	std::thread([this, targets, resumeVpn, nodesSnapshot, settings, originalActive]()
 	{
-		constexpr const char* kPingUrl = "https://www.google.com/generate_204";
-		int ok = 0;
+		if (resumeVpn && m_manager)
+		{
+			SetToolbarStatus("Остановка VPN для ping...");
+			m_manager->RequestStop();
+			for (int i = 0; i < 80; ++i)
+			{
+				if (!m_manager->IsRunning() && !m_manager->IsOperationInFlight())
+					break;
+				Sleep(50);
+			}
+			Sleep(150);
+		}
 
-		for (size_t n = 0; n < indices.size(); ++n)
+		if (m_probeCancel.load())
+		{
+			if (resumeVpn && m_manager && m_vpnEnabled)
+				m_manager->RequestStart(nodesSnapshot, originalActive, settings);
+			m_probeRunning.store(false);
+			SetToolbarStatus("ping остановлен.");
+			return;
+		}
+
+		SetToolbarStatus(targets.size() == 1 ? "ping (ICMP)..." : "ping (ICMP), параллельно...");
+
+		std::atomic<int> ok { 0 };
+		std::vector<std::thread> workers;
+		workers.reserve(targets.size());
+
+		for (const auto& target : targets)
+		{
+			workers.emplace_back([this, target, &ok]()
+			{
+				if (m_probeCancel.load())
+					return;
+				const int pingMs = VpnNodeProbe::IcmpPingMs(target.second, 4000);
+				if (pingMs >= 0)
+					ok.fetch_add(1);
+
+				PendingProbeResult result;
+				result.nodeIndex = target.first;
+				result.pingMs = pingMs;
+				result.speedMbps = -2.f;
+				result.ready = true;
+				{
+					std::lock_guard<std::mutex> lock(m_probeMutex);
+					m_pendingProbe.push_back(result);
+				}
+			});
+		}
+
+		for (std::thread& worker : workers)
+		{
+			if (worker.joinable())
+				worker.join();
+		}
+
+		if (resumeVpn && m_manager && m_vpnEnabled && !m_probeCancel.load())
+		{
+			SetToolbarStatus("Восстановление VPN...");
+			m_manager->RequestStart(nodesSnapshot, originalActive, settings);
+		}
+
+		char status[96];
+		if (m_probeCancel.load())
+			snprintf(status, sizeof status, "ping остановлен.");
+		else
+			snprintf(status, sizeof status, "ping: %d/%zu OK", ok.load(), targets.size());
+		SetToolbarStatus(status);
+		m_probeRunning.store(false);
+	}).detach();
+}
+
+void UiVpnPage::StartRealPingIndices(std::vector<int> indices)
+{
+	if (m_probeRunning.load() || indices.empty() || !m_manager)
+		return;
+
+	std::vector<int> cleaned;
+	cleaned.reserve(indices.size());
+	for (int index : indices)
+	{
+		if (index >= 0 && index < static_cast<int>(m_nodes.size()))
+			cleaned.push_back(index);
+	}
+	if (cleaned.empty())
+		return;
+
+	const bool resumeVpn = m_vpnEnabled && m_manager->IsRunning();
+	const std::vector<VpnNode> nodesSnapshot = m_nodes;
+	VpnStoreSettings settings = BuildStoreSettings();
+	const int originalActive = m_activeIndex;
+	const VpnRoutingPreset preset = VpnRouting::PresetFromWorkMode(settings.workMode);
+
+	m_probeCancel.store(false);
+	m_probeRunning.store(true);
+	SetToolbarStatus(
+		cleaned.size() == 1 ? "RealPing..." : "RealPing группы...");
+
+	std::thread([this, cleaned, resumeVpn, nodesSnapshot, settings, originalActive, preset]()
+	{
+		constexpr int kBatchSize = 16;
+		constexpr const char* kPingUrl = "https://www.gstatic.com/generate_204";
+		constexpr int kPingTimeoutMs = 5000;
+
+		auto waitIdle = [this]()
+		{
+			for (int i = 0; i < 120; ++i)
+			{
+				if (!m_manager->IsOperationInFlight()
+					&& m_manager->GetRunStatus() != VpnRunStatus::Starting)
+					break;
+				Sleep(50);
+			}
+		};
+
+		if (m_manager->IsRunning() || m_manager->IsOperationInFlight())
+		{
+			SetToolbarStatus("RealPing: остановка VPN...");
+			m_manager->RequestStop();
+			waitIdle();
+			for (int i = 0; i < 80; ++i)
+			{
+				if (!m_manager->IsRunning())
+					break;
+				Sleep(50);
+			}
+			Sleep(150);
+		}
+
+		if (m_probeCancel.load())
+		{
+			if (resumeVpn && m_vpnEnabled)
+				m_manager->RequestStart(nodesSnapshot, originalActive, settings);
+			m_probeRunning.store(false);
+			SetToolbarStatus("RealPing остановлен.");
+			return;
+		}
+
+		int ok = 0;
+		const std::wstring cacheDir = ZapretPaths::GetCacheDirectory();
+		VpnStoreSettings probeSettings = settings;
+		probeSettings.transportMode = 0; // force Proxy DNS path; TUN already disabled in builder
+
+		for (size_t batchStart = 0; batchStart < cleaned.size(); batchStart += static_cast<size_t>(kBatchSize))
 		{
 			if (m_probeCancel.load())
 				break;
 
-			const int index = indices[n];
-			if (index < 0 || index >= static_cast<int>(nodesSnapshot.size()))
-				continue;
+			const size_t batchEnd = (std::min)(cleaned.size(), batchStart + static_cast<size_t>(kBatchSize));
+			std::vector<int> batch(cleaned.begin() + static_cast<std::ptrdiff_t>(batchStart),
+				cleaned.begin() + static_cast<std::ptrdiff_t>(batchEnd));
 
-			const VpnNode& node = nodesSnapshot[static_cast<size_t>(index)];
-			char status[160];
+			char status[128];
 			snprintf(
 				status,
 				sizeof status,
-				"Задержка [%zu/%zu]: %s...",
-				n + 1,
-				indices.size(),
-				node.name.c_str());
+				"RealPing [%zu/%zu]...",
+				batchEnd,
+				cleaned.size());
 			SetToolbarStatus(status);
 
-			int pingMs = -1;
-			if (m_manager->Reload(nodesSnapshot, index, settings))
+			const int mixedPort = VpnManager::AllocateFreeTcpPort(VpnManager::kDefaultMixedPort);
+			int apiPort = VpnManager::AllocateFreeTcpPort(VpnManager::kDefaultApiPort);
+			if (apiPort == mixedPort)
+				apiPort = VpnManager::AllocateFreeTcpPort(0);
+			const int portBase = VpnManager::AllocateFreeTcpPort(11800);
+
+			std::vector<VpnConfigBuilder::ParallelProbeEndpoint> endpoints;
+			std::string buildError;
+			if (!VpnConfigBuilder::WriteParallelProbeConfig(
+					nodesSnapshot,
+					batch,
+					originalActive,
+					preset,
+					probeSettings,
+					cacheDir,
+					mixedPort,
+					apiPort,
+					portBase,
+					endpoints,
+					buildError))
 			{
-				Sleep(1000);
-				if (!m_probeCancel.load())
+				SetToolbarStatus(buildError.empty() ? "RealPing: ошибка конфига." : buildError);
+				for (int index : batch)
 				{
-					pingMs = VpnNodeProbe::HttpRealPingMs(
-						"127.0.0.1",
-						VpnManager::kMixedPort,
-						kPingUrl,
-						9000);
+					PendingProbeResult result;
+					result.nodeIndex = index;
+					result.pingMs = -1;
+					result.speedMbps = -2.f;
+					result.ready = true;
+					std::lock_guard<std::mutex> lock(m_probeMutex);
+					m_pendingProbe.push_back(result);
 				}
+				continue;
 			}
 
-			PendingProbeResult result;
-			result.nodeIndex = index;
-			result.pingMs = pingMs;
-			result.speedMbps = -2.f;
-			result.ready = true;
+			if (!m_manager->StartFromExistingConfig(mixedPort, apiPort))
 			{
-				std::lock_guard<std::mutex> lock(m_probeMutex);
-				m_pendingProbe.push_back(result);
+				SetToolbarStatus(
+					m_manager->GetErrorMessage().empty()
+						? "RealPing: не удалось запустить mihomo."
+						: m_manager->GetErrorMessage());
+				for (int index : batch)
+				{
+					PendingProbeResult result;
+					result.nodeIndex = index;
+					result.pingMs = -1;
+					result.speedMbps = -2.f;
+					result.ready = true;
+					std::lock_guard<std::mutex> lock(m_probeMutex);
+					m_pendingProbe.push_back(result);
+				}
+				continue;
 			}
 
-			if (pingMs >= 0)
+			Sleep(1000); // v2rayN core warm-up
+
+			if (m_probeCancel.load())
 			{
-				++ok;
-				snprintf(status, sizeof status, "%s: %d ms", node.name.c_str(), pingMs);
-				SetToolbarStatus(status);
+				m_manager->Stop();
+				break;
 			}
+
+			const int probeApiPort = m_manager->GetApiPort();
+			std::atomic<int> batchOk { 0 };
+			std::vector<std::thread> workers;
+			workers.reserve(endpoints.size());
+			for (const VpnConfigBuilder::ParallelProbeEndpoint& endpoint : endpoints)
+			{
+				workers.emplace_back([this, endpoint, &batchOk, kPingUrl, kPingTimeoutMs, probeApiPort]()
+				{
+					if (m_probeCancel.load())
+						return;
+					// mihomo /proxies/{name}/delay — как Clash Meta / v2rayN core delay,
+					// без раздувания WinInet HTTP-proxy RTT.
+					int pingMs = MihomoApi::GetProxyDelayMs(
+						probeApiPort,
+						endpoint.proxyTag,
+						kPingUrl,
+						kPingTimeoutMs);
+					if (pingMs < 0)
+					{
+						pingMs = VpnNodeProbe::HttpRealPingMs(
+							"127.0.0.1",
+							endpoint.port,
+							kPingUrl,
+							kPingTimeoutMs);
+					}
+					if (pingMs >= 0)
+						batchOk.fetch_add(1);
+
+					PendingProbeResult result;
+					result.nodeIndex = endpoint.nodeIndex;
+					result.pingMs = pingMs;
+					result.speedMbps = -2.f;
+					result.ready = true;
+					{
+						std::lock_guard<std::mutex> lock(m_probeMutex);
+						m_pendingProbe.push_back(result);
+					}
+				});
+			}
+
+			for (std::thread& worker : workers)
+			{
+				if (worker.joinable())
+					worker.join();
+			}
+			ok += batchOk.load();
+
+			m_manager->Stop();
+			waitIdle();
+			Sleep(100);
 		}
 
-		if (originalActive >= 0 && originalActive < static_cast<int>(nodesSnapshot.size()))
-			m_manager->Reload(nodesSnapshot, originalActive, settings);
+		if (resumeVpn && m_vpnEnabled && !m_probeCancel.load())
+		{
+			SetToolbarStatus("Восстановление VPN...");
+			m_manager->RequestStart(nodesSnapshot, originalActive, settings);
+		}
+		else if (!resumeVpn)
+		{
+			// Leave stopped after probe; SyncVpnRuntime won't restart unless toggle on.
+			m_lastAppliedVpnEnabled = false;
+		}
 
 		char done[96];
 		if (m_probeCancel.load())
-			snprintf(done, sizeof done, "Задержка остановлена.");
+			snprintf(done, sizeof done, "RealPing остановлен.");
 		else
-			snprintf(done, sizeof done, "Реальная задержка: %d/%zu OK", ok, indices.size());
+			snprintf(done, sizeof done, "RealPing: %d/%zu OK", ok, cleaned.size());
 		SetToolbarStatus(done);
 		m_probeRunning.store(false);
 	}).detach();
@@ -1136,11 +1631,6 @@ void UiVpnPage::StartSpeedTest(bool selectedOnly)
 {
 	if (m_probeRunning.load())
 		return;
-	if (!m_vpnEnabled || !m_manager || !m_manager->IsRunning())
-	{
-		SetToolbarStatus("Для теста скорости включите VPN.");
-		return;
-	}
 
 	std::vector<int> indices;
 	if (selectedOnly)
@@ -1163,17 +1653,14 @@ void UiVpnPage::StartSpeedTest(bool selectedOnly)
 
 void UiVpnPage::StartSpeedTestIndices(std::vector<int> indices)
 {
-	if (m_probeRunning.load() || indices.empty())
+	if (m_probeRunning.load() || indices.empty() || !m_manager)
 		return;
-	if (!m_vpnEnabled || !m_manager || !m_manager->IsRunning())
-	{
-		SetToolbarStatus("Для теста скорости включите VPN.");
-		return;
-	}
 
 	const std::vector<VpnNode> nodesSnapshot = m_nodes;
 	const VpnStoreSettings settings = BuildStoreSettings();
 	const int originalActive = m_activeIndex;
+	const bool wasVpnEnabled = m_vpnEnabled && m_manager->IsRunning();
+	const bool temporarySession = !wasVpnEnabled;
 
 	m_probeCancel.store(false);
 	m_probeRunning.store(true);
@@ -1181,12 +1668,44 @@ void UiVpnPage::StartSpeedTestIndices(std::vector<int> indices)
 	SetToolbarStatus(
 		indices.size() == 1 ? "Тест скорости..." : "Тест скорости группы...");
 
-	std::thread([this, indices, nodesSnapshot, settings, originalActive]()
+	std::thread([this, indices, nodesSnapshot, settings, originalActive, wasVpnEnabled, temporarySession]()
 	{
-		// v2rayN: per-node proxy switch → settle → Cachefly peak MB/s.
 		constexpr const char* kUrl = "https://cachefly.cachefly.net/50mb.test";
+		constexpr const char* kPingUrl = "https://www.google.com/generate_204";
 		constexpr int kTimeoutMs = 10000;
+		constexpr int kPingTimeoutMs = 9000;
+		constexpr DWORD kSettleMs = 350;
 		int ok = 0;
+		int currentProxy = originalActive;
+
+		auto waitIdle = [this]()
+		{
+			for (int i = 0; i < 120; ++i)
+			{
+				if (!m_manager->IsOperationInFlight()
+					&& m_manager->GetRunStatus() != VpnRunStatus::Starting)
+					break;
+				Sleep(50);
+			}
+		};
+
+		if (temporarySession)
+		{
+			SetToolbarStatus("Тест скорости: запуск mihomo...");
+			const int startIndex = indices.front();
+			if (!m_manager->Start(nodesSnapshot, startIndex, settings))
+			{
+				SetToolbarStatus(
+					m_manager->GetErrorMessage().empty()
+						? "Не удалось запустить VPN для теста скорости."
+						: m_manager->GetErrorMessage());
+				m_speedTestRunning = false;
+				m_probeRunning.store(false);
+				return;
+			}
+			currentProxy = startIndex;
+			Sleep(kSettleMs);
+		}
 
 		for (size_t n = 0; n < indices.size(); ++n)
 		{
@@ -1208,19 +1727,68 @@ void UiVpnPage::StartSpeedTestIndices(std::vector<int> indices)
 				node.name.c_str());
 			SetToolbarStatus(status);
 
-			float peakMBps = -1.f;
-			if (m_manager->Reload(nodesSnapshot, index, settings))
+			auto pushLiveSpeed = [this, index](float peakMBps)
 			{
-				Sleep(1000);
-				if (!m_probeCancel.load())
+				if (peakMBps < 0.f)
+					return;
+				PendingProbeResult result;
+				result.nodeIndex = index;
+				result.pingMs = -2;
+				result.speedMbps = peakMBps;
+				result.ready = true;
+				result.live = true;
 				{
-					peakMBps = VpnNodeProbe::MeasureDownloadPeakMBps(
-						"127.0.0.1",
-						VpnManager::kMixedPort,
-						kUrl,
-						kTimeoutMs,
-						&m_probeCancel);
+					std::lock_guard<std::mutex> lock(m_probeMutex);
+					for (auto it = m_pendingProbe.begin(); it != m_pendingProbe.end();)
+					{
+						if (it->nodeIndex == index && it->pingMs == -2 && it->live)
+							it = m_pendingProbe.erase(it);
+						else
+							++it;
+					}
+					m_pendingProbe.push_back(result);
 				}
+			};
+
+			float peakMBps = -1.f;
+			bool ready = (index == currentProxy) && m_manager->IsRunning();
+			if (!ready && m_manager->Reload(nodesSnapshot, index, settings))
+			{
+				currentProxy = index;
+				Sleep(kSettleMs);
+				ready = m_manager->IsRunning();
+			}
+
+			int pingMs = -1;
+			if (ready && !m_probeCancel.load())
+			{
+				pingMs = VpnNodeProbe::HttpRealPingMs(
+					"127.0.0.1",
+					m_manager->GetMixedPort(),
+					kPingUrl,
+					kPingTimeoutMs);
+
+				PendingProbeResult pingResult;
+				pingResult.nodeIndex = index;
+				pingResult.pingMs = pingMs;
+				pingResult.speedMbps = -2.f;
+				pingResult.ready = true;
+				{
+					std::lock_guard<std::mutex> lock(m_probeMutex);
+					m_pendingProbe.push_back(pingResult);
+				}
+			}
+
+			// v2rayN DoSpeedTest: only download when real ping succeeded.
+			if (ready && pingMs > 0 && !m_probeCancel.load())
+			{
+				peakMBps = VpnNodeProbe::MeasureDownloadPeakMBps(
+					"127.0.0.1",
+					m_manager->GetMixedPort(),
+					kUrl,
+					kTimeoutMs,
+					&m_probeCancel,
+					pushLiveSpeed);
 			}
 
 			PendingProbeResult result;
@@ -1239,10 +1807,26 @@ void UiVpnPage::StartSpeedTestIndices(std::vector<int> indices)
 				snprintf(status, sizeof status, "%s: %.1f MB/s", node.name.c_str(), peakMBps);
 				SetToolbarStatus(status);
 			}
+			else if (pingMs < 0)
+			{
+				snprintf(status, sizeof status, "%s: RealPing не прошёл", node.name.c_str());
+				SetToolbarStatus(status);
+			}
 		}
 
-		if (originalActive >= 0 && originalActive < static_cast<int>(nodesSnapshot.size()))
+		if (temporarySession)
+		{
+			SetToolbarStatus("Тест скорости: остановка временного VPN...");
+			m_manager->Stop();
+			waitIdle();
+			m_lastAppliedVpnEnabled = false;
+		}
+		else if (originalActive >= 0
+			&& originalActive < static_cast<int>(nodesSnapshot.size())
+			&& currentProxy != originalActive)
+		{
 			m_manager->Reload(nodesSnapshot, originalActive, settings);
+		}
 
 		char done[96];
 		if (m_probeCancel.load())
@@ -1261,6 +1845,79 @@ void UiVpnPage::StopSpeedTest()
 	m_probeCancel.store(true);
 	m_speedTestRunning = false;
 	SetToolbarStatus("Остановка теста...");
+}
+
+void UiVpnPage::DeleteSelectedServer()
+{
+	if (m_selected < 0 || m_selected >= static_cast<int>(m_nodes.size()))
+		return;
+	if (m_probeRunning.load())
+		return;
+
+	const int removed = m_selected;
+	m_nodes.erase(m_nodes.begin() + removed);
+	if (m_activeIndex == removed)
+		m_activeIndex = m_nodes.empty() ? -1 : 0;
+	else if (m_activeIndex > removed)
+		--m_activeIndex;
+	if (m_detailIndex == removed)
+	{
+		m_detailIndex = -1;
+		m_view = View::List;
+	}
+	else if (m_detailIndex > removed)
+		--m_detailIndex;
+	m_selected = -1;
+	SaveStore();
+	SetToolbarStatus("Сервер удалён.");
+}
+
+void UiVpnPage::DeleteGroupServers(const std::vector<int>& indices)
+{
+	if (indices.empty() || m_probeRunning.load())
+		return;
+
+	std::vector<int> ordered = indices;
+	std::sort(ordered.begin(), ordered.end(), std::greater<int>());
+
+	int removedCount = 0;
+	for (int index : ordered)
+	{
+		if (index < 0 || index >= static_cast<int>(m_nodes.size()))
+			continue;
+
+		m_nodes.erase(m_nodes.begin() + index);
+		++removedCount;
+
+		if (m_activeIndex == index)
+			m_activeIndex = m_nodes.empty() ? -1 : (std::min)(index, static_cast<int>(m_nodes.size()) - 1);
+		else if (m_activeIndex > index)
+			--m_activeIndex;
+
+		if (m_selected == index)
+			m_selected = -1;
+		else if (m_selected > index)
+			--m_selected;
+
+		if (m_detailIndex == index)
+		{
+			m_detailIndex = -1;
+			m_view = View::List;
+		}
+		else if (m_detailIndex > index)
+			--m_detailIndex;
+	}
+
+	if (removedCount <= 0)
+		return;
+
+	if (m_activeIndex >= static_cast<int>(m_nodes.size()))
+		m_activeIndex = m_nodes.empty() ? -1 : static_cast<int>(m_nodes.size()) - 1;
+
+	SaveStore();
+	char status[96];
+	snprintf(status, sizeof status, "Удалено серверов: %d", removedCount);
+	SetToolbarStatus(status);
 }
 
 void UiVpnPage::ExportOutboundJson(int nodeIndex)
@@ -1284,15 +1941,17 @@ void UiVpnPage::ExportRuntimeConfig(int nodeIndex)
 	const VpnNode& node = m_nodes[static_cast<size_t>(nodeIndex)];
 	const VpnStoreSettings settings = BuildStoreSettings();
 	const VpnRoutingPreset preset = VpnRouting::PresetFromWorkMode(settings.workMode);
-	const std::wstring vpnDir = ZapretPaths::GetVpnDirectory();
+	const std::wstring cacheDir = ZapretPaths::GetCacheDirectory();
+	const int mixedPort = m_manager ? m_manager->GetMixedPort() : VpnManager::kDefaultMixedPort;
+	const int apiPort = m_manager ? m_manager->GetApiPort() : VpnManager::kDefaultApiPort;
 	std::string error;
-	if (!VpnConfigBuilder::WriteRuntimeConfig(node, preset, settings, vpnDir, error, false))
+	if (!VpnConfigBuilder::WriteRuntimeConfig(node, preset, settings, cacheDir, mixedPort, apiPort, error, false))
 	{
 		SetToolbarStatus(error.empty() ? "Не удалось собрать runtime конфиг." : error);
 		return;
 	}
 
-	const std::filesystem::path configPath = std::filesystem::path(vpnDir) / L"config.yaml";
+	const std::filesystem::path configPath = std::filesystem::path(cacheDir) / L"config.yaml";
 	std::ifstream input(configPath, std::ios::binary);
 	if (!input)
 	{
@@ -1309,6 +1968,7 @@ void UiVpnPage::ExportRuntimeConfig(int nodeIndex)
 void UiVpnPage::UpdateRuntime()
 {
 	EnsureStoreLoaded();
+	ApplyPendingProbeResults();
 	SyncVpnRuntime();
 }
 
@@ -1329,6 +1989,49 @@ std::string UiVpnPage::GetActiveServerLabel() const
 	return "Сервер #" + std::to_string(m_activeIndex + 1);
 }
 
+std::string UiVpnPage::GetActiveServerPresenceLabel() const
+{
+	if (!HasActiveServer() || !m_vpnEnabled)
+		return {};
+
+	const VpnNode& node = m_nodes[static_cast<size_t>(m_activeIndex)];
+	std::string country = VpnGeo::CountryCodeToName(node.country);
+	if (country.empty() && !node.country.empty())
+		country = node.country; // fallback ISO only if name missing
+	if (country.empty())
+		country = "Сервер";
+
+	const VpnStoreSettings settings = BuildStoreSettings();
+	const char* transport = settings.transportMode == 0 ? "Proxy" : "TUN";
+
+	const char* bypass = "RUv1 Заблокированное";
+	switch (m_workMode)
+	{
+	case 2:
+		bypass = "RUv1 Все, кроме РФ";
+		break;
+	case 3:
+		bypass = "RUv1 Все";
+		break;
+	case 4:
+		bypass = "Своя маршрутизация";
+		break;
+	default:
+		bypass = "RUv1 Заблокированное";
+		break;
+	}
+
+	// Discord often renders flag emoji as "pl"/"PL" — no flag, plain text only.
+	char label[160] = {};
+	snprintf(label, sizeof label, "%s - %s - %s", country.c_str(), transport, bypass);
+
+	constexpr size_t kMaxDiscordDetails = 120;
+	std::string out = label;
+	if (out.size() > kMaxDiscordDetails)
+		out.resize(kMaxDiscordDetails);
+	return out;
+}
+
 void UiVpnPage::SyncVpnRuntime()
 {
 	if (!m_manager)
@@ -1338,14 +2041,32 @@ void UiVpnPage::SyncVpnRuntime()
 	if (m_speedTestRunning || m_probeRunning.load())
 		return;
 
+	// Module binary replace requires VPN stopped — don't restart mid-update.
+	if (VpnModuleUpdateApply::Instance().IsApplyingAny())
+		return;
+
+	// Wait out in-flight start/stop — Start() begins with Stop(), which briefly
+	// reports Stopped and used to cancel autostart via the failure path below.
+	if (m_manager->IsOperationInFlight()
+		|| m_manager->GetRunStatus() == VpnRunStatus::Starting)
+		return;
+
 	if (m_vpnEnabled
 		&& m_lastAppliedVpnEnabled
 		&& !m_manager->IsRunning()
 		&& m_manager->GetRunStatus() == VpnRunStatus::Stopped
 		&& !m_manager->GetErrorMessage().empty())
 	{
-		m_vpnEnabled = false;
+		std::string readyErr;
+		if (!m_manager->IsRuntimeReady(readyErr))
+			return; // still waiting for rules/wintun — readiness loop below
+
+		// Keep the toggle on and allow retry (TUN may need a moment).
+		AppLog::Instance().Append(
+			LogSource::VpnRouting,
+			std::string("VPN старт не удался, повтор: ") + m_manager->GetErrorMessage());
 		m_lastAppliedVpnEnabled = false;
+		m_vpnRetryAfterTick = GetTickCount64() + 2000;
 		return;
 	}
 
@@ -1356,6 +2077,7 @@ void UiVpnPage::SyncVpnRuntime()
 			m_manager->RequestStop();
 			m_lastAppliedVpnEnabled = false;
 		}
+		m_vpnRetryAfterTick = 0;
 		return;
 	}
 
@@ -1380,14 +2102,34 @@ void UiVpnPage::SyncVpnRuntime()
 	if (runtimeUpToDate)
 		return;
 
-	if (m_manager->IsOperationInFlight())
+	if (m_vpnRetryAfterTick != 0 && GetTickCount64() < m_vpnRetryAfterTick)
 		return;
+
+	if (!HasActiveServer())
+		return;
+
+	std::string readyError;
+	if (!m_manager->IsRuntimeReady(readyError))
+	{
+		if (!m_waitingForRuntime)
+		{
+			m_waitingForRuntime = true;
+			AppLog::Instance().Append(LogSource::VpnRouting, readyError);
+		}
+		return; // wait by readiness, not by timer
+	}
+	if (m_waitingForRuntime)
+	{
+		m_waitingForRuntime = false;
+		AppLog::Instance().Append(LogSource::VpnRouting, "VPN runtime готов, запускаем...");
+	}
 
 	m_manager->RequestStart(m_nodes, m_activeIndex, settings);
 	m_lastAppliedVpnEnabled = true;
 	m_lastAppliedWorkMode = m_workMode;
 	m_lastAppliedActiveIndex = m_activeIndex;
 	m_lastAppliedSettings = settings;
+	m_vpnRetryAfterTick = 0;
 }
 
 void UiVpnPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width)
@@ -1429,9 +2171,12 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 	if (DrawServersPageHeader(fonts, width, m_vpnEnabled, m_vpnMix, m_fixDiscord, colors))
 		SaveStore();
 
-	const float filterSearchW = width * 0.38f;
+	DrawVpnModulesUpdateRow(m_manager, colors, accents);
+
 	const float filterGap = UiMetrics::kGridGap;
-	const float comboW = (std::max)(120.f, width - filterSearchW - filterGap);
+	const float transportW = (std::max)(150.f, width * 0.22f);
+	const float filterSearchW = width * 0.30f;
+	const float comboW = (std::max)(120.f, width - filterSearchW - transportW - filterGap * 2.f);
 
 	UiCommon::PushInputStyle(colors);
 	ImGui::SetNextItemWidth(filterSearchW);
@@ -1440,8 +2185,14 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 	ImGui::SameLine(0.f, filterGap);
 	ImGui::SetNextItemWidth(comboW);
 	const int previousWorkMode = m_workMode;
-	ImGui::Combo("##work_mode", &m_workMode, kWorkModes, 5);
-	if (m_workMode != previousWorkMode)
+	int uiWorkMode = WorkModeToUiIndex(m_workMode);
+	ImGui::Combo("##work_mode", &uiWorkMode, kWorkModes, 4);
+	m_workMode = UiIndexToWorkMode(uiWorkMode);
+	ImGui::SameLine(0.f, filterGap);
+	ImGui::SetNextItemWidth(transportW);
+	const int previousTransportMode = m_transportMode;
+	ImGui::Combo("##transport_mode", &m_transportMode, kTransportModes, 2);
+	if (m_workMode != previousWorkMode || m_transportMode != previousTransportMode)
 		SaveStore();
 	UiCommon::PopInputStyle();
 
@@ -1452,6 +2203,11 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 
 	const ImGuiIO& io = ImGui::GetIO();
 	const bool wantImportShortcut = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !io.WantTextInput;
+	const bool wantDeleteShortcut =
+		!io.WantTextInput
+		&& hasSelection
+		&& !m_probeRunning.load()
+		&& ImGui::IsKeyPressed(ImGuiKey_Delete);
 
 	if (ToolbarIconButton(fonts, 0xE710, "Импорт из буфера (Ctrl+V)", colors, !m_importRunning.load())
 		|| wantImportShortcut)
@@ -1468,7 +2224,7 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 	if (ToolbarIconButton(fonts, 0xE70F, "Редактировать", colors, hasSelection && !m_probeRunning.load()))
 		OpenSelectedDetails();
 	ImGui::SameLine(0.f, 2.f);
-	if (ToolbarIconButton(fonts, 0xE724, "Реальная задержка выбранных", colors, hasSelection && !m_probeRunning.load()))
+	if (ToolbarIconButton(fonts, 0xE724, "ping (ICMP, как в cmd)", colors, hasSelection && !m_probeRunning.load()))
 		StartPing(true);
 	ImGui::SameLine(0.f, 2.f);
 	if (ToolbarIconButton(fonts, 0xE9F5, "Тест скорости выбранных", colors, hasSelection && !m_probeRunning.load()))
@@ -1486,15 +2242,11 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 	if (ToolbarIconButton(fonts, 0xE943, "Экспорт runtime конфига", colors, hasSelection))
 		ExportRuntimeConfig(m_selected);
 	ImGui::SameLine(0.f, 2.f);
-	if (ToolbarIconButton(fonts, 0xE74D, "Удалить выбранные", colors, hasSelection && !m_probeRunning.load()))
+	if ((ToolbarIconButton(fonts, 0xE74D, "Удалить выбранный (Delete)", colors, hasSelection && !m_probeRunning.load())
+			|| wantDeleteShortcut)
+		&& hasSelection)
 	{
-		m_nodes.erase(m_nodes.begin() + m_selected);
-		if (m_activeIndex == m_selected)
-			m_activeIndex = m_nodes.empty() ? -1 : 0;
-		else if (m_activeIndex > m_selected)
-			--m_activeIndex;
-		m_selected = -1;
-		SaveStore();
+		DeleteSelectedServer();
 	}
 	ImGui::SameLine(0.f, 2.f);
 	const bool canMoveUp = hasSelection && m_selected > 0 && !m_probeRunning.load();
@@ -1670,8 +2422,8 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 		const float stripH = ImGui::GetFrameHeight();
 		const ImVec2 headerBtnSize(stripH, stripH);
 		constexpr float kGroupBtnGap = 4.f;
-		// ping + speed; subscription groups also get refresh.
-		const int headerBtnCount = showSubscriptionActions ? 3 : 2;
+		// ping + speed; subscription groups also get refresh + delete.
+		const int headerBtnCount = showSubscriptionActions ? 4 : 2;
 		const float headerBtnsW =
 			static_cast<float>(headerBtnCount) * stripH
 			+ static_cast<float>(headerBtnCount - 1) * kGroupBtnGap;
@@ -1683,30 +2435,26 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 		if (showSubscriptionActions)
 		{
 			ImGui::SetCursorScreenPos({ btnX, headerRowPos.y });
-			const bool canRefresh = !m_importRunning.load();
+			const bool canRefresh = !m_importRunning.load() && !m_probeRunning.load();
 			if (HeaderIconButton(fonts, 0xE72C, "refresh_sub", "Обновить подписку", colors, headerBtnSize, canRefresh))
 				StartRefreshSubscriptions(refreshUrl);
+			btnX += stripH + kGroupBtnGap;
+
+			ImGui::SetCursorScreenPos({ btnX, headerRowPos.y });
+			const bool canDeleteGroup = !groupIndices.empty() && !m_probeRunning.load();
+			if (HeaderIconButton(fonts, 0xE74D, "delete_sub", "Удалить группу подписки", colors, headerBtnSize, canDeleteGroup))
+				DeleteGroupServers(groupIndices);
 			btnX += stripH + kGroupBtnGap;
 		}
 
 		ImGui::SetCursorScreenPos({ btnX, headerRowPos.y });
-		const bool canPingGroup =
-			!groupIndices.empty()
-			&& !m_probeRunning.load()
-			&& m_vpnEnabled
-			&& m_manager
-			&& m_manager->IsRunning();
-		if (HeaderIconButton(fonts, 0xE895, "ping_group", "Реальная задержка группы (как v2rayN)", colors, headerBtnSize, canPingGroup))
+		const bool canPingGroup = !groupIndices.empty() && !m_probeRunning.load();
+		if (HeaderIconButton(fonts, 0xE895, "ping_group", "ping группы (ICMP)", colors, headerBtnSize, canPingGroup))
 			StartPingIndices(groupIndices);
 		btnX += stripH + kGroupBtnGap;
 
 		ImGui::SetCursorScreenPos({ btnX, headerRowPos.y });
-		const bool canSpeedGroup =
-			!groupIndices.empty()
-			&& !m_probeRunning.load()
-			&& m_vpnEnabled
-			&& m_manager
-			&& m_manager->IsRunning();
+		const bool canSpeedGroup = !groupIndices.empty() && !m_probeRunning.load();
 		if (HeaderIconButton(fonts, 0xE9F5, "speed_group", "Тест скорости группы", colors, headerBtnSize, canSpeedGroup))
 			StartSpeedTestIndices(groupIndices);
 
@@ -1715,12 +2463,18 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 		ImGui::PushStyleColor(ImGuiCol_HeaderHovered, colors.navHover);
 		ImGui::PushStyleColor(ImGuiCol_HeaderActive, colors.navActive);
 		ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
-		ImGui::BeginChild(
+		bool& open = m_groupOpen.try_emplace(groupName, true).first->second;
+		if (ImGui::BeginChild(
 			"##group_hdr",
 			ImVec2(headerW, stripH),
 			ImGuiChildFlags_None,
-			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-		const bool open = ImGui::CollapsingHeader(groupTitle, ImGuiTreeNodeFlags_DefaultOpen);
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+		{
+			// Own open state: CollapsingHeader returns false when the child is clipped
+			// (SkipItems), which would otherwise drop the table and spring-scroll to top.
+			ImGui::SetNextItemOpen(open, ImGuiCond_Always);
+			open = ImGui::CollapsingHeader(groupTitle);
+		}
 		ImGui::EndChild();
 		ImGui::PopStyleColor(4);
 
@@ -1798,6 +2552,40 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 						m_detailIndex = i;
 						m_view = View::Detail;
 					}
+				}
+				if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+				{
+					m_selected = i;
+					ImGui::OpenPopup("##vpn_row_menu");
+				}
+				if (ImGui::BeginPopup("##vpn_row_menu"))
+				{
+					const bool probeBusy = m_probeRunning.load();
+					if (ImGui::MenuItem("Сделать активным"))
+						SetActiveServer(i);
+					if (ImGui::MenuItem("Редактировать", nullptr, false, !probeBusy))
+					{
+						m_selected = i;
+						OpenSelectedDetails();
+					}
+					ImGui::Separator();
+					if (ImGui::MenuItem("ping (ICMP)", nullptr, false, !probeBusy))
+						StartPingIndices({ i });
+					if (ImGui::MenuItem("TCP ping", nullptr, false, !probeBusy))
+						StartTcpPingIndices({ i });
+					if (ImGui::MenuItem("RealPing", nullptr, false, !probeBusy))
+						StartRealPingIndices({ i });
+					if (ImGui::MenuItem("Тест скорости", nullptr, false, !probeBusy))
+						StartSpeedTestIndices({ i });
+					ImGui::Separator();
+					if (ImGui::MenuItem("Экспорт outbound JSON"))
+						ExportOutboundJson(i);
+					if (ImGui::MenuItem("Удалить", nullptr, false, !probeBusy))
+					{
+						m_selected = i;
+						DeleteSelectedServer();
+					}
+					ImGui::EndPopup();
 				}
 
 				ImGui::TableSetColumnIndex(1);

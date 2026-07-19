@@ -6,6 +6,7 @@
 #include <Windows.h>
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <string>
 
@@ -20,6 +21,8 @@ namespace
 	constexpr float kIconSize = 14.f;
 	constexpr uint32_t kIconChevronLeft = 0xE76B;
 	constexpr uint32_t kIconChevronRight = 0xE76C;
+	constexpr float kVersionFontScale = 0.78f;
+	constexpr float kStatusDotRadius = 3.f;
 
 	float Clamp(float value, float minValue, float maxValue)
 	{
@@ -80,10 +83,17 @@ void UiSidebar::Update(float deltaTime)
 	}
 }
 
-float UiSidebar::Draw(UiTab& activeTab, ThemeManager& theme, FontManager& fonts, float height)
+float UiSidebar::Draw(
+	UiTab& activeTab,
+	ThemeManager& theme,
+	FontManager& fonts,
+	float height,
+	const UiSidebarVersionInfo& antiZapretVersion,
+	const UiSidebarVersionInfo& tgWsProxyVersion)
 {
 	m_page = activeTab;
 	const UiThemeColors colors = theme.GetColors();
+	const UiAccentColors accents = theme.GetAccents();
 	ImFont* iconFont = fonts.GetIconFont();
 
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, colors.sidebarBg);
@@ -112,7 +122,13 @@ float UiSidebar::Draw(UiTab& activeTab, ThemeManager& theme, FontManager& fonts,
 	for (int i = 0; i < static_cast<int>(std::size(kNavItems)); ++i)
 	{
 		const ImVec2 pos = { origin.x + kPad, origin.y + kTop + i * kNavStep };
-		DrawNavButton(kNavItems[i], pos, btnWidth, kBtnHeight, collapseMix, activeTab, colors, iconFont);
+		const UiSidebarVersionInfo* versionInfo = nullptr;
+		if (kNavItems[i].tab == UiTab::AntiZapret)
+			versionInfo = &antiZapretVersion;
+		else if (kNavItems[i].tab == UiTab::TgWsProxy)
+			versionInfo = &tgWsProxyVersion;
+
+		DrawNavButton(kNavItems[i], pos, btnWidth, kBtnHeight, collapseMix, activeTab, colors, accents, iconFont, versionInfo);
 	}
 
 	const float toggleY = origin.y + height - kBtnHeight - kBottom;
@@ -217,7 +233,9 @@ void UiSidebar::DrawNavButton(
 	float collapseMix,
 	UiTab activeTab,
 	const UiThemeColors& colors,
-	ImFont* iconFont)
+	const UiAccentColors& accents,
+	ImFont* iconFont,
+	const UiSidebarVersionInfo* versionInfo)
 {
 	ImGui::SetCursorScreenPos(pos);
 	const std::string buttonId = std::string("##nav_") + item.label;
@@ -258,6 +276,39 @@ void UiSidebar::DrawNavButton(
 			WithAlpha(ToU32(textColor), labelAlpha),
 			item.label);
 	}
+
+	if (versionInfo)
+	{
+		const ImU32 statusColor = StatusColor(versionInfo->status, colors, accents);
+
+		// Collapsed sidebar: status lamp only (top-left).
+		if (collapseMix > 0.01f)
+		{
+			const ImVec2 lampCenter = {
+				rectMin.x + 5.f,
+				rectMin.y + 4.f + kStatusDotRadius
+			};
+			drawList->AddCircleFilled(lampCenter, kStatusDotRadius, WithAlpha(statusColor, collapseMix));
+		}
+
+		// Expanded sidebar: version text only (top-right).
+		if (labelAlpha > 0.01f && !versionInfo->version.empty())
+		{
+			ImFont* font = ImGui::GetFont();
+			const float versionFontSize = ImGui::GetFontSize() * kVersionFontScale;
+			const ImVec2 textSize = font->CalcTextSizeA(versionFontSize, FLT_MAX, 0.f, versionInfo->version.c_str());
+			const ImVec2 versionPos = {
+				rectMax.x - 8.f - textSize.x,
+				rectMin.y + 3.f
+			};
+			drawList->AddText(
+				font,
+				versionFontSize,
+				versionPos,
+				WithAlpha(statusColor, labelAlpha),
+				versionInfo->version.c_str());
+		}
+	}
 }
 
 void UiSidebar::DrawMdl2Icon(
@@ -290,4 +341,21 @@ ImU32 UiSidebar::WithAlpha(ImU32 color, float alpha)
 ImU32 UiSidebar::ToU32(const ImVec4& color, float alpha)
 {
 	return ImGui::GetColorU32({ color.x, color.y, color.z, color.w * alpha });
+}
+
+ImU32 UiSidebar::StatusColor(ComponentUpdateStatus status, const UiThemeColors& colors, const UiAccentColors& accents)
+{
+	switch (status)
+	{
+	case ComponentUpdateStatus::UpToDate:
+		return ToU32(accents.ok);
+	case ComponentUpdateStatus::Checking:
+	case ComponentUpdateStatus::UpdateAvailable:
+		return ToU32(accents.warn);
+	case ComponentUpdateStatus::Unknown:
+	case ComponentUpdateStatus::Error:
+		return ToU32(accents.fail);
+	default:
+		return WithAlpha(ToU32(colors.textMuted), 0.6f);
+	}
 }

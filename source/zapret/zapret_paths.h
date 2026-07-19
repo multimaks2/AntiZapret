@@ -12,6 +12,11 @@ std::wstring GetBinDirectory();
 std::wstring GetListsDirectory();
 std::wstring GetTgWsProxyDirectory();
 std::wstring GetVpnDirectory();
+std::wstring GetCacheDirectory();
+std::wstring GetSettingsPath();
+
+// Creates cache/ and migrates legacy root / vpn/cache / vpn runtime files once.
+void EnsureDataLayout();
 
 bool IsValidLayout(const std::wstring& antiZapretDir);
 void EnsureUserListsFiles(const std::wstring& antiZapretDir);

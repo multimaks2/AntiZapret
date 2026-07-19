@@ -1,6 +1,7 @@
 #include "tgproxy/tg_ws_proxy_manager.h"
 
 #include "app/app_log.h"
+#include "app/process_job.h"
 
 #include "app/app_settings.h"
 #include "zapret/zapret_connectivity.h"
@@ -353,13 +354,6 @@ void TgWsProxyManager::Update(float deltaTime)
 		RefreshRunningState();
 	}
 
-	m_envRefreshTimer += deltaTime;
-	if (m_envRefreshTimer >= 10.f && !m_envProbeRunning.load() && !m_setupRunning.load())
-	{
-		m_envRefreshTimer = 0.f;
-		BeginEnvironmentProbe();
-	}
-
 	TryFlushPendingStart();
 }
 
@@ -383,6 +377,15 @@ void TgWsProxyManager::BeginEnvironmentProbe()
 		}
 
 		RefreshEnvironmentState();
+		if (m_envState.load() == TgProxyEnvState::Ready)
+		{
+			std::lock_guard<std::mutex> lock(m_messageMutex);
+			if (m_statusMessage == "Проверка окружения..."
+				|| m_statusMessage == "Проверка окружения TG WS Proxy...")
+			{
+				m_statusMessage.clear();
+			}
+		}
 		m_envProbeRunning.store(false);
 		TryFlushPendingStart();
 	}).detach();
@@ -416,6 +419,28 @@ const std::string& TgWsProxyManager::GetStatusMessage() const
 {
 	std::lock_guard<std::mutex> lock(m_messageMutex);
 	return m_statusMessage;
+}
+
+const char* TgWsProxyManager::GetEnvStatusLabel() const
+{
+	if (m_envProbeRunning.load() || m_envState.load() == TgProxyEnvState::Checking)
+		return "Проверка...";
+	if (m_setupRunning.load() || m_envState.load() == TgProxyEnvState::SettingUp)
+		return "Подготовка...";
+
+	switch (m_envState.load())
+	{
+	case TgProxyEnvState::Ready:
+		return "Ок";
+	case TgProxyEnvState::MissingFiles:
+		return "Файлы не найдены";
+	case TgProxyEnvState::MissingPython:
+		return "Нет Python";
+	case TgProxyEnvState::MissingDependencies:
+		return "Нет зависимостей";
+	default:
+		return "—";
+	}
 }
 
 bool TgWsProxyManager::IsRunning() const
@@ -842,7 +867,7 @@ bool TgWsProxyManager::LaunchProxyProcess(const std::string& secret)
 	auto tryLaunch = [&](wchar_t* cmdLine, DWORD flags, STARTUPINFOW& siRef) -> HANDLE
 	{
 		PROCESS_INFORMATION pi = {};
-		if (!CreateProcessW(nullptr, cmdLine, nullptr, nullptr, FALSE, flags, nullptr, workDir.c_str(), &siRef, &pi))
+		if (!ProcessJob::CreateInJob(nullptr, cmdLine, nullptr, nullptr, FALSE, flags, nullptr, workDir.c_str(), &siRef, &pi))
 			return nullptr;
 		CloseHandle(pi.hThread);
 		Sleep(800);

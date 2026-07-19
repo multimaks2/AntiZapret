@@ -2,6 +2,8 @@
 
 #include "zapret/strategies.hpp"
 
+#include <cstring>
+
 namespace
 {
 	const char* kBullets_general_0[] = {
@@ -1365,7 +1367,7 @@ namespace
 		kSmartStrategyBullets,
 		"В отличие от «Автовыбора лучшей», здесь не выбирается готовый .bat — "
 		"алгоритм меняет dpi-desync, repeats и fooling, тестирует и сохраняет лучший набор. "
-		"Профиль хранится в smart_strategy.ini."
+		"Профиль хранится в settings.ini [smart_strategy]."
 	};
 }
 
@@ -1374,6 +1376,24 @@ const StrategyDescription* StrategyDescriptions::GetByIndex(int strategyIndex)
 	if (strategyIndex < 0 || strategyIndex >= static_cast<int>(ZapretStrategies::kStrategyCount))
 		return nullptr;
 	return &kDescriptions[static_cast<size_t>(strategyIndex)];
+}
+
+const StrategyDescription* StrategyDescriptions::GetById(const char* strategyId)
+{
+	if (!strategyId || !strategyId[0])
+		return nullptr;
+
+	for (std::size_t i = 0; i < ZapretStrategies::kStrategyCount; ++i)
+	{
+		const auto& strategy = ZapretStrategies::kStrategies[i];
+		if (_stricmp(strategy.id.data(), strategyId) == 0
+			|| _stricmp(strategy.label.data(), strategyId) == 0
+			|| _stricmp(strategy.file.data(), strategyId) == 0)
+		{
+			return &kDescriptions[i];
+		}
+	}
+	return nullptr;
 }
 
 const StrategyDescription* StrategyDescriptions::GetSmartStrategy()

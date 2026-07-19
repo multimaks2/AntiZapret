@@ -52,6 +52,12 @@ public:
 	bool GetDiscordShareButtonEnabled() const { return m_discordShareButtonEnabled; }
 	void SetDiscordShareButtonEnabled(bool value);
 
+	bool GetDiscordDownloadButtonEnabled() const { return m_discordDownloadButtonEnabled; }
+	void SetDiscordDownloadButtonEnabled(bool value);
+
+	const std::string& GetDiscordDownloadUrl() const { return m_discordDownloadUrl; }
+	void SetDiscordDownloadUrl(const std::string& value);
+
 	bool GetAutoSelectBestStrategy() const;
 	void SetAutoSelectBestStrategy(bool value);
 
@@ -82,6 +88,8 @@ private:
 	bool m_confirmAdult = false;
 	bool m_discordPresenceEnabled = true;
 	bool m_discordShareButtonEnabled = true;
+	bool m_discordDownloadButtonEnabled = true;
+	std::string m_discordDownloadUrl = "https://github.com/multimaks2/AntiZapret/releases/latest";
 	bool m_autoSelectBestStrategy = false;
 	bool m_showExtraStrategies = false;
 	std::array<float, kPageScrollCount> m_pageScrollMultipliers {};

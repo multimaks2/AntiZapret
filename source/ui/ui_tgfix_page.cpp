@@ -5,6 +5,8 @@
 #include "gfx/theme_manager.h"
 #include "tgproxy/tg_ws_proxy_manager.h"
 #include "ui/ui_common.h"
+#include "zapret/zapret_update_apply.h"
+#include "zapret/zapret_update_check.h"
 #include "imgui.h"
 
 #include <cstdio>
@@ -13,6 +15,34 @@
 namespace
 {
 	const std::string kEmptyTelegramLink;
+
+	ImVec4 ComponentVersionAccent(ComponentUpdateStatus status, const UiAccentColors& accents)
+	{
+		switch (status)
+		{
+		case ComponentUpdateStatus::UpToDate:
+			return accents.ok;
+		case ComponentUpdateStatus::Checking:
+		case ComponentUpdateStatus::UpdateAvailable:
+			return accents.warn;
+		case ComponentUpdateStatus::Unknown:
+		case ComponentUpdateStatus::Error:
+		default:
+			return accents.fail;
+		}
+	}
+
+	bool IsDisplayVersion(const std::string& raw)
+	{
+		if (raw.empty() || raw == "—" || raw == "Unknown" || raw == "Установлен")
+			return false;
+		for (unsigned char ch : raw)
+		{
+			if (ch >= '0' && ch <= '9')
+				return true;
+		}
+		return false;
+	}
 }
 
 void UiTgFixPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width)
@@ -22,14 +52,51 @@ void UiTgFixPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 
 	const bool running = m_manager && m_manager->IsRunning();
 	const bool openTelegram = m_settings && m_settings->GetOpenTelegramOnProxyStart();
+	const auto& updateCheck = ZapretUpdateCheck::Instance();
+	std::string tgVersion = updateCheck.GetTgProxyLocalVersion();
+	if (!IsDisplayVersion(tgVersion))
+		tgVersion.clear();
 
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, UiMetrics::kRowGap });
-	UiCommon::PageTitle(
-		fonts,
-		0xE8BD,
-		"TG WS Proxy",
-		"Локальный MTProto-прокси для Telegram",
-		colors);
+
+	const bool updateAvailable = updateCheck.GetTgProxyStatus() == ComponentUpdateStatus::UpdateAvailable;
+	const bool updateApplying = ZapretUpdateApply::Instance().IsApplyingTg();
+	const std::string tgRemoteVersion = updateCheck.GetTgProxyRemoteVersion();
+	const bool versionsDiffer = !tgVersion.empty()
+		&& IsDisplayVersion(tgRemoteVersion)
+		&& tgVersion != tgRemoteVersion;
+	const bool showUpdateBtn = updateAvailable || updateApplying || versionsDiffer;
+	const char* updateBtnLabel = showUpdateBtn
+		? (updateApplying ? "Скачивание..." : "Скачать обновление")
+		: nullptr;
+
+	if (UiCommon::PageTitle(
+			fonts,
+			0xE8BD,
+			"TG WS Proxy",
+			nullptr,
+			colors,
+			tgVersion.empty() ? nullptr : tgVersion.c_str(),
+			ComponentVersionAccent(updateCheck.GetTgProxyStatus(), accents),
+			updateBtnLabel,
+			showUpdateBtn && !updateApplying))
+	{
+		ZapretUpdateApply::Instance().RequestApplyTg(m_manager);
+	}
+
+	ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+	ImGui::TextUnformatted("Локальный MTProto-прокси для Telegram");
+	ImGui::PopStyleColor();
+	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
+
+	if (const std::string applyMsg = ZapretUpdateApply::Instance().GetTgStatusMessage();
+		!applyMsg.empty() && showUpdateBtn)
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+		ImGui::TextWrapped("%s", applyMsg.c_str());
+		ImGui::PopStyleColor();
+		ImGui::Dummy({ 0.f, 4.f });
+	}
 
 	if (UiCommon::BeginCard("##tg_status", width, colors))
 	{
@@ -50,6 +117,9 @@ void UiTgFixPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 			? (m_manager->IsStartedByUs() ? "tg-ws-proxy" : "tg-ws-proxy (внешний)")
 			: "—";
 		UiCommon::InfoLine("Процесс: ", processLabel, colors);
+
+		const char* envLabel = m_manager ? m_manager->GetEnvStatusLabel() : "—";
+		UiCommon::InfoLine("Окружение: ", envLabel, colors);
 
 		if (m_manager && !m_manager->GetStatusMessage().empty())
 		{

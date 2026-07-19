@@ -23,6 +23,8 @@ private:
 	float m_confirmAdultMix = 0.f;
 	float m_discordPresenceMix = 1.f;
 	float m_discordShareButtonMix = 1.f;
+	float m_discordDownloadButtonMix = 1.f;
+	char m_discordDownloadUrl[512] = {};
 	bool m_loadedFromSettings = false;
 	VpnManager* m_vpnManager = nullptr;
 };

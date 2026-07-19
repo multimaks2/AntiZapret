@@ -65,6 +65,7 @@ void UiSmoothScroll::Draw(
 		m_scrollDisplay += (m_scrollY - m_scrollDisplay) * smoothK;
 		if (std::fabs(m_scrollY - m_scrollDisplay) < 0.25f)
 			m_scrollDisplay = m_scrollY;
+		m_scrollDisplay = Clamp(m_scrollDisplay, 0.f, maxScroll);
 	}
 
 	ImGui::EndChild();
