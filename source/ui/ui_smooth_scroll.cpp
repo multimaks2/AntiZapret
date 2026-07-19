@@ -16,12 +16,18 @@ namespace
 	}
 }
 
+void UiSmoothScroll::JumpToBottom()
+{
+	m_jumpToBottom = true;
+}
+
 void UiSmoothScroll::Draw(
 	const char* id,
 	ImVec2 viewportSize,
 	float deltaTime,
 	const std::function<void(float width)>& drawContent,
-	float wheelMultiplier)
+	float wheelMultiplier,
+	bool* stickToBottom)
 {
 	ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 0.f);
 	ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, { 0, 0, 0, 0 });
@@ -41,7 +47,11 @@ void UiSmoothScroll::Draw(
 		{
 			const float wheel = ImGui::GetIO().MouseWheel;
 			if (wheel != 0.f)
+			{
 				m_scrollVelocity -= wheel * 220.f * wheelMultiplier;
+				if (stickToBottom)
+					*stickToBottom = false;
+			}
 		}
 
 		ImGui::SetCursorPos({ 0.f, -m_scrollDisplay });
@@ -50,7 +60,21 @@ void UiSmoothScroll::Draw(
 		drawContent(width);
 		const float contentHeight = ImGui::GetCursorPosY() - startY;
 
+		// Tell ImGui the full virtual content height (required after SetCursorPos scroll offset).
+		ImGui::SetCursorPos({ 0.f, contentHeight });
+		ImGui::Dummy({ width, 0.01f });
+
 		const float maxScroll = contentHeight > viewportSize.y ? contentHeight - viewportSize.y : 0.f;
+
+		if (m_jumpToBottom || (stickToBottom && *stickToBottom))
+		{
+			m_scrollY = maxScroll;
+			m_scrollDisplay = maxScroll;
+			m_scrollVelocity = 0.f;
+			m_jumpToBottom = false;
+			if (stickToBottom)
+				*stickToBottom = true;
+		}
 
 		if (std::fabs(m_scrollVelocity) > 0.5f)
 		{
@@ -66,6 +90,9 @@ void UiSmoothScroll::Draw(
 		if (std::fabs(m_scrollY - m_scrollDisplay) < 0.25f)
 			m_scrollDisplay = m_scrollY;
 		m_scrollDisplay = Clamp(m_scrollDisplay, 0.f, maxScroll);
+
+		if (stickToBottom && maxScroll > 0.f && m_scrollY >= maxScroll - 1.f)
+			*stickToBottom = true;
 	}
 
 	ImGui::EndChild();

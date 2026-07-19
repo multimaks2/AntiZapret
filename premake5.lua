@@ -321,10 +321,10 @@ project "AntiZapret"
 
 	filter {}
 
-project "z-updater"
-	kind "ConsoleApp"
+project "AntiZapret-Updater"
+	kind "WindowedApp"
 	location "build"
-	targetname "z-updater"
+	targetname "AntiZapret-Updater"
 	objdir ("build/obj/%{prj.name}/%{cfg.buildcfg}/%{cfg.platform}")
 
 	filter "configurations:Release"
@@ -339,15 +339,31 @@ project "z-updater"
 
 	includedirs {
 		"source",
+		imgui,
+		imgui .. "/backends",
 	}
 
 	linkoptions { "/MANIFESTUAC:level='requireAdministrator'" }
 
 	files {
-		"source/z-updater/main.cpp",
+		"source/AntiZapret-Updater/main.cpp",
+		"source/AntiZapret-Updater/updater_ui.h",
+		"source/AntiZapret-Updater/updater_ui.cpp",
+		"source/ui/ui_smooth_scroll.h",
+		"source/ui/ui_smooth_scroll.cpp",
+		imgui .. "/imgui.cpp",
+		imgui .. "/imgui_draw.cpp",
+		imgui .. "/imgui_tables.cpp",
+		imgui .. "/imgui_widgets.cpp",
+		imgui .. "/backends/imgui_impl_win32.cpp",
+		imgui .. "/backends/imgui_impl_dx11.cpp",
 	}
 
 	links {
 		"wininet",
 		"shell32",
+		"d3d11",
+		"dxgi",
+		"dwmapi",
+		"advapi32",
 	}

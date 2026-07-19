@@ -13,7 +13,7 @@ namespace AppUpdateGate
 namespace
 {
 	constexpr wchar_t kUpdatedFlag[] = L"--updated";
-	constexpr wchar_t kUpdaterExeName[] = L"z-updater.exe";
+	constexpr wchar_t kUpdaterExeName[] = L"AntiZapret-Updater.exe";
 
 	bool CommandHasFlag(const wchar_t* cmdLine, const wchar_t* flag)
 	{
@@ -38,7 +38,6 @@ namespace
 		return found;
 	}
 
-	// Forward user args to the updater (skip exe path and --updated itself).
 	std::wstring BuildUpdaterArgs(const wchar_t* cmdLine)
 	{
 		std::wstring args;
@@ -78,50 +77,39 @@ bool HandOffToUpdaterAndShouldExit()
 	const std::wstring dir = ZapretPaths::GetAppDirectory();
 	const std::wstring updaterPath = dir + L"\\" + kUpdaterExeName;
 	if (GetFileAttributesW(updaterPath.c_str()) == INVALID_FILE_ATTRIBUTES)
-	{
-		// No updater next to exe — run as-is (dev builds / incomplete packs).
 		return false;
-	}
 
 	const std::wstring forwarded = BuildUpdaterArgs(GetCommandLineW());
-	std::wstring commandLine = L"\"" + updaterPath + L"\"";
-	if (!forwarded.empty())
-	{
-		commandLine.push_back(L' ');
-		commandLine += forwarded;
-	}
 
-	STARTUPINFOW si = { sizeof(si) };
-	si.dwFlags = STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	PROCESS_INFORMATION pi = {};
-	std::vector<wchar_t> mutableCmd(commandLine.begin(), commandLine.end());
-	mutableCmd.push_back(L'\0');
+	// ShellExecute + wait for input idle so the updater window can appear
+	// before this process exits (otherwise Windows may suppress the child UI).
+	SHELLEXECUTEINFOW info = { sizeof(info) };
+	info.fMask = SEE_MASK_NOCLOSEPROCESS;
+	info.lpVerb = L"open";
+	info.lpFile = updaterPath.c_str();
+	info.lpParameters = forwarded.empty() ? nullptr : forwarded.c_str();
+	info.lpDirectory = dir.c_str();
+	info.nShow = SW_SHOWNORMAL;
 
-	const BOOL ok = CreateProcessW(
-		updaterPath.c_str(),
-		mutableCmd.data(),
-		nullptr,
-		nullptr,
-		FALSE,
-		CREATE_NO_WINDOW,
-		nullptr,
-		dir.c_str(),
-		&si,
-		&pi);
+	AllowSetForegroundWindow(ASFW_ANY);
 
-	if (!ok)
+	if (!ShellExecuteExW(&info))
 	{
 		MessageBoxW(
 			nullptr,
-			L"Не удалось запустить z-updater.exe.\nПриложение стартует без проверки обновлений.",
+			L"Не удалось запустить AntiZapret-Updater.exe.\nПриложение стартует без проверки обновлений.",
 			L"AntiZapret",
 			MB_OK | MB_ICONWARNING);
 		return false;
 	}
 
-	CloseHandle(pi.hThread);
-	CloseHandle(pi.hProcess);
+	if (info.hProcess)
+	{
+		AllowSetForegroundWindow(GetProcessId(info.hProcess));
+		WaitForInputIdle(info.hProcess, 5000);
+		CloseHandle(info.hProcess);
+	}
+
 	return true;
 }
 }

@@ -45,11 +45,11 @@ New-Item -ItemType Directory -Path $stage | Out-Null
 
 Copy-Item $exe $stage
 
-$updater = Join-Path $bin "z-updater.exe"
+$updater = Join-Path $bin "AntiZapret-Updater.exe"
 if (Test-Path $updater) {
 	Copy-Item $updater $stage
 } else {
-	Write-Warning "Missing updater: $updater (shortcut should point to z-updater.exe)"
+	Write-Warning "Missing updater: $updater"
 }
 
 $versionTxt = Join-Path $bin "version.txt"

@@ -39,7 +39,7 @@ public:
 
 int RunApplication()
 {
-	// Entry: AntiZapret.exe → z-updater → AntiZapret.exe --updated
+	// Entry: AntiZapret.exe → AntiZapret-Updater → AntiZapret.exe --updated
 	if (AppUpdateGate::HandOffToUpdaterAndShouldExit())
 		return 0;
 

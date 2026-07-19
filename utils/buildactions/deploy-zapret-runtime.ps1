@@ -139,7 +139,7 @@ if (Test-Path -LiteralPath $versionSrc) {
 	}
 }
 
-# App version.txt next to AntiZapret.exe / z-updater.exe (from source/version.h).
+# App version.txt next to AntiZapret.exe / AntiZapret-Updater.exe (from source/version.h).
 $appVersion = '0.0.0'
 $versionHeader = Join-Path $Root 'source\version.h'
 if (Test-Path -LiteralPath $versionHeader) {
