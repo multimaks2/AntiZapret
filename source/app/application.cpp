@@ -1,5 +1,6 @@
 #include "app/application.h"
 
+#include "app/app_update_gate.h"
 #include "app/process_job.h"
 #include "app/protocol_handler.h"
 #include "gfx/d3d11_renderer.h"
@@ -38,6 +39,10 @@ public:
 
 int RunApplication()
 {
+	// Entry: AntiZapret.exe → z-updater → AntiZapret.exe --updated
+	if (AppUpdateGate::HandOffToUpdaterAndShouldExit())
+		return 0;
+
 	if (ProtocolHandler::ForwardToExistingInstanceAndShouldExit())
 		return 0;
 

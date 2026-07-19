@@ -408,7 +408,7 @@ namespace
 		Sleep(400);
 	}
 
-	bool LaunchApp(const fs::path& appDir)
+	bool LaunchApp(const fs::path& appDir, const std::wstring& extraArgs)
 	{
 		const fs::path exe = appDir / kAppExeName;
 		if (!fs::exists(exe))
@@ -417,10 +417,18 @@ namespace
 			return false;
 		}
 
+		std::wstring params = L"--updated";
+		if (!extraArgs.empty())
+		{
+			params.push_back(L' ');
+			params += extraArgs;
+		}
+
 		SHELLEXECUTEINFOW info = { sizeof(info) };
 		info.fMask = SEE_MASK_NOCLOSEPROCESS;
 		info.lpVerb = L"open";
 		info.lpFile = exe.c_str();
+		info.lpParameters = params.c_str();
 		info.lpDirectory = appDir.c_str();
 		info.nShow = SW_SHOWNORMAL;
 		if (!ShellExecuteExW(&info))
@@ -439,6 +447,31 @@ namespace
 			return false;
 		return wcsstr(cmdLine, flag) != nullptr;
 	}
+
+	// Args passed from AntiZapret to updater (e.g. --autostart), forwarded back after check.
+	std::wstring CollectForwardArgs(LPWSTR cmdLine)
+	{
+		std::wstring out;
+		int argc = 0;
+		LPWSTR* argv = CommandLineToArgvW(cmdLine ? cmdLine : L"", &argc);
+		if (!argv)
+			return out;
+		for (int i = 1; i < argc; ++i)
+		{
+			if (_wcsicmp(argv[i], L"--noupdate") == 0)
+				continue;
+			if (!out.empty())
+				out.push_back(L' ');
+			const bool needsQuotes = wcschr(argv[i], L' ') != nullptr;
+			if (needsQuotes)
+				out.push_back(L'"');
+			out += argv[i];
+			if (needsQuotes)
+				out.push_back(L'"');
+		}
+		LocalFree(argv);
+		return out;
+	}
 }
 
 int wmain(int /*argc*/, wchar_t** /*argv*/)
@@ -448,6 +481,7 @@ int wmain(int /*argc*/, wchar_t** /*argv*/)
 	Log(std::string("AntiZapret updater — ") + WideToUtf8(appDir.wstring()));
 
 	const bool skipUpdate = CommandHasFlag(GetCommandLineW(), L"--noupdate");
+	const std::wstring forwardArgs = CollectForwardArgs(GetCommandLineW());
 
 	if (!skipUpdate)
 	{
@@ -522,7 +556,7 @@ int wmain(int /*argc*/, wchar_t** /*argv*/)
 		Log("Пропуск проверки (--noupdate).");
 	}
 
-	if (!LaunchApp(appDir))
+	if (!LaunchApp(appDir, forwardArgs))
 	{
 		MessageBoxW(nullptr, L"Не найден AntiZapret.exe рядом с z-updater.exe", L"z-updater", MB_OK | MB_ICONERROR);
 		return 1;

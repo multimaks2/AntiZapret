@@ -80,6 +80,8 @@ project "AntiZapret"
 		"source/app/app_settings.cpp",
 		"source/app/app_version.h",
 		"source/app/app_version.cpp",
+		"source/app/app_update_gate.h",
+		"source/app/app_update_gate.cpp",
 		"source/app/settings_document.h",
 		"source/app/settings_document.cpp",
 		"source/app/app_log.h",
