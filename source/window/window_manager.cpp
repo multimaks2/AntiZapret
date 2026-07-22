@@ -5,7 +5,9 @@
 #include "imgui_impl_win32.h"
 
 #include <dwmapi.h>
+#include <shellapi.h>
 #include <windowsx.h>
+#include <algorithm>
 #include <cmath>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -18,7 +20,43 @@ namespace
 	constexpr int kSnapPixels = 8;
 	constexpr int kAnimationMs = 220;
 	constexpr int kDragRestorePixels = 6;
+	constexpr UINT kTrayIconId = 1001;
+	constexpr UINT kTrayMenuOpenId = 4001;
+	constexpr UINT kTrayMenuExitId = 4002;
+	constexpr UINT kTrayMenuAzStartId = 4100;
+	constexpr UINT kTrayMenuAzStopId = 4101;
+	constexpr UINT kTrayMenuAzProbeId = 4102;
+	constexpr UINT kTrayMenuAzStopProbeId = 4103;
+	constexpr UINT kTrayMenuAzStrategyBaseId = 4200;
+	constexpr UINT kTrayMenuAzStrategyMax = 80;
+	constexpr UINT kTrayMenuTgToggleId = 4300;
+	constexpr UINT kTrayMenuTgCopyId = 4301;
+	constexpr UINT kTrayMenuTgOpenId = 4302;
+	constexpr UINT kTrayMenuVpnToggleId = 4400;
+	constexpr UINT kTrayMenuVpnWorkModeBaseId = 4410;
+	constexpr UINT kTrayMenuVpnTransportBaseId = 4420;
+	constexpr UINT kTrayMenuVpnServerBaseId = 4500;
+	constexpr UINT kTrayMenuVpnServerMax = 64;
 	constexpr wchar_t kWindowClassName[] = L"AntiZapretWindowClass";
+
+	const wchar_t* kVpnWorkModeLabels[] = {
+		L"RUv1 — Заблокированное",
+		L"RUv1 — Все, кроме РФ",
+		L"RUv1 — Все",
+		L"Своя маршрутизация",
+	};
+
+	const wchar_t* kVpnTransportLabels[] = {
+		L"Proxy",
+		L"Tunnel",
+	};
+
+	void AppendChecked(HMENU menu, UINT flags, UINT id, const wchar_t* label, bool checked)
+	{
+		if (checked)
+			flags |= MF_CHECKED;
+		AppendMenuW(menu, flags, id, label);
+	}
 }
 
 void WindowManager::WindowAnimation::Begin(HWND hwnd, const RECT& target, bool toMaximized, bool& maximizedFlag)
@@ -197,17 +235,337 @@ bool WindowManager::Create(float dpiScale, int minWidth, int minHeight)
 
 	const BOOL dark = TRUE;
 	DwmSetWindowAttribute(m_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+	AddTrayIcon();
 	return true;
 }
 
 void WindowManager::Destroy()
 {
+	RemoveTrayIcon();
 	if (m_hwnd)
 	{
+		m_forceQuit = true;
 		DestroyWindow(m_hwnd);
 		m_hwnd = nullptr;
 	}
 	UnregisterClassW(kWindowClassName, GetModuleHandleW(nullptr));
+}
+
+void WindowManager::AddTrayIcon()
+{
+	if (!m_hwnd || m_trayIconVisible)
+		return;
+
+	NOTIFYICONDATAW nid = {};
+	nid.cbSize = sizeof(nid);
+	nid.hWnd = m_hwnd;
+	nid.uID = kTrayIconId;
+	nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+	nid.uCallbackMessage = kTrayCallbackMessage;
+	nid.hIcon = (HICON)LoadImageW(
+		GetModuleHandleW(nullptr),
+		MAKEINTRESOURCEW(IDI_APPICON),
+		IMAGE_ICON,
+		16,
+		16,
+		LR_DEFAULTCOLOR);
+	lstrcpynW(nid.szTip, L"AntiZapret", ARRAYSIZE(nid.szTip));
+
+	if (Shell_NotifyIconW(NIM_ADD, &nid))
+	{
+		nid.uVersion = NOTIFYICON_VERSION_4;
+		Shell_NotifyIconW(NIM_SETVERSION, &nid);
+		m_trayIconVisible = true;
+	}
+}
+
+void WindowManager::RemoveTrayIcon()
+{
+	if (!m_hwnd || !m_trayIconVisible)
+	{
+		m_trayIconVisible = false;
+		return;
+	}
+
+	NOTIFYICONDATAW nid = {};
+	nid.cbSize = sizeof(nid);
+	nid.hWnd = m_hwnd;
+	nid.uID = kTrayIconId;
+	Shell_NotifyIconW(NIM_DELETE, &nid);
+	m_trayIconVisible = false;
+}
+
+void WindowManager::HideToTray()
+{
+	if (!m_hwnd)
+		return;
+	AddTrayIcon();
+	ShowWindow(m_hwnd, SW_HIDE);
+	m_minimized = false;
+	m_hiddenToTray = true;
+}
+
+void WindowManager::ShowMainWindow()
+{
+	if (!m_hwnd)
+		return;
+	ShowWindow(m_hwnd, SW_RESTORE);
+	ShowWindow(m_hwnd, SW_SHOW);
+	SetForegroundWindow(m_hwnd);
+	m_hiddenToTray = false;
+}
+
+void WindowManager::RestoreFromTray()
+{
+	ShowMainWindow();
+}
+
+void WindowManager::RequestQuit()
+{
+	if (!m_hwnd)
+		return;
+	m_forceQuit = true;
+	PostMessageW(m_hwnd, WM_CLOSE, 0, 0);
+}
+
+void WindowManager::ShowTrayMenu()
+{
+	if (!m_hwnd)
+		return;
+
+	HMENU menu = CreatePopupMenu();
+	if (!menu)
+		return;
+
+	TrayMenuState state = {};
+	if (m_trayMenuStateCallback)
+		state = m_trayMenuStateCallback();
+	m_lastTrayMenuState = state;
+
+	AppendMenuW(menu, MF_STRING, kTrayMenuOpenId, L"Открыть");
+	AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+
+	// AntiZapret ►
+	HMENU azMenu = CreatePopupMenu();
+	if (azMenu)
+	{
+		if (state.azRunning)
+		{
+			AppendMenuW(azMenu, MF_STRING, kTrayMenuAzStopId, L"Остановить");
+		}
+		else
+		{
+			UINT startFlags = MF_STRING;
+			if (state.azBusy)
+				startFlags |= MF_GRAYED;
+			AppendMenuW(azMenu, startFlags, kTrayMenuAzStartId, L"Запустить");
+		}
+
+		if (state.azProbeRunning)
+			AppendMenuW(azMenu, MF_STRING, kTrayMenuAzStopProbeId, L"Остановить подбор");
+		else
+			AppendMenuW(azMenu, MF_STRING, kTrayMenuAzProbeId, L"Начать подбор");
+
+		if (!state.strategies.empty())
+		{
+			AppendMenuW(azMenu, MF_SEPARATOR, 0, nullptr);
+			const int count = (std::min)(
+				static_cast<int>(state.strategies.size()),
+				static_cast<int>(kTrayMenuAzStrategyMax));
+			for (int i = 0; i < count; ++i)
+			{
+				const auto& item = state.strategies[static_cast<size_t>(i)];
+				AppendChecked(
+					azMenu,
+					MF_STRING,
+					kTrayMenuAzStrategyBaseId + static_cast<UINT>(i),
+					item.second.c_str(),
+					item.first == state.azActiveStrategy && state.azRunning);
+			}
+		}
+		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(azMenu), L"Антизапрет");
+	}
+
+	// TG WS Proxy ►
+	HMENU tgMenu = CreatePopupMenu();
+	if (tgMenu)
+	{
+		UINT tgFlags = MF_STRING;
+		if (!state.tgCanAction)
+			tgFlags |= MF_GRAYED;
+		AppendMenuW(
+			tgMenu,
+			tgFlags,
+			kTrayMenuTgToggleId,
+			state.tgRunning ? L"Остановить" : L"Запустить");
+		AppendMenuW(tgMenu, MF_STRING, kTrayMenuTgCopyId, L"Скопировать ссылку");
+		AppendMenuW(tgMenu, MF_STRING, kTrayMenuTgOpenId, L"Открыть Telegram");
+		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(tgMenu), L"TG WS Proxy");
+	}
+
+	// VPN ►
+	HMENU vpnMenu = CreatePopupMenu();
+	if (vpnMenu)
+	{
+		UINT vpnToggleFlags = MF_STRING;
+		if (!state.vpnActive && !state.vpnCanStart)
+			vpnToggleFlags |= MF_GRAYED;
+		AppendMenuW(
+			vpnMenu,
+			vpnToggleFlags,
+			kTrayMenuVpnToggleId,
+			state.vpnActive ? L"Отключить VPN" : L"Подключить VPN");
+
+		HMENU modeMenu = CreatePopupMenu();
+		if (modeMenu)
+		{
+			for (int i = 0; i < 4; ++i)
+			{
+				AppendChecked(
+					modeMenu,
+					MF_STRING | MF_UNCHECKED,
+					kTrayMenuVpnWorkModeBaseId + static_cast<UINT>(i),
+					kVpnWorkModeLabels[i],
+					state.vpnWorkMode == i + 1);
+			}
+			AppendMenuW(vpnMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(modeMenu), L"Режим маршрутизации");
+		}
+
+		HMENU transportMenu = CreatePopupMenu();
+		if (transportMenu)
+		{
+			for (int i = 0; i < 2; ++i)
+			{
+				AppendChecked(
+					transportMenu,
+					MF_STRING | MF_UNCHECKED,
+					kTrayMenuVpnTransportBaseId + static_cast<UINT>(i),
+					kVpnTransportLabels[i],
+					state.vpnTransportMode == i);
+			}
+			AppendMenuW(vpnMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(transportMenu), L"Транспорт");
+		}
+
+		HMENU serverMenu = CreatePopupMenu();
+		if (serverMenu)
+		{
+			if (state.vpnServers.empty())
+			{
+				AppendMenuW(serverMenu, MF_STRING | MF_GRAYED, 0, L"Нет серверов");
+			}
+			else
+			{
+				const int count = (std::min)(
+					static_cast<int>(state.vpnServers.size()),
+					static_cast<int>(kTrayMenuVpnServerMax));
+				for (int i = 0; i < count; ++i)
+				{
+					const auto& item = state.vpnServers[static_cast<size_t>(i)];
+					AppendChecked(
+						serverMenu,
+						MF_STRING,
+						kTrayMenuVpnServerBaseId + static_cast<UINT>(i),
+						item.second.c_str(),
+						item.first == state.vpnActiveServer);
+				}
+			}
+			AppendMenuW(vpnMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(serverMenu), L"Сервер");
+		}
+
+		AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(vpnMenu), L"VPN");
+	}
+
+	AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+	AppendMenuW(menu, MF_STRING, kTrayMenuExitId, L"Выход");
+
+	POINT pt = {};
+	GetCursorPos(&pt);
+	SetForegroundWindow(m_hwnd);
+	TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+	DestroyMenu(menu);
+	PostMessageW(m_hwnd, WM_NULL, 0, 0);
+}
+
+bool WindowManager::ResolveTrayCommand(UINT cmd, TrayCommand& outCommand, int& outParam) const
+{
+	outParam = 0;
+	switch (cmd)
+	{
+	case kTrayMenuOpenId:
+		outCommand = TrayCommand::Open;
+		return true;
+	case kTrayMenuExitId:
+		outCommand = TrayCommand::Exit;
+		return true;
+	case kTrayMenuAzStartId:
+		outCommand = TrayCommand::AzStart;
+		return true;
+	case kTrayMenuAzStopId:
+		outCommand = TrayCommand::AzStop;
+		return true;
+	case kTrayMenuAzProbeId:
+		outCommand = TrayCommand::AzProbe;
+		return true;
+	case kTrayMenuAzStopProbeId:
+		outCommand = TrayCommand::AzStopProbe;
+		return true;
+	case kTrayMenuTgToggleId:
+		outCommand = TrayCommand::TgToggle;
+		return true;
+	case kTrayMenuTgCopyId:
+		outCommand = TrayCommand::TgCopyLink;
+		return true;
+	case kTrayMenuTgOpenId:
+		outCommand = TrayCommand::TgOpenTelegram;
+		return true;
+	case kTrayMenuVpnToggleId:
+		outCommand = TrayCommand::VpnToggle;
+		return true;
+	default:
+		break;
+	}
+
+	if (cmd >= kTrayMenuAzStrategyBaseId
+		&& cmd < kTrayMenuAzStrategyBaseId + kTrayMenuAzStrategyMax)
+	{
+		const int slot = static_cast<int>(cmd - kTrayMenuAzStrategyBaseId);
+		if (slot >= 0 && slot < static_cast<int>(m_lastTrayMenuState.strategies.size()))
+		{
+			outCommand = TrayCommand::AzStartStrategy;
+			outParam = m_lastTrayMenuState.strategies[static_cast<size_t>(slot)].first;
+			return true;
+		}
+		return false;
+	}
+
+	if (cmd >= kTrayMenuVpnWorkModeBaseId && cmd < kTrayMenuVpnWorkModeBaseId + 4)
+	{
+		outCommand = TrayCommand::VpnSetWorkMode;
+		outParam = static_cast<int>(cmd - kTrayMenuVpnWorkModeBaseId) + 1;
+		return true;
+	}
+
+	if (cmd >= kTrayMenuVpnTransportBaseId && cmd < kTrayMenuVpnTransportBaseId + 2)
+	{
+		outCommand = TrayCommand::VpnSetTransportMode;
+		outParam = static_cast<int>(cmd - kTrayMenuVpnTransportBaseId);
+		return true;
+	}
+
+	if (cmd >= kTrayMenuVpnServerBaseId
+		&& cmd < kTrayMenuVpnServerBaseId + kTrayMenuVpnServerMax)
+	{
+		const int slot = static_cast<int>(cmd - kTrayMenuVpnServerBaseId);
+		if (slot >= 0 && slot < static_cast<int>(m_lastTrayMenuState.vpnServers.size()))
+		{
+			outCommand = TrayCommand::VpnSelectServer;
+			outParam = m_lastTrayMenuState.vpnServers[static_cast<size_t>(slot)].first;
+			return true;
+		}
+		return false;
+	}
+
+	return false;
 }
 
 void WindowManager::SetRenderCallback(RenderCallback callback)
@@ -218,6 +576,12 @@ void WindowManager::SetRenderCallback(RenderCallback callback)
 void WindowManager::SetResizeCallback(ResizeCallback callback)
 {
 	m_resizeCallback = std::move(callback);
+}
+
+void WindowManager::SetTrayCallbacks(TrayMenuStateCallback stateCallback, TrayCommandCallback commandCallback)
+{
+	m_trayMenuStateCallback = std::move(stateCallback);
+	m_trayCommandCallback = std::move(commandCallback);
 }
 
 void WindowManager::SetInputHandler(const std::function<bool(UINT, WPARAM, LPARAM)>& handler)
@@ -369,7 +733,57 @@ LRESULT WindowManager::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 		if ((wParam & 0xfff0) == SC_KEYMENU)
 			return 0;
 		break;
+	case WM_CLOSE:
+		if (m_forceQuit)
+		{
+			RemoveTrayIcon();
+			DestroyWindow(hwnd);
+			return 0;
+		}
+		HideToTray();
+		return 0;
+	case WM_COMMAND:
+	{
+		const UINT cmd = LOWORD(wParam);
+		TrayCommand trayCmd = TrayCommand::Open;
+		int trayParam = 0;
+		if (!ResolveTrayCommand(cmd, trayCmd, trayParam))
+			break;
+
+		if (trayCmd == TrayCommand::Open)
+		{
+			RestoreFromTray();
+			return 0;
+		}
+		if (trayCmd == TrayCommand::Exit)
+		{
+			RequestQuit();
+			return 0;
+		}
+		if (m_trayCommandCallback)
+			m_trayCommandCallback(trayCmd, trayParam);
+		return 0;
+	}
+	case kTrayCallbackMessage:
+		switch (LOWORD(lParam))
+		{
+		case NIN_SELECT:
+		case NIN_KEYSELECT:
+		case WM_LBUTTONUP:
+		case WM_LBUTTONDBLCLK:
+			RestoreFromTray();
+			return 0;
+		case WM_CONTEXTMENU:
+		case WM_RBUTTONUP:
+			ShowTrayMenu();
+			return 0;
+		}
+		return 0;
+	case kRestoreFromTrayMessage:
+		RestoreFromTray();
+		return 0;
 	case WM_DESTROY:
+		RemoveTrayIcon();
 		PostQuitMessage(0);
 		return 0;
 	case WM_NCHITTEST:

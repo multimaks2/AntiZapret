@@ -302,6 +302,35 @@ int VpnNodeProbe::IcmpPingMs(const std::string& host, int timeoutMs)
 	return bestMs;
 }
 
+int VpnNodeProbe::PingWithFallbackMs(
+	const std::string& host,
+	int port,
+	int icmpTimeoutMs,
+	int tcpTimeoutMs,
+	PingKind* kindOut)
+{
+	if (kindOut)
+		*kindOut = PingKind::Failed;
+
+	const int icmpMs = IcmpPingMs(host, icmpTimeoutMs);
+	if (icmpMs >= 0)
+	{
+		if (kindOut)
+			*kindOut = PingKind::Icmp;
+		return icmpMs;
+	}
+
+	const int tcpMs = TcpPingMs(host, port, tcpTimeoutMs);
+	if (tcpMs >= 0)
+	{
+		if (kindOut)
+			*kindOut = PingKind::Tcp;
+		return tcpMs;
+	}
+
+	return -1;
+}
+
 int VpnNodeProbe::TcpPingMs(const std::string& host, int port, int timeoutMs)
 {
 	if (host.empty() || port <= 0 || port > 65535)

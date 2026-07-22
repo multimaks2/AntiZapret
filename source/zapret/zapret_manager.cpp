@@ -10,6 +10,7 @@
 #include "zapret/strategy_argument_builder.h"
 #include "zapret/strategy_bat_parser.h"
 #include "zapret/zapret_paths.h"
+#include "zapret/zapret_strategy_probe.h"
 
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -18,6 +19,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <random>
 #include <thread>
 #include <vector>
@@ -648,6 +650,16 @@ const StrategyTestEntry* ZapretManager::GetStrategyResult(int strategyIndex) con
 	return m_strategyResultCache[static_cast<std::size_t>(strategyIndex)];
 }
 
+std::vector<StrategyTargetResultView> ZapretManager::GetStrategyTargetResults(int strategyIndex) const
+{
+	if (!IsValidStrategyIndex(strategyIndex))
+		return {};
+	const StrategyTestEntry* entry = m_store.GetResult(GetStrategyKey(strategyIndex));
+	if (!entry)
+		return {};
+	return entry->targets;
+}
+
 void ZapretManager::SetSmartStrategyEnabled(bool enabled)
 {
 	m_smartStrategy.SetEnabled(enabled);
@@ -768,7 +780,41 @@ void ZapretManager::RecordStrategyResult(int strategyIndex, bool discord, bool y
 	entry.youtubeOk = youtube;
 	entry.telegramOk = telegram;
 	entry.pingMs = pingMs;
+	entry.fullTest = false;
+	entry.httpOk = 0;
+	entry.httpErr = 0;
+	entry.pingOk = pingMs >= 0 ? 1 : 0;
+	entry.pingFail = pingMs >= 0 ? 0 : 1;
 
+	entry.targets.clear();
+	entry.targets.push_back({ "Discord", discord ? "OK" : "FAIL", discord, false, -1 });
+	entry.targets.push_back({ "YouTube", youtube ? "OK" : "FAIL", youtube, false, -1 });
+	entry.targets.push_back({ "Telegram", telegram ? "OK" : "FAIL", telegram, false, -1 });
+	{
+		StrategyTargetResultView pingRow;
+		pingRow.name = "ICMP Ping";
+		pingRow.isPing = true;
+		pingRow.pingMs = pingMs;
+		pingRow.ok = pingMs >= 0;
+		if (pingMs >= 0)
+			pingRow.detail = std::to_string(pingMs) + " ms";
+		else
+			pingRow.detail = "FAIL";
+		entry.targets.push_back(std::move(pingRow));
+	}
+
+	m_store.SetResult(name, entry);
+	SaveStore();
+	InvalidateStrategyCache();
+}
+
+void ZapretManager::RecordStrategyFullResult(int strategyIndex, const ZapretStrategyProbe::FullProbeResult& probe)
+{
+	if (!IsValidStrategyIndex(strategyIndex))
+		return;
+
+	const std::string& name = GetStrategyKey(strategyIndex);
+	StrategyTestEntry entry = ZapretStrategyProbe::ToStoreEntry(probe, LoadStrategyEntryOrDefault(name));
 	m_store.SetResult(name, entry);
 	SaveStore();
 	InvalidateStrategyCache();
@@ -957,6 +1003,9 @@ void ZapretManager::BeginStrategyTest(ZapretStrategies::GameFilterMode gameFilte
 		|| m_smartTuneState.load() == SmartStrategyTuneState::Running)
 		return;
 
+	m_strategyTestQuickOverride.store(-1);
+	m_strategyTestOnlyIndex.store(-1);
+
 	if (clearResults)
 	{
 		m_store.ClearResults();
@@ -979,6 +1028,33 @@ void ZapretManager::BeginStrategyTest(ZapretStrategies::GameFilterMode gameFilte
 	m_strategyTestState.store(StrategyTestState::Running);
 
 	std::thread([this, startIndex]() { RunStrategyTestLoop(startIndex); }).detach();
+}
+
+void ZapretManager::RequestSingleStrategyTest(
+	int strategyIndex,
+	ZapretStrategies::GameFilterMode gameFilterMode,
+	bool quickTest)
+{
+	if (m_strategyTestState.load() == StrategyTestState::Running
+		|| m_smartTuneState.load() == SmartStrategyTuneState::Running)
+		return;
+	if (!IsValidStrategyIndex(strategyIndex))
+		return;
+
+	m_strategyTestQuickOverride.store(quickTest ? 1 : 0);
+	m_strategyTestOnlyIndex.store(strategyIndex);
+	m_strategyTestCompleteTimer = 0.f;
+	m_strategyTestActiveIndex.store(-1);
+	m_strategyTestRestoreIndex = m_activeStrategyIndex;
+	m_strategyTestGameFilterMode = gameFilterMode;
+	m_strategyTestStopRequested.store(false);
+	m_strategyTestFullStopRequested.store(false);
+	m_strategyTestStartTick.store(GetTickCount64());
+	m_strategyTestTotal.store(1);
+	m_strategyTestCurrent.store(0);
+	m_strategyTestState.store(StrategyTestState::Running);
+
+	std::thread([this]() { RunStrategyTestLoop(0); }).detach();
 }
 
 void ZapretManager::PauseStrategyTest()
@@ -1069,12 +1145,43 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 {
 	m_strategyTestStopRequested.store(false);
 
+	const int quickOverride = m_strategyTestQuickOverride.exchange(-1);
+	const int onlyIndex = m_strategyTestOnlyIndex.exchange(-1);
+	const bool quickTest = quickOverride >= 0
+		? (quickOverride == 1)
+		: (m_appSettings && m_appSettings->GetQuickStrategyTest());
+	const int settleMs = quickTest ? 2000 : 5000;
+
 	Stop();
 	WaitForStoppedInterruptible(5000);
 
 	const bool showExtra = ShowExtraStrategies();
-	const int total = GetVisibleStrategyCount(showExtra);
+	const int totalVisible = GetVisibleStrategyCount(showExtra);
+	const bool singleMode = onlyIndex >= 0;
+	const int total = singleMode ? 1 : totalVisible;
 	int resumeFrom = startIndex;
+
+	{
+		char msg[192] = {};
+		if (singleMode)
+		{
+			snprintf(
+				msg,
+				sizeof msg,
+				"Тест стратегии: %s (%s)",
+				GetStrategyLabel(onlyIndex).c_str(),
+				quickTest ? "быстрый" : "полный");
+		}
+		else
+		{
+			snprintf(
+				msg,
+				sizeof msg,
+				"Подбор стратегий: режим %s",
+				quickTest ? "быстрый" : "полный (Run Tests / standard)");
+		}
+		AppLog::Instance().Append(LogSource::Zapret, msg);
+	}
 
 	for (int pass = startIndex; pass < total; ++pass)
 	{
@@ -1084,7 +1191,7 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 			break;
 		}
 
-		const int idx = GetVisibleStrategyAt(pass, showExtra);
+		const int idx = singleMode ? onlyIndex : GetVisibleStrategyAt(pass, showExtra);
 		if (idx < 0)
 			break;
 
@@ -1095,7 +1202,8 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 			snprintf(
 				msg,
 				sizeof msg,
-				"Подбор стратегий: %d/%d — %s",
+				"%s: %d/%d — %s",
+				singleMode ? "Тест стратегии" : "Подбор стратегий",
 				pass + 1,
 				total,
 				GetStrategyLabel(idx).c_str());
@@ -1120,7 +1228,7 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 			break;
 		}
 
-		InterruptibleSleepMs(2000);
+		InterruptibleSleepMs(settleMs);
 
 		if (m_strategyTestStopRequested.load())
 		{
@@ -1131,26 +1239,56 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 		}
 
 		m_strategyTestCheckingServices.store(true);
-		const bool discord = ZapretConnectivity::ProbeDiscord();
-		const bool youtube = ZapretConnectivity::ProbeYouTube();
-		const bool telegram = ProbeTelegramConnectivity();
-		int pingMs = -1;
-		if (!m_strategyTestStopRequested.load())
-			pingMs = ZapretConnectivity::MeasureIcmpPingMs();
-		m_strategyTestCheckingServices.store(false);
-
-		if (m_strategyTestStopRequested.load())
+		if (quickTest)
 		{
-			Stop();
-			WaitForStoppedInterruptible(5000);
-			resumeFrom = pass + 1;
-			break;
-		}
+			const bool discord = ZapretConnectivity::ProbeDiscord();
+			const bool youtube = ZapretConnectivity::ProbeYouTube();
+			const bool telegram = ProbeTelegramConnectivity();
+			int pingMs = -1;
+			if (!m_strategyTestStopRequested.load())
+				pingMs = ZapretConnectivity::MeasureIcmpPingMs();
+			m_strategyTestCheckingServices.store(false);
 
-		m_discordOnline.store(discord);
-		m_youtubeOnline.store(youtube);
-		m_telegramOnline.store(telegram);
-		RecordStrategyResult(idx, discord, youtube, telegram, pingMs);
+			if (m_strategyTestStopRequested.load())
+			{
+				Stop();
+				WaitForStoppedInterruptible(5000);
+				resumeFrom = pass + 1;
+				break;
+			}
+
+			m_discordOnline.store(discord);
+			m_youtubeOnline.store(youtube);
+			m_telegramOnline.store(telegram);
+			RecordStrategyResult(idx, discord, youtube, telegram, pingMs);
+		}
+		else
+		{
+			size_t targetCount = 0;
+			ZapretStrategyProbe::GetDefaultTargets(targetCount);
+			{
+				char msg[160] = {};
+				snprintf(msg, sizeof msg, "[Подбор] standard: %zu целей…", targetCount);
+				AppLog::Instance().Append(LogSource::Zapret, msg);
+			}
+
+			const ZapretStrategyProbe::FullProbeResult probe =
+				ZapretStrategyProbe::RunFullStandardProbe(&m_strategyTestStopRequested);
+			m_strategyTestCheckingServices.store(false);
+
+			if (m_strategyTestStopRequested.load())
+			{
+				Stop();
+				WaitForStoppedInterruptible(5000);
+				resumeFrom = pass + 1;
+				break;
+			}
+
+			m_discordOnline.store(probe.discordOk);
+			m_youtubeOnline.store(probe.youtubeOk);
+			m_telegramOnline.store(probe.telegramOk);
+			RecordStrategyFullResult(idx, probe);
+		}
 		m_strategyTestCurrent.store(pass + 1);
 
 		Stop();
@@ -1167,12 +1305,12 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 
 	if (wasStopped && !allDone)
 	{
-		if (fullStop)
+		if (fullStop || singleMode)
 		{
 			m_strategyTestResumeIndex.store(0);
 			m_strategyTestCurrent.store(0);
 			m_strategyTestState.store(StrategyTestState::Idle);
-			AppLog::Instance().Append(LogSource::Zapret, "Подбор стратегий остановлен");
+			AppLog::Instance().Append(LogSource::Zapret, singleMode ? "Тест стратегии остановлен" : "Подбор стратегий остановлен");
 			RestoreStrategyAfterTest(m_strategyTestRestoreIndex);
 			return;
 		}

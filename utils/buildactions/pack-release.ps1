@@ -52,6 +52,13 @@ if (Test-Path $updater) {
 	Write-Warning "Missing updater: $updater"
 }
 
+$fontsSrc = Join-Path $bin "fonts"
+if (Test-Path $fontsSrc) {
+	Copy-Item $fontsSrc (Join-Path $stage "fonts") -Recurse
+} else {
+	Write-Warning "Missing fonts folder: $fontsSrc"
+}
+
 $versionTxt = Join-Path $bin "version.txt"
 if (Test-Path $versionTxt) {
 	Copy-Item $versionTxt $stage
@@ -59,7 +66,7 @@ if (Test-Path $versionTxt) {
 	Set-Content -LiteralPath (Join-Path $stage "version.txt") -Value $Version -NoNewline -Encoding ascii
 }
 
-foreach ($folder in @("anti-zapret", "tg-ws-proxy")) {
+foreach ($folder in @("zapret-discord-youtube", "tg-ws-proxy")) {
 	$src = Join-Path $bin $folder
 	if (-not (Test-Path $src)) {
 		Write-Warning "Missing runtime folder: $src"

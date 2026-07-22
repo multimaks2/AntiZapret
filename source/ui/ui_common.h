@@ -5,12 +5,21 @@
 #include "gfx/theme_manager.h"
 #include "imgui.h"
 #include "ui/ui_types.h"
+#include "zapret/zapret_update_check.h"
 
 class FontManager;
 
 namespace UiCommon
 {
 	ImVec4 StatusColor(const UiAccentColors& accents, bool active, bool ok = true);
+	// Theme-independent ok/warn/fail for version badges (sidebar, page titles, title bar).
+	ImVec4 FixedVersionStatusAccent(ComponentUpdateStatus status);
+	// Start / Stop action buttons — always green / red across themes.
+	ImVec4 FixedStartAccent();
+	ImVec4 FixedStopAccent();
+	// Traffic graph / rate cards — always green download + blue upload.
+	ImVec4 FixedDownloadAccent();
+	ImVec4 FixedUploadAccent();
 	void PageTitle(
 		FontManager& fonts,
 		uint32_t iconCode,
@@ -121,4 +130,9 @@ namespace UiCommon
 		const UiThemeColors& colors,
 		ImVec2 size = { 30.f, 30.f },
 		bool enabled = true);
+
+	// Tooltips: 2.5s hover delay + rounded corners (WindowRounding for ImGui tooltip windows).
+	void ConfigureTooltips(ImGuiStyle& style);
+	void ShowTooltip(const char* fmt, ...) IM_FMTARGS(1);
+	void SetItemTooltip(const char* fmt, ...) IM_FMTARGS(1);
 }

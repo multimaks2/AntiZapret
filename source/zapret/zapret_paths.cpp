@@ -38,7 +38,7 @@ std::wstring GetAppDirectory()
 
 std::wstring GetAntiZapretDirectory()
 {
-	return NormalizeDirectory(GetAppDirectory() + L"\\anti-zapret");
+	return NormalizeDirectory(GetAppDirectory() + L"\\zapret-discord-youtube");
 }
 
 std::wstring GetBinDirectory()
@@ -207,6 +207,15 @@ void EnsureDataLayout()
 
 	std::error_code ec;
 	std::filesystem::create_directories(cacheDir, ec);
+
+	// Legacy folder name from older builds.
+	const std::filesystem::path legacyZapret = appDir / L"anti-zapret";
+	const std::filesystem::path currentZapret = appDir / L"zapret-discord-youtube";
+	if (std::filesystem::exists(legacyZapret, ec)
+		&& !std::filesystem::exists(currentZapret, ec))
+	{
+		std::filesystem::rename(legacyZapret, currentZapret, ec);
+	}
 
 	if (std::filesystem::exists(marker, ec))
 		return;

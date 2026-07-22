@@ -186,7 +186,6 @@ std::string ZapretUpdateApply::GetStatusMessage() const
 void ZapretUpdateApply::RunApply(ZapretManager* zapret, TgWsProxyManager* tgProxy)
 {
 	const bool wasZapretRunning = zapret && zapret->IsRunning();
-	const bool wasSmart = zapret && zapret->IsActiveSmartStrategy();
 	const int restoreStrategy = zapret ? zapret->GetActiveStrategyIndex() : -1;
 	const auto restoreFilter = zapret
 		? zapret->GetActiveGameFilterMode()
@@ -257,9 +256,7 @@ void ZapretUpdateApply::RunApply(ZapretManager* zapret, TgWsProxyManager* tgProx
 
 	if (wasZapretRunning && zapret)
 	{
-		if (wasSmart)
-			zapret->RequestStartSmartStrategy(restoreFilter);
-		else if (restoreStrategy >= 0)
+		if (restoreStrategy >= 0)
 			zapret->RequestStart(restoreStrategy, restoreFilter);
 	}
 	if (wasTgRunning && tgProxy)

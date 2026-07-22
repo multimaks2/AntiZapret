@@ -78,6 +78,7 @@ project "AntiZapret"
 		"source/app/application.cpp",
 		"source/app/app_settings.h",
 		"source/app/app_settings.cpp",
+		"source/app/app_config.h",
 		"source/app/app_version.h",
 		"source/app/app_version.cpp",
 		"source/app/app_update_gate.h",
@@ -144,6 +145,16 @@ project "AntiZapret"
 		"source/zapret/strategy_descriptions.cpp",
 		"source/zapret/zapret_connectivity.h",
 		"source/zapret/zapret_connectivity.cpp",
+		"source/zapret/zapret_diagnostics.h",
+		"source/zapret/zapret_diagnostics.cpp",
+		"source/zapret/zapret_strategy_probe.h",
+		"source/zapret/zapret_strategy_probe.cpp",
+		"source/zapret/strategy_bat_parser.h",
+		"source/zapret/strategy_bat_parser.cpp",
+		"source/zapret/zapret_update_check.h",
+		"source/zapret/zapret_update_check.cpp",
+		"source/zapret/zapret_update_apply.h",
+		"source/zapret/zapret_update_apply.cpp",
 		"source/zapret/zapret_store.h",
 		"source/zapret/zapret_store.cpp",
 		"source/zapret/smart_strategy_engine.h",
@@ -235,6 +246,7 @@ project "AntiZapret"
 	vpaths {
 		["source"] = {
 			"source/main.cpp",
+			"source/version.h",
 		},
 		["source/app"] = {
 			"source/app/**",
@@ -260,6 +272,12 @@ project "AntiZapret"
 		},
 		["source/zapret"] = {
 			"source/zapret/**",
+		},
+		["source/tgproxy"] = {
+			"source/tgproxy/**",
+		},
+		["source/vpn"] = {
+			"source/vpn/**",
 		},
 		["source/discord"] = {
 			"source/discord/**",
@@ -357,6 +375,25 @@ project "AntiZapret-Updater"
 		imgui .. "/imgui_widgets.cpp",
 		imgui .. "/backends/imgui_impl_win32.cpp",
 		imgui .. "/backends/imgui_impl_dx11.cpp",
+	}
+
+	vpaths {
+		["source"] = {
+			"source/AntiZapret-Updater/main.cpp",
+		},
+		["source/ui"] = {
+			"source/AntiZapret-Updater/updater_ui.h",
+			"source/AntiZapret-Updater/updater_ui.cpp",
+			"source/ui/**",
+		},
+		["vendor/imgui"] = {
+			imgui .. "/imgui.cpp",
+			imgui .. "/imgui_draw.cpp",
+			imgui .. "/imgui_tables.cpp",
+			imgui .. "/imgui_widgets.cpp",
+			imgui .. "/backends/imgui_impl_win32.cpp",
+			imgui .. "/backends/imgui_impl_dx11.cpp",
+		},
 	}
 
 	links {

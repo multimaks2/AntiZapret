@@ -2,6 +2,16 @@
 
 #include <map>
 #include <string>
+#include <vector>
+
+struct StrategyTargetResultView
+{
+	std::string name;
+	std::string detail;
+	bool ok = false;
+	bool isPing = false;
+	int pingMs = -1;
+};
 
 struct StrategyTestEntry
 {
@@ -11,6 +21,12 @@ struct StrategyTestEntry
 	int pingMs = -1;
 	int runtimeSec = 0;
 	int providerDualOutageCount = 0;
+	int httpOk = 0;
+	int httpErr = 0;
+	int pingOk = 0;
+	int pingFail = 0;
+	bool fullTest = false;
+	std::vector<StrategyTargetResultView> targets;
 };
 
 class ZapretStore

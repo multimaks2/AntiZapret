@@ -3,12 +3,14 @@
 #include "zapret/strategies.hpp"
 #include "zapret/smart_strategy_engine.h"
 #include "zapret/zapret_store.h"
+#include "zapret/zapret_strategy_probe.h"
 #include "zapret/zapret_types.h"
 
 #include <Windows.h>
 
 #include <atomic>
 #include <array>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -58,6 +60,7 @@ public:
 	int GetCachedBestStrategyIndex() const;
 	const ZapretStore& GetStore() const { return m_store; }
 	const StrategyTestEntry* GetStrategyResult(int strategyIndex) const;
+	std::vector<StrategyTargetResultView> GetStrategyTargetResults(int strategyIndex) const;
 	int GetVisibleStrategyCount(bool showExtraStrategies) const;
 	int GetVisibleStrategyAt(int visibleIndex, bool showExtraStrategies) const;
 	bool IsStrategyVisible(int strategyIndex, bool showExtraStrategies) const;
@@ -75,6 +78,10 @@ public:
 	int GetConnectivityCountdownSecondsCeil() const;
 
 	void HandleStrategyTestButton(ZapretStrategies::GameFilterMode gameFilterMode);
+	void RequestSingleStrategyTest(
+		int strategyIndex,
+		ZapretStrategies::GameFilterMode gameFilterMode,
+		bool quickTest);
 	void RequestStopStrategyTest();
 	bool CanStopStrategyTest() const;
 	StrategyTestState GetStrategyTestState() const { return m_strategyTestState.load(); }
@@ -101,6 +108,7 @@ private:
 	void RefreshRunStatus();
 	void RunConnectivityCheckAsync();
 	void RecordStrategyResult(int strategyIndex, bool discord, bool youtube, bool telegram, int pingMs);
+	void RecordStrategyFullResult(int strategyIndex, const ZapretStrategyProbe::FullProbeResult& probe);
 	void RecordActiveStrategyResult(bool discord, bool youtube, bool telegram, int pingMs);
 	void BeginStrategyTest(ZapretStrategies::GameFilterMode gameFilterMode, int startIndex, bool clearResults);
 	void PauseStrategyTest();
@@ -165,6 +173,8 @@ private:
 	std::atomic<int> m_strategyTestResumeIndex { 0 };
 	std::atomic<int> m_strategyTestActiveIndex { -1 };
 	std::atomic<bool> m_strategyTestCheckingServices { false };
+	std::atomic<int> m_strategyTestQuickOverride { -1 }; // -1=settings, 0=full, 1=quick
+	std::atomic<int> m_strategyTestOnlyIndex { -1 };     // -1=all visible, else one strategy index
 	float m_strategyTestCompleteTimer = 0.f;
 	int m_strategyTestRestoreIndex = -1;
 	ZapretStrategies::GameFilterMode m_strategyTestGameFilterMode = ZapretStrategies::GameFilterMode::Disabled;

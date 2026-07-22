@@ -21,13 +21,13 @@
 #include "tgproxy/tg_ws_proxy_manager.h"
 #include "zapret/zapret_manager.h"
 #include "vpn/vpn_manager.h"
+#include "window/window_manager.h"
 
 struct lua_State;
 
 class LuaApi;
 class FontManager;
 class ThemeManager;
-class WindowManager;
 
 class UiShell
 {
@@ -40,6 +40,10 @@ public:
 		FontManager& fonts,
 		LuaApi& api);
 
+	void SetActiveTab(UiTab tab) { m_activeTab = tab; }
+	TrayMenuState GetTrayMenuState();
+	void HandleTrayCommand(TrayCommand command, int param = 0);
+	void UpdateBackground(float deltaTime);
 	void ShutdownDiscord();
 
 	static float TitleBarHeight();

@@ -220,6 +220,8 @@ void UiPageHost::DrawPage(
 				break;
 			}
 		},
-		wheelMultiplier);
+		wheelMultiplier,
+		nullptr,
+		tab != UiTab::Console);
 	ImGui::PopID();
 }

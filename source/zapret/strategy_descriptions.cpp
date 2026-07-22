@@ -2,6 +2,7 @@
 
 #include "zapret/strategies.hpp"
 
+#include <cstdio>
 #include <cstring>
 
 namespace
@@ -33,7 +34,7 @@ namespace
 	const char* kBullets_general_alt3_3[] = {
 		"Hostfakesplit с подменой SNI на google.com/ya.ru",
 		"fake-tls-mod=rnd,dupsid — random session id и random bytes",
-		"split-pos=1,midsld — разрез в середине second-level domain",
+		"fooling=ts на TCP-правилах",
 		"UDP fake QUIC с repeats=6",
 		"Отдельные hostlist для google/general/discord",
 		nullptr
@@ -41,7 +42,7 @@ namespace
 	const char* kBullets_general_alt4_4[] = {
 		"fake + multisplit на TCP 443",
 		"fooling=badseq с increment=1000",
-		"split-seqovl=681, google pattern",
+		"Static fake TLS (google, stun, max.ru)",
 		"UDP fake QUIC, repeats=6",
 		"Для провайдеров с жёстким TLS inspection",
 		nullptr
@@ -55,18 +56,18 @@ namespace
 		nullptr
 	};
 	const char* kBullets_general_alt6_6[] = {
-		"TCP: multisplit — разрез TLS ClientHello без fake-пакетов",
-		"Discord/Google: split-seqovl=681, google pattern",
-		"General: split-seqovl=568, tls_clienthello_4pda_to.bin",
-		"Google 443: ip-id=zero; UDP fake QUIC repeats=6/12",
-		"Самый простой режим — только ложные ClientHello",
+		"TCP: multisplit без fake — как general, но единый pattern",
+		"Все TCP-правила: split-seqovl=681, tls_clienthello_www_google_com.bin",
+		"В отличие от general: нет 4pda/seqovl=568 на general list",
+		"Google 443: ip-id=zero; UDP fake QUIC repeats=6",
+		"Простой multisplit-профиль без fake injection",
 		nullptr
 	};
 	const char* kBullets_general_alt7_7[] = {
 		"split-pos=2,sniext+1 — разрез у SNI extension",
 		"split-seqovl=679, google pattern",
-		"Только multisplit, без fake",
-		"Discord/media и general lists",
+		"Основной режим: multisplit без fake",
+		"ipset-all TCP: отдельно syndata",
 		"Для DPI с парсингом TLS extensions",
 		nullptr
 	};
@@ -79,11 +80,11 @@ namespace
 		nullptr
 	};
 	const char* kBullets_general_alt9_9[] = {
-		"hostfakesplit с SNI ozon.ru на general list",
-		"fooling=md5sig на TCP",
-		"fake+multisplit для discord/google",
-		"repeats=4 — умеренная нагрузка",
-		"RU whitelist fingerprint",
+		"hostfakesplit на discord.media / google / general",
+		"general list: host=ozon.ru + fooling=ts,md5sig",
+		"discord/google: host=www.google.com, fooling=ts, repeats=4",
+		"UDP fake QUIC, repeats=6",
+		"RU whitelist fingerprint (ozon.ru)",
 		nullptr
 	};
 	const char* kBullets_general_alt10_10[] = {
@@ -111,35 +112,43 @@ namespace
 		nullptr
 	};
 	const char* kBullets_general_fake_tls_auto_alt_13[] = {
-		"fake-tls=! — decoy из реального ClientHello",
 		"fake + fakedsplit на TCP 443",
-		"fooling=ts",
-		"SNI подмена на google.com",
-		"Dynamic fake сложнее детектировать DPI",
+		"fooling=badseq increment=2",
+		"fake-tls-mod=rnd,dupsid,sni=www.google.com",
+		"QUIC fake repeats=11; TCP repeats=8",
+		"Без fake-tls=! — decoy через tls-mod, не live clone",
 		nullptr
 	};
 	const char* kBullets_general_fake_tls_auto_alt2_14[] = {
-		"fake-tls=! + multisplit",
+		"fake + multisplit, split-seqovl=681",
 		"fooling=badseq increment=10000000",
+		"fake-tls-mod=rnd,dupsid,sni=www.google.com",
 		"Экстремальный seq jump",
-		"Dynamic TLS fake",
 		"Только для жёстких блокировок",
 		nullptr
 	};
 	const char* kBullets_general_fake_tls_auto_alt3_15[] = {
-		"fake-tls=! + multisplit",
+		"fake + multisplit, split-seqovl=681",
 		"fooling=ts вместо badseq",
-		"Dynamic ClientHello decoy",
+		"fake-tls-mod=rnd,dupsid,sni=www.google.com",
 		"Мягче ALT2, стабильнее для VoIP",
-		"split-seqovl=681",
+		"TCP repeats=8",
 		nullptr
 	};
 	const char* kBullets_general_fake_tls_auto_16[] = {
-		"fake + multidisorder",
+		"fake + multidisorder (split-pos=1,midsld)",
 		"fake-tls=! — live ClientHello clone",
-		"SNI google.com в decoy",
-		"fooling=ts",
+		"SNI google.com в decoy (rnd,dupsid)",
+		"fooling=badseq, repeats=11",
 		"Сильный режим для TLS inspection",
+		nullptr
+	};
+	const char* kBullets_general_exp_21[] = {
+		"Экспериментальный гибрид Flowseal: fake+multisplit + hostfakesplit",
+		"Google 443: hostfakesplit host=www.google.com, fooling=ts",
+		"General/ipset: fake+multisplit, seqovl=480, pattern stun2.bin, fake max_ru",
+		"QUIC fake repeats=11; Discord UDP fake repeats=4",
+		"GameFilter TCP/UDP с any-protocol и cutoff=n4",
 		nullptr
 	};
 	const char* kBullets_general_simple_fake_alt_17[] = {
@@ -897,9 +906,9 @@ namespace
 			"Полное переупорядочивание TCP-сегментов на старте соединения. Может сломать DPI flow tracking целиком, но нестабильно для игр/VoIP и часто хуже по latency — используйте только если ничего else не работает."
 		},
 		{
-			"Идентична base general — multisplit без fake.",
+			"Multisplit с единым google pattern (seqovl=681) — без ветки 4pda как у general.",
 			kBullets_general_alt6_6,
-			"Классический multisplit: DPI собирает ClientHello из частей с overlap-pattern, видит «левый» SNI, сервер получает оригинал. Эквивалент general.bat."
+			"Классический multisplit: DPI собирает ClientHello из частей с overlap-pattern, видит «левый» SNI, сервер получает оригинал. От general отличается тем, что general list тоже идёт через google pattern/681, без 4pda."
 		},
 		{
 			"Multisplit на sniext+1 — разрез у границы SNI extension.",
@@ -912,9 +921,9 @@ namespace
 			"Минимальные изменения decoy — для DPI, который блокирует «тяжёлые» fake. Небольшой badseq сбивает sequence tracking без разрыва соединения."
 		},
 		{
-			"Hostfakesplit с ozon.ru на general и md5sig fooling.",
+			"Hostfakesplit: google.com на Discord/Google, ozon.ru+md5sig на general.",
 			kBullets_general_alt9_9,
-			"Подмена Host на RU e-commerce CDN (ozon.ru) — часто в whitelist. md5sig добавляет нестандартные TCP options, путая DPI parser; repeats=4 снижает нагрузку."
+			"Подмена Host на whitelist-домены (google.com / ozon.ru). md5sig на general добавляет нестандартные TCP options; repeats=4 снижает нагрузку."
 		},
 		{
 			"Static fake TLS с fooling=ts; general-трафик через 4pda overlap pattern.",
@@ -932,24 +941,24 @@ namespace
 			"Разные приёмы под разные списки: Google получает hostfakesplit (подмена host в сегменте), остальной трафик — классический fake+split. Снижает ложные срабатывания на Discord UDP."
 		},
 		{
-			"Auto-TLS fake + fakedsplit из live ClientHello.",
+			"Fake+fakedsplit с badseq+2 и tls-mod (rnd/dupsid/SNI google).",
 			kBullets_general_fake_tls_auto_alt_13,
-			"Decoy не из .bin, а из вашего реального ClientHello с подменой SNI на google.com. Fakedsplit режет оригинал рядом — DPI сложнее отличить fake от legitimate retry."
+			"Decoy модифицируется через fake-tls-mod (не live clone). Fakedsplit режет оригинал рядом; badseq+2 сбивает sequence tracking DPI без жёсткого разрыва соединения."
 		},
 		{
-			"Auto-TLS + multisplit + extreme badseq (10M).",
+			"Fake+multisplit + extreme badseq (10M).",
 			kBullets_general_fake_tls_auto_alt2_14,
-			"Экстремальный badseq заставляет stateful middlebox сбросить состояние потока. Dynamic TLS fake не match'ится с blacklist static patterns."
+			"Экстремальный badseq заставляет stateful middlebox сбросить состояние потока. fake-tls-mod рандомизирует decoy; multisplit ломает reassembly SNI."
 		},
 		{
-			"Auto-TLS + multisplit + ts fooling (мягче ALT2).",
+			"Fake+multisplit + ts fooling (мягче ALT2).",
 			kBullets_general_fake_tls_auto_alt3_15,
-			"Тот же dynamic fake, но timestamps вместо seq jump — для провайдеров, где badseq режет соединение. Multisplit всё ещё ломает reassembly SNI."
+			"Тот же fake+multisplit с tls-mod, но timestamps вместо seq jump — для провайдеров, где badseq режет соединение. Multisplit всё ещё ломает reassembly SNI."
 		},
 		{
-			"Fake + multidisorder + dynamic TLS — флагман AUTO семейства.",
+			"Fake + multidisorder + live TLS clone (fake-tls=!) — флагман AUTO.",
 			kBullets_general_fake_tls_auto_16,
-			"multidisorder переставляет сегменты вокруг середины SLD; fake-tls=! клонирует ваш ClientHello. DPI парсит TLS out-of-order и не находит блокируемый SNI."
+			"multidisorder переставляет сегменты вокруг середины SLD; fake-tls=! клонирует ваш ClientHello. fooling=badseq. DPI парсит TLS out-of-order и не находит блокируемый SNI."
 		},
 		{
 			"Simple fake с badseq вместо ts.",
@@ -1369,6 +1378,24 @@ namespace
 		"алгоритм меняет dpi-desync, repeats и fooling, тестирует и сохраняет лучший набор. "
 		"Профиль хранится в settings.ini [smart_strategy]."
 	};
+
+	// Runtime-only Flowseal bats (present on disk, not in compiled kStrategies table).
+	struct NamedDescription
+	{
+		const char* id;
+		StrategyDescription description;
+	};
+
+	const NamedDescription kRuntimeOnlyDescriptions[] = {
+		{
+			"general (EXP)",
+			{
+				"Экспериментальный гибрид: fake+multisplit, hostfakesplit на Google, stun2/max_ru.",
+				kBullets_general_exp_21,
+				"Google уходит через hostfakesplit (whitelist SNI). Остальной TCP — fake+multisplit с seqovl=480 и pattern stun2.bin / decoy max_ru: DPI видит «белый» overlap и decoy, сервер собирает настоящий ClientHello. QUIC и Discord UDP закрываются отдельным fake."
+			}
+		},
+	};
 }
 
 const StrategyDescription* StrategyDescriptions::GetByIndex(int strategyIndex)
@@ -1392,6 +1419,17 @@ const StrategyDescription* StrategyDescriptions::GetById(const char* strategyId)
 		{
 			return &kDescriptions[i];
 		}
+	}
+
+	for (const NamedDescription& entry : kRuntimeOnlyDescriptions)
+	{
+		if (_stricmp(entry.id, strategyId) == 0)
+			return &entry.description;
+
+		char fileName[160] = {};
+		snprintf(fileName, sizeof fileName, "%s.bat", entry.id);
+		if (_stricmp(fileName, strategyId) == 0)
+			return &entry.description;
 	}
 	return nullptr;
 }

@@ -222,6 +222,7 @@ const std::vector<ServiceCatalogEntry>& VpnAdultSites::Catalog()
 			out.push_back({
 				site.id,
 				0xE8A5,
+				false,
 				site.name,
 				site.domains,
 				ServiceCatalogRegion::Foreign,

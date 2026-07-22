@@ -67,7 +67,7 @@ void AppSettings::Load()
 	m_tgProxySecret.clear();
 	m_autoStartTgProxyWithAntiZapret = false;
 	m_openTelegramOnProxyStart = false;
-	m_lightTheme = false;
+	m_themeId = UiThemeId::Dark;
 	m_autostartApp = false;
 	m_autostartBypass = false;
 	m_autostartTelegram = false;
@@ -79,6 +79,7 @@ void AppSettings::Load()
 	m_discordDownloadUrl = "https://github.com/multimaks2/AntiZapret/releases/latest";
 	m_autoSelectBestStrategy = false;
 	m_showExtraStrategies = false;
+	m_networkSpeedBits = false;
 	ResetScrollMultipliers(m_pageScrollMultipliers);
 
 	std::ifstream input(SettingsPath(), std::ios::binary);
@@ -128,8 +129,14 @@ void AppSettings::Load()
 
 		if (currentSection == "ui")
 		{
-			if (key == "light_theme")
-				m_lightTheme = ParseBool(value);
+			if (key == "theme")
+				m_themeId = ThemeManager::ThemeFromKey(value.c_str());
+			else if (key == "light_theme")
+			{
+				// Legacy fallback when theme key is absent.
+				if (m_themeId == UiThemeId::Dark && ParseBool(value))
+					m_themeId = UiThemeId::Light;
+			}
 			else if (key == "autostart_app")
 				m_autostartApp = ParseBool(value);
 			else if (key == "autostart_bypass")
@@ -148,6 +155,8 @@ void AppSettings::Load()
 				m_discordDownloadButtonEnabled = ParseBool(value);
 			else if (key == "discord_download_url" && !value.empty())
 				m_discordDownloadUrl = value;
+			else if (key == "network_speed_bits")
+				m_networkSpeedBits = ParseBool(value);
 			continue;
 		}
 
@@ -157,6 +166,8 @@ void AppSettings::Load()
 				m_autoSelectBestStrategy = ParseBool(value);
 			else if (key == "show_extra_strategies")
 				m_showExtraStrategies = ParseBool(value);
+			else if (key == "quick_strategy_test")
+				m_quickStrategyTest = ParseBool(value);
 			continue;
 		}
 
@@ -188,9 +199,11 @@ void AppSettings::Save()
 	SettingsDocument::KeyMap antizapret;
 	antizapret["auto_select_best"] = m_autoSelectBestStrategy ? "1" : "0";
 	antizapret["show_extra_strategies"] = m_showExtraStrategies ? "1" : "0";
+	antizapret["quick_strategy_test"] = m_quickStrategyTest ? "1" : "0";
 
 	SettingsDocument::KeyMap ui;
-	ui["light_theme"] = m_lightTheme ? "1" : "0";
+	ui["theme"] = ThemeManager::ThemeKey(m_themeId);
+	ui["light_theme"] = ThemeManager::Info(m_themeId).isLight ? "1" : "0";
 	ui["autostart_app"] = m_autostartApp ? "1" : "0";
 	ui["autostart_bypass"] = m_autostartBypass ? "1" : "0";
 	ui["autostart_telegram"] = m_autostartTelegram ? "1" : "0";
@@ -200,6 +213,7 @@ void AppSettings::Save()
 	ui["discord_share_button"] = m_discordShareButtonEnabled ? "1" : "0";
 	ui["discord_download_button"] = m_discordDownloadButtonEnabled ? "1" : "0";
 	ui["discord_download_url"] = m_discordDownloadUrl;
+	ui["network_speed_bits"] = m_networkSpeedBits ? "1" : "0";
 
 	SettingsDocument::KeyMap scroll;
 	scroll["home"] = std::to_string(m_pageScrollMultipliers[0]);
@@ -303,7 +317,19 @@ void AppSettings::SetOpenTelegramOnProxyStart(bool value)
 
 void AppSettings::SetLightTheme(bool value)
 {
-	m_lightTheme = value;
+	SetThemeId(value ? UiThemeId::Light : UiThemeId::Dark);
+}
+
+bool AppSettings::GetLightTheme() const
+{
+	return ThemeManager::Info(m_themeId).isLight;
+}
+
+void AppSettings::SetThemeId(UiThemeId value)
+{
+	if (value < UiThemeId::Dark || value >= UiThemeId::Count)
+		value = UiThemeId::Dark;
+	m_themeId = value;
 	Save();
 }
 
@@ -335,6 +361,14 @@ void AppSettings::SetAutostartVpn(bool value)
 void AppSettings::SetConfirmAdult(bool value)
 {
 	m_confirmAdult = value;
+	Save();
+}
+
+void AppSettings::SetNetworkSpeedBits(bool value)
+{
+	if (m_networkSpeedBits == value)
+		return;
+	m_networkSpeedBits = value;
 	Save();
 }
 
@@ -394,6 +428,17 @@ bool AppSettings::GetShowExtraStrategies() const
 void AppSettings::SetShowExtraStrategies(bool value)
 {
 	m_showExtraStrategies = value;
+	Save();
+}
+
+bool AppSettings::GetQuickStrategyTest() const
+{
+	return m_quickStrategyTest;
+}
+
+void AppSettings::SetQuickStrategyTest(bool value)
+{
+	m_quickStrategyTest = value;
 	Save();
 }
 

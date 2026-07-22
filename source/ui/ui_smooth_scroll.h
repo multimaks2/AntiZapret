@@ -13,7 +13,8 @@ public:
 		float deltaTime,
 		const std::function<void(float width)>& drawContent,
 		float wheelMultiplier = 1.f,
-		bool* stickToBottom = nullptr);
+		bool* stickToBottom = nullptr,
+		bool enablePageScroll = true);
 
 	void JumpToBottom();
 

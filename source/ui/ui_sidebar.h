@@ -35,7 +35,15 @@ public:
 private:
 	struct NavItem
 	{
+		enum class IconSet : uint8_t
+		{
+			Mdl2 = 0,
+			Solid,
+			Brands,
+		};
+
 		uint32_t iconCode = 0;
+		IconSet iconSet = IconSet::Mdl2;
 		const char* label = nullptr;
 		UiTab tab = UiTab::Home;
 	};
@@ -52,9 +60,16 @@ private:
 		UiTab activeTab,
 		const UiThemeColors& colors,
 		const UiAccentColors& accents,
-		ImFont* iconFont,
+		FontManager& fonts,
 		const UiSidebarVersionInfo* versionInfo);
-	void DrawMdl2Icon(ImDrawList* drawList, ImFont* iconFont, float x, float y, uint32_t codepoint, ImU32 color, float size) const;
+	void DrawGlyphIcon(
+		ImDrawList* drawList,
+		ImFont* iconFont,
+		float x,
+		float y,
+		uint32_t codepoint,
+		ImU32 color,
+		float size) const;
 	static ImU32 WithAlpha(ImU32 color, float alpha);
 	static ImU32 ToU32(const ImVec4& color, float alpha = 1.f);
 	static ImU32 StatusColor(ComponentUpdateStatus status, const UiThemeColors& colors, const UiAccentColors& accents);

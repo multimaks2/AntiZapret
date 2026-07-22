@@ -9,6 +9,7 @@
 #include "lua/lua_api.h"
 #include "lua/lua_runtime.h"
 #include "ui/ui_shell.h"
+#include "ui/ui_common.h"
 #include "window/window_manager.h"
 #include "vpn/vpn_flag_icons.h"
 #include "imgui.h"
@@ -79,8 +80,12 @@ int Application::Run()
 		if (done)
 			break;
 
-		if (m_components->window.IsMinimized() || m_components->renderer.TestOccluded())
+		if (m_components->window.IsMinimized()
+			|| m_components->window.IsInTray()
+			|| m_components->renderer.TestOccluded())
 		{
+			// Keep start/stop and VPN runtime alive while the window is hidden.
+			m_components->ui.UpdateBackground(0.1f);
 			Sleep(100);
 			continue;
 		}
@@ -135,6 +140,7 @@ bool Application::Initialize()
 	style.FontScaleDpi = dpiScale;
 	style.WindowBorderSize = 0.f;
 	style.FrameBorderSize = 0.f;
+	UiCommon::ConfigureTooltips(style);
 
 	m_components->fonts.Initialize();
 	ImGui_ImplWin32_Init(hwnd);
@@ -157,6 +163,14 @@ bool Application::Initialize()
 	m_components->window.SetInputHandler([this](UINT msg, WPARAM wParam, LPARAM lParam) {
 		return m_components && m_components->luaApi.HandleWindowMessage(msg, wParam, lParam);
 	});
+	m_components->window.SetTrayCallbacks(
+		[this]() -> TrayMenuState {
+			return m_components ? m_components->ui.GetTrayMenuState() : TrayMenuState{};
+		},
+		[this](TrayCommand command, int param) {
+			if (m_components)
+				m_components->ui.HandleTrayCommand(command, param);
+		});
 	m_components->window.EnsureMinimumSize();
 
 	m_components->ready = true;

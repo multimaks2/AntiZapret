@@ -37,6 +37,17 @@ public:
 	// Deep-link / protocol import: subscription URL or share-URI text.
 	void ImportSubscriptionUrl(const std::string& urlOrText);
 
+	// Tray menu helpers.
+	void EnsureStoreLoadedForTray() { EnsureStoreLoaded(); }
+	int GetWorkMode() const { return m_workMode; }
+	void SetWorkModeFromTray(int workMode);
+	int GetTransportMode() const { return m_transportMode; }
+	void SetTransportModeFromTray(int transportMode);
+	int GetActiveServerIndex() const { return m_activeIndex; }
+	int GetServerCount() const { return static_cast<int>(m_nodes.size()); }
+	std::string GetServerTrayLabel(int index) const;
+	void SelectServerFromTray(int nodeIndex);
+
 private:
 	void EnsureStoreLoaded();
 	void SaveStore();
@@ -70,7 +81,7 @@ private:
 	void StartRealPingIndices(std::vector<int> indices);
 	void StartSpeedTest(bool selectedOnly);
 	void StartSpeedTestIndices(std::vector<int> indices);
-	void StopSpeedTest();
+	void StopProbe();
 	void DeleteSelectedServer();
 	void DeleteGroupServers(const std::vector<int>& indices);
 	void ExportOutboundJson(int nodeIndex);
@@ -80,14 +91,24 @@ private:
 	void PushSpeedHistory(VpnNode& node, float speedMbps);
 	void SetToolbarStatus(const std::string& text);
 
+	bool HasSelection() const;
+	int SelectionCount() const;
+	std::vector<int> SelectedIndicesSorted() const;
+	void ClearSelection();
+	void SelectOnly(int index);
+	void ToggleSelect(int index);
+	void SelectRangeInOrder(const std::vector<int>& orderedIndices, int clickedIndex);
+
 	View m_view = View::List;
 	char m_search[128] = {};
 	int m_workMode = 1;
 	int m_transportMode = 1; // 0 = Proxy, 1 = Tunnel
-	int m_selected = -1;
+	int m_selected = -1; // anchor for single-target actions / Shift range
+	std::unordered_set<int> m_selectedSet;
 	int m_activeIndex = -1;
 	int m_detailIndex = -1;
 	bool m_speedTestRunning = false;
+	bool m_pingTestRunning = false;
 	bool m_vpnEnabled = false;
 	float m_vpnMix = 0.f;
 	bool m_fixDiscord = false;

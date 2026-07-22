@@ -58,8 +58,7 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		m_loadedFromSettings = true;
 	}
 
-	const bool lightTheme = m_appSettings ? m_appSettings->GetLightTheme() : theme.IsLight();
-	const float themeMix = lightTheme ? 1.f : 0.f;
+	const UiThemeId activeTheme = m_appSettings ? m_appSettings->GetThemeId() : theme.GetTheme();
 	m_autostartAppMix = UiCommon::AnimateMix(
 		m_autostartAppMix,
 		m_appSettings && m_appSettings->GetAutostartApp(),
@@ -109,19 +108,63 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		nullptr,
 		colors);
 
-	if (UiCommon::SettingRow("Темная/Светлая тема", width, colors, themeMix))
+	if (UiCommon::BeginCard("##settings_theme", width, colors))
 	{
-		if (m_appSettings)
+		UiCommon::SectionHeader("Тема оформления", colors);
+		UiCommon::CaptionText("Выберите палитру интерфейса", colors, ImGui::GetContentRegionAvail().x);
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+
+		const float avail = ImGui::GetContentRegionAvail().x;
+		const float gap = UiMetrics::kGridGap;
+		const int columns = avail > 520.f ? 4 : (avail > 360.f ? 3 : 2);
+		const float cellW = (avail - gap * static_cast<float>(columns - 1)) / static_cast<float>(columns);
+		const float cellH = 44.f;
+
+		for (int i = 0; i < ThemeManager::ThemeCount(); ++i)
 		{
-			const bool nextLight = !m_appSettings->GetLightTheme();
-			m_appSettings->SetLightTheme(nextLight);
-			theme.SetLight(nextLight);
-		}
-		else
-		{
-			theme.SetLight(!theme.IsLight());
+			const UiThemeId id = static_cast<UiThemeId>(i);
+			const UiThemeInfo& info = ThemeManager::Info(id);
+			const bool selected = activeTheme == id;
+
+			if (i % columns != 0)
+				ImGui::SameLine(0.f, gap);
+
+			ImGui::PushID(i);
+			const ImVec2 cellMin = ImGui::GetCursorScreenPos();
+			if (ImGui::InvisibleButton("##theme", { cellW, cellH }))
+			{
+				if (m_appSettings)
+					m_appSettings->SetThemeId(id);
+				theme.SetTheme(id);
+			}
+			const bool hovered = ImGui::IsItemHovered();
+			const ImVec2 cellMax = { cellMin.x + cellW, cellMin.y + cellH };
+			ImDrawList* dl = ImGui::GetWindowDrawList();
+			dl->AddRectFilled(cellMin, cellMax, ImGui::GetColorU32(colors.tileBg), UiMetrics::kCardRadius);
+			dl->AddRect(
+				cellMin,
+				cellMax,
+				ImGui::GetColorU32(selected ? info.swatch : (hovered ? colors.navHover : colors.tileBorder)),
+				UiMetrics::kCardRadius,
+				0,
+				selected ? 2.f : 1.f);
+
+			const float swatch = 18.f;
+			const ImVec2 swMin = { cellMin.x + 12.f, cellMin.y + (cellH - swatch) * 0.5f };
+			const ImVec2 swMax = { swMin.x + swatch, swMin.y + swatch };
+			dl->AddRectFilled(swMin, swMax, ImGui::GetColorU32(info.swatch), 4.f);
+			dl->AddRect(swMin, swMax, ImGui::GetColorU32(colors.tileBorder), 4.f, 0, 1.f);
+
+			const ImVec2 textSize = ImGui::CalcTextSize(info.name);
+			dl->AddText(
+				{ swMax.x + 10.f, cellMin.y + (cellH - textSize.y) * 0.5f },
+				ImGui::GetColorU32(colors.textPrimary),
+				info.name);
+			ImGui::PopID();
 		}
 	}
+	UiCommon::EndCard();
+	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 
 	if (UiCommon::SettingRow("Автозапуск приложения", width, colors, m_autostartAppMix))
 	{

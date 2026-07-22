@@ -6,9 +6,9 @@
 #include "gfx/theme_manager.h"
 #include "tgproxy/tg_ws_proxy_manager.h"
 #include "ui/ui_common.h"
-#include "zapret/smart_strategy_engine.h"
 #include "zapret/strategies.hpp"
 #include "zapret/strategy_descriptions.h"
+#include "zapret/zapret_diagnostics.h"
 #include "zapret/zapret_manager.h"
 #include "zapret/zapret_store.h"
 #include "zapret/zapret_update_apply.h"
@@ -18,11 +18,10 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <thread>
 
 namespace
 {
-	constexpr const char* kSmartStrategyLabel = SmartStrategyEngine::kLabel;
-
 	struct GameFilterItem
 	{
 		ZapretStrategies::GameFilterMode mode;
@@ -59,20 +58,71 @@ namespace
 		return kGameFilterItems[index].mode;
 	}
 
-	ImVec4 ComponentVersionAccent(ComponentUpdateStatus status, const UiAccentColors& accents)
+	// Detail-only: same look as StyledCheckbox, but aligned to a button row.
+	// Do not change global StyledCheckbox (Additional / TG WS Proxy).
+	bool DetailBesideButtonCheckbox(const char* label, bool* value, const UiThemeColors& colors)
 	{
-		switch (status)
+		const float boxSize = 18.f;
+		const float rowH = UiMetrics::kSmallBtnHeight;
+		const float labelGap = 8.f;
+		const float textW = ImGui::CalcTextSize(label).x;
+		const float textH = ImGui::GetTextLineHeight();
+
+		ImGui::SameLine(0.f, UiMetrics::kGridGap);
+		const ImVec2 pos = ImGui::GetCursorScreenPos();
+
+		ImGui::PushID(label);
+		ImGui::InvisibleButton("##detail_cb", { boxSize + labelGap + textW, rowH });
+		const bool hovered = ImGui::IsItemHovered();
+		bool changed = false;
+		if (ImGui::IsItemClicked())
 		{
-		case ComponentUpdateStatus::UpToDate:
-			return accents.ok;
-		case ComponentUpdateStatus::Checking:
-		case ComponentUpdateStatus::UpdateAvailable:
-			return accents.warn;
-		case ComponentUpdateStatus::Unknown:
-		case ComponentUpdateStatus::Error:
-		default:
-			return accents.fail;
+			*value = !*value;
+			changed = true;
 		}
+		ImGui::PopID();
+
+		const float boxY = pos.y + (rowH - boxSize) * 0.5f;
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		const ImVec4 bg = hovered ? UiCommon::WithAlpha(colors.navHover, 0.95f) : colors.inputBg;
+		drawList->AddRectFilled(
+			{ pos.x, boxY },
+			{ pos.x + boxSize, boxY + boxSize },
+			ImGui::GetColorU32(bg),
+			UiMetrics::kCardRadius);
+		drawList->AddRect(
+			{ pos.x, boxY },
+			{ pos.x + boxSize, boxY + boxSize },
+			ImGui::GetColorU32(UiCommon::WithAlpha(colors.tileBorder, 0.35f)),
+			UiMetrics::kCardRadius);
+
+		if (*value)
+		{
+			const float pad = 4.f;
+			drawList->AddLine(
+				{ pos.x + pad, boxY + boxSize * 0.55f },
+				{ pos.x + boxSize * 0.42f, boxY + boxSize - pad },
+				ImGui::GetColorU32(colors.textPrimary),
+				2.f);
+			drawList->AddLine(
+				{ pos.x + boxSize * 0.42f, boxY + boxSize - pad },
+				{ pos.x + boxSize - pad, boxY + pad + 1.f },
+				ImGui::GetColorU32(colors.textPrimary),
+				2.f);
+		}
+
+		// Center text to the box (half text body above geometric center → optical match).
+		const float textY = boxY + (boxSize - textH) * 0.5f;
+		drawList->AddText(
+			ImVec2(pos.x + boxSize + labelGap, textY),
+			ImGui::GetColorU32(colors.textPrimary),
+			label);
+		return changed;
+	}
+
+	ImVec4 ComponentVersionAccent(ComponentUpdateStatus status)
+	{
+		return UiCommon::FixedVersionStatusAccent(status);
 	}
 
 	bool IsDisplayVersion(const std::string& raw)
@@ -227,8 +277,6 @@ namespace
 
 	void DrawStrategyGrid(
 		int& selectedStrategy,
-		int& selectedSmartIndex,
-		bool hasSmartStrategy,
 		bool showExtraStrategies,
 		float innerWidth,
 		const UiThemeColors& colors,
@@ -237,7 +285,8 @@ namespace
 		StrategyTestState strategyTestState,
 		int testingStrategyIndex,
 		ZapretManager* manager,
-		bool tgProxyRunning)
+		bool tgProxyRunning,
+		int* outOpenDetailIndex)
 	{
 		const float gap = UiMetrics::kGridGap;
 		const bool testCompleted = strategyTestState == StrategyTestState::Completed;
@@ -256,89 +305,7 @@ namespace
 			: ZapretStrategies::CountVisibleStrategies(showExtraStrategies);
 		const int bestStrategyIndex = manager ? manager->GetCachedBestStrategyIndex() : -1;
 		const ImVec4 bestAccent = { 0.83f, 0.69f, 0.22f, 1.f };
-		const ImVec4 smartAccent = UiCommon::WithAlpha(accents.upload, 0.88f);
 		int gridIndex = 0;
-
-		if (hasSmartStrategy)
-		{
-			int slotsUsed = 1;
-			const ImVec2 buttonSize = StrategyGridButtonSize(gridIndex, cols, colWidth, gap, slotsUsed);
-			const bool smartSelected = selectedSmartIndex == 0;
-			const bool isActiveSmart = manager && manager->IsActiveSmartStrategy();
-			const SmartStrategyStatus smartStatus = manager
-				? manager->GetSmartStrategyStatus(tgProxyRunning)
-				: SmartStrategyStatus {};
-
-			const StrategyTestEntry* result = manager
-				? manager->GetStore().GetResult(kSmartStrategyLabel)
-				: nullptr;
-
-			char labelBuffer[160] = {};
-			if (!smartStatus.summary.empty())
-			{
-				if (result && result->pingMs >= 0)
-				{
-					snprintf(
-						labelBuffer,
-						sizeof labelBuffer,
-						"%s · %s · %d ms",
-						kSmartStrategyLabel,
-						smartStatus.summary.c_str(),
-						result->pingMs);
-				}
-				else
-				{
-					snprintf(
-						labelBuffer,
-						sizeof labelBuffer,
-						"%s · %s",
-						kSmartStrategyLabel,
-						smartStatus.summary.c_str());
-				}
-			}
-			else if (result && result->pingMs >= 0)
-			{
-				snprintf(labelBuffer, sizeof labelBuffer, "%s · %d ms", kSmartStrategyLabel, result->pingMs);
-			}
-			else
-			{
-				snprintf(labelBuffer, sizeof labelBuffer, "%s", kSmartStrategyLabel);
-			}
-
-			ImVec4 accent = smartAccent;
-			if (isActiveSmart)
-				accent = accents.ok;
-
-			if (UiCommon::StrategyButton(
-				-1,
-				labelBuffer,
-				smartSelected || isActiveSmart,
-				buttonSize,
-				colors,
-				accent))
-			{
-				selectedSmartIndex = 0;
-				if (manager)
-					manager->RememberSmartStrategySelected();
-			}
-
-			const ImVec2 buttonMin = ImGui::GetItemRectMin();
-			UiCommon::StrategyIndicatorState indicatorState;
-			if (result)
-			{
-				indicatorState.hasResult = true;
-				indicatorState.discordOk = result->discordOk;
-				indicatorState.youtubeOk = result->youtubeOk;
-				indicatorState.telegramOk = result->telegramOk;
-			}
-			if (tgProxyRunning)
-			{
-				indicatorState.hasResult = true;
-				indicatorState.telegramOk = true;
-			}
-			UiCommon::DrawStrategyIndicators(buttonMin, indicatorState, colors);
-			gridIndex += slotsUsed;
-		}
 
 		for (int pass = 0; pass < count; ++pass)
 		{
@@ -352,8 +319,7 @@ namespace
 				ImGui::SameLine(0.f, gap);
 
 			const bool selected = selectedStrategy == i;
-			const bool isActive = activeStrategy == i
-				&& !(manager && manager->IsActiveSmartStrategy());
+			const bool isActive = activeStrategy == i;
 			const bool isTesting = testRunning && testingStrategyIndex == i;
 			const std::string strategyLabel = manager
 				? manager->GetStrategyLabel(i)
@@ -393,16 +359,19 @@ namespace
 			if (UiCommon::StrategyButton(
 				i,
 				labelBuffer,
-				(selected && selectedSmartIndex < 0) || isTesting || highlightBest,
+				selected || isTesting || highlightBest,
 				{ colWidth, UiMetrics::kBtnHeight },
 				colors,
 				accent))
 			{
 				selectedStrategy = i;
-				selectedSmartIndex = -1;
 				if (manager)
 					manager->RememberSelectedStrategy(i);
 			}
+
+			UiCommon::SetItemTooltip("ПКМ — подробности");
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && outOpenDetailIndex)
+				*outOpenDetailIndex = i;
 
 			const ImVec2 buttonMin = ImGui::GetItemRectMin();
 			const ImVec2 buttonMax = ImGui::GetItemRectMax();
@@ -537,25 +506,15 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 		{
 			m_autoSelect = m_appSettings->GetAutoSelectBestStrategy();
 			m_showExtraStrategies = m_appSettings->GetShowExtraStrategies();
+			m_quickStrategyTest = m_appSettings->GetQuickStrategyTest();
 		}
 		if (m_manager)
-		{
-			m_hasSmartStrategy = m_manager->IsSmartStrategyEnabled();
-			const std::string& last = m_manager->GetStore().GetLastStrategy();
-			if (m_hasSmartStrategy && last == SmartStrategyEngine::kLabel)
-			{
-				m_selectedSmartIndex = 0;
-				m_selectedStrategy = m_manager->GetPreferredStrategyIndex(false);
-			}
-			else
-			{
-				m_selectedSmartIndex = -1;
-				m_selectedStrategy = m_manager->GetPreferredStrategyIndex(m_autoSelect);
-			}
-		}
+			m_selectedStrategy = m_manager->GetPreferredStrategyIndex(m_autoSelect);
 		ClampSelectedStrategy();
 		m_preferencesLoaded = true;
 	}
+
+	ApplyPendingDiagnostics();
 
 	const ZapretRunStatus runStatus = m_manager ? m_manager->GetCachedRunStatus() : ZapretRunStatus::Stopped;
 	const bool running = runStatus == ZapretRunStatus::Running || runStatus == ZapretRunStatus::Starting;
@@ -564,19 +523,11 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 	const bool youtubeOnline = m_manager ? m_manager->IsYouTubeOnline() : false;
 	const bool tgProxyRunning = m_tgProxyManager && m_tgProxyManager->IsRunning();
 	const bool telegramProbeOk = m_manager ? m_manager->IsTelegramOnline() : false;
-	const bool smartSelected = m_hasSmartStrategy && m_selectedSmartIndex == 0;
-	const SmartStrategyStatus smartStatus = m_manager
-		? m_manager->GetSmartStrategyStatus(tgProxyRunning)
-		: SmartStrategyStatus {};
 	const bool checkingServices = m_manager && m_manager->IsCheckingConnectivity();
 	const StrategyTestState strategyTestState = m_manager
 		? m_manager->GetStrategyTestState()
 		: StrategyTestState::Idle;
-	const SmartStrategyTuneState smartTuneState = m_manager
-		? m_manager->GetSmartStrategyTuneState()
-		: SmartStrategyTuneState::Idle;
 	const bool strategyTestActive = strategyTestState != StrategyTestState::Idle;
-	const bool smartTuneActive = smartTuneState != SmartStrategyTuneState::Idle;
 	const int testingStrategyIndex = m_manager ? m_manager->GetStrategyTestActiveIndex() : -1;
 
 	const bool blockTgAutoStart = m_manager && m_manager->IsStrategySelectionInProgress();
@@ -592,6 +543,21 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 		TryAutoStartTgProxy();
 	m_prevStrategyTestState = strategyTestState;
 	m_prevRunStatus = runStatus;
+
+	if (m_view == View::Detail)
+	{
+		if (!m_manager || m_detailStrategyIndex < 0
+			|| !m_manager->IsStrategyVisible(m_detailStrategyIndex, true))
+		{
+			m_view = View::List;
+			m_detailStrategyIndex = -1;
+		}
+		else
+		{
+			DrawDetailView(theme, fonts, width);
+			return;
+		}
+	}
 
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, UiMetrics::kRowGap });
 
@@ -632,15 +598,24 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 			nullptr,
 			colors,
 			azLocalVersion.empty() ? nullptr : azLocalVersion.c_str(),
-			ComponentVersionAccent(updateCheck.GetZapretStatus(), accents),
+			ComponentVersionAccent(updateCheck.GetZapretStatus()),
 			updateBtnLabel,
 			showUpdateBtn && !updateApplying))
 	{
+		m_diagnosticsStatus.clear();
 		ZapretUpdateApply::Instance().RequestApply(m_manager, m_tgProxyManager);
 	}
 
+	// Update can also start without this button; don't leave a stale diagnostics summary
+	// that looks like it belongs to the update log.
+	if (updateApplying && !m_diagnosticsStatus.empty()
+		&& m_diagnosticsStatus.rfind("Диагностика:", 0) == 0)
+	{
+		m_diagnosticsStatus.clear();
+	}
+
 	ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
-	ImGui::TextUnformatted("Обход блокировок Discord, YouTube и Telegram");
+	ImGui::TextUnformatted("Обход блокировок Discord, YouTube");
 	ImGui::PopStyleColor();
 	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 
@@ -656,8 +631,7 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 	if (UiCommon::BeginCard("##status_card", width, colors))
 	{
 		const float innerWidth = ImGui::GetContentRegionAvail().x;
-		const bool selectionInProgress = strategyTestState == StrategyTestState::Running
-			|| smartTuneState == SmartStrategyTuneState::Running;
+		const bool selectionInProgress = strategyTestState == StrategyTestState::Running;
 		const char* statusLabel = selectionInProgress ? "Тех. работы" : RunStatusLabel(runStatus);
 		const ImVec4 statusColor = selectionInProgress
 			? ImVec4(0.92f, 0.62f, 0.18f, 1.f)
@@ -675,8 +649,6 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 		const std::string runningStrategyLabel = [&]() -> std::string {
 			if (!running || !m_manager)
 				return {};
-			if (m_manager->IsActiveSmartStrategy())
-				return kSmartStrategyLabel;
 			if (activeStrategy >= 0)
 				return m_manager->GetStrategyLabel(activeStrategy);
 			return {};
@@ -714,20 +686,17 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 
 		if (running)
 		{
-			if (UiCommon::AccentButton("Остановить", { mainBtnW, btnH }, accents.fail, colors) && m_manager)
+			if (UiCommon::AccentButton("Остановить", { mainBtnW, btnH }, UiCommon::FixedStopAccent(), colors) && m_manager)
 				m_manager->RequestStop();
 		}
 		else if (UiCommon::AccentButton(
 			"Запустить",
 			{ mainBtnW, btnH },
-			accents.download,
+			UiCommon::FixedStartAccent(),
 			colors,
 			m_manager && !m_manager->IsOperationInFlight()) && m_manager)
 		{
-			if (smartSelected)
-				m_manager->RequestStartSmartStrategy(GameFilterModeFromIndex(m_gameFilterMode));
-			else
-				m_manager->RequestStart(m_selectedStrategy, GameFilterModeFromIndex(m_gameFilterMode));
+			m_manager->RequestStart(m_selectedStrategy, GameFilterModeFromIndex(m_gameFilterMode));
 		}
 
 		ImGui::SameLine(0.f, gap);
@@ -737,10 +706,7 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 			colors,
 			m_manager != nullptr && !m_manager->IsOperationInFlight()) && m_manager)
 		{
-			if (smartSelected)
-				m_manager->RequestStartSmartStrategy(GameFilterModeFromIndex(m_gameFilterMode));
-			else
-				m_manager->RequestStart(m_selectedStrategy, GameFilterModeFromIndex(m_gameFilterMode));
+			m_manager->RequestStart(m_selectedStrategy, GameFilterModeFromIndex(m_gameFilterMode));
 		}
 		ImGui::SameLine(0.f, gap);
 		const char* strategyTestLabel = m_manager ? m_manager->GetStrategyTestButtonLabel() : "Подбор стратегий";
@@ -748,32 +714,30 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 			m_manager->HandleStrategyTestButton(GameFilterModeFromIndex(m_gameFilterMode));
 		if (strategyTestState == StrategyTestState::Running)
 		{
-			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			{
-				ImGui::SetTooltip(
-					"Можно полностью остановить, нажав правой кнопкой мыши.");
-			}
+			UiCommon::SetItemTooltip(
+				"Можно полностью остановить, нажав правой кнопкой мыши.");
 			if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && m_manager)
 				m_manager->RequestStopStrategyTest();
 		}
 		ImGui::SameLine(0.f, gap);
-		if (m_hasSmartStrategy)
-		{
-			const char* smartTuneLabel = m_manager
-				? m_manager->GetSmartStrategyTuneButtonLabel()
-				: "Умная стратегия";
-			if (UiCommon::SecondaryButton(smartTuneLabel, { actionBtnW, btnH }, colors) && m_manager)
-				m_manager->HandleSmartStrategyTuneButton(GameFilterModeFromIndex(m_gameFilterMode));
-		}
-		else if (UiCommon::SecondaryButton("Умная стратегия", { actionBtnW, btnH }, colors))
-			AddSmartStrategy();
+		if (UiCommon::SecondaryButton(
+			m_diagnosticsRunning.load() ? "Диагностика..." : "Запустить Диагностику",
+			{ actionBtnW, btnH },
+			colors,
+			!m_diagnosticsRunning.load()))
+			StartDiagnostics();
 
 		ImGui::Dummy({ 0.f, 4.f });
+		if (!m_diagnosticsStatus.empty())
+		{
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+			ImGui::TextUnformatted(m_diagnosticsStatus.c_str());
+			ImGui::PopStyleColor();
+			ImGui::Dummy({ 0.f, 4.f });
+		}
 		if (UiCommon::SecondaryButton("Обновить проверку", { 150.f, UiMetrics::kSmallBtnHeight }, colors) && m_manager)
 		{
-			const int strategyIndex = smartSelected
-				? -1
-				: ((activeStrategy >= 0) ? activeStrategy : m_selectedStrategy);
+			const int strategyIndex = (activeStrategy >= 0) ? activeStrategy : m_selectedStrategy;
 			m_manager->RequestConnectivityCheck(strategyIndex);
 		}
 
@@ -804,9 +768,7 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 		}
 
 		const bool strategyTestRunning = strategyTestState == StrategyTestState::Running;
-		const bool smartTuneRunning = smartTuneState == SmartStrategyTuneState::Running;
 		const bool showServiceCheckLine = !strategyTestRunning
-			&& !smartTuneRunning
 			&& (checkingServices || running);
 
 		if (strategyTestRunning && m_manager)
@@ -854,23 +816,111 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 			ImGui::TextUnformatted("Тестирование завершено");
 			ImGui::PopStyleColor();
 		}
-		else if (smartTuneState == SmartStrategyTuneState::Running && m_manager)
+
+		const auto drawDiagConfirmButtons = [&](bool& askFlag, auto onYes) {
+			constexpr float kDialogW = 340.f;
+			constexpr float kBtnW = 112.f;
+			const float btnH = UiMetrics::kSmallBtnHeight;
+
+			ImGui::Dummy({ kDialogW, 0.f });
+			ImGui::Dummy({ 0.f, 14.f });
+
+			const float rowX = ImGui::GetCursorPosX();
+			if (UiCommon::SecondaryButton("Нет", { kBtnW, btnH }, colors))
+			{
+				askFlag = false;
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine(0.f, 0.f);
+			ImGui::SetCursorPosX(rowX + kDialogW - kBtnW);
+			if (UiCommon::AccentButton("Да", { kBtnW, btnH }, accents.ok, colors))
+			{
+				onYes();
+				askFlag = false;
+				ImGui::CloseCurrentPopup();
+			}
+		};
+
+		const auto pushDiagModalStyle = [&]() {
+			const bool light = UiCommon::IsLightTheme(colors);
+			const ImVec4 popupBg = light
+				? ImVec4(0.90f, 0.90f, 0.92f, 0.98f)
+				: UiCommon::WithAlpha(colors.tileBg, 0.98f);
+			ImGui::PushStyleColor(ImGuiCol_PopupBg, popupBg);
+			ImGui::PushStyleColor(ImGuiCol_Border, UiCommon::WithAlpha(colors.tileBorder, light ? 0.55f : 0.40f));
+			ImGui::PushStyleColor(ImGuiCol_TitleBg, popupBg);
+			ImGui::PushStyleColor(ImGuiCol_TitleBgActive, popupBg);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UiMetrics::kCardRadius);
+			ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, UiMetrics::kCardRadius);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 18.f, 16.f });
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UiMetrics::kCardRadius);
+			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 10.f, 8.f });
+		};
+		const auto popDiagModalStyle = []() {
+			ImGui::PopStyleVar(5);
+			ImGui::PopStyleColor(4);
+		};
+
+		if (m_askRemoveConflicts)
+			ImGui::OpenPopup("##diag_conflicts");
+		pushDiagModalStyle();
 		{
-			ImGui::Dummy({ 0.f, 4.f });
-			ImGui::PushStyleColor(ImGuiCol_Text, UiCommon::WithAlpha(accents.warn, 0.95f));
-			ImGui::Text(
-				"Умная стратегия... (%d/%d)",
-				m_manager->GetSmartStrategyTuneCurrent(),
-				m_manager->GetSmartStrategyTuneTotal());
-			ImGui::PopStyleColor();
+			const ImGuiViewport* vp = ImGui::GetMainViewport();
+			// Always: AlwaysAutoResize has size 0 on first frame; Appearing would pin the top edge to center.
+			ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 		}
-		else if (smartTuneState == SmartStrategyTuneState::Completed)
+		if (ImGui::BeginPopupModal(
+				"##diag_conflicts",
+				nullptr,
+				ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove))
 		{
-			ImGui::Dummy({ 0.f, 4.f });
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.83f, 0.69f, 0.22f, 1.f));
-			ImGui::TextUnformatted("Умная стратегия настроена");
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
+			ImGui::TextUnformatted("Найдены конфликтующие bypass-сервисы.");
 			ImGui::PopStyleColor();
+			ImGui::Dummy({ 0.f, 4.f });
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+			ImGui::TextUnformatted("Удалить их?");
+			ImGui::PopStyleColor();
+			for (const auto& s : m_pendingConflictServices)
+			{
+				ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
+				ImGui::BulletText("%s", s.c_str());
+				ImGui::PopStyleColor();
+			}
+			drawDiagConfirmButtons(m_askRemoveConflicts, [&]() {
+				ZapretDiagnostics::RemoveServices(m_pendingConflictServices);
+				AppLog::Instance().Append(LogSource::Zapret, "[Диагностика] Конфликтующие сервисы удалены.");
+			});
+			ImGui::EndPopup();
 		}
+		popDiagModalStyle();
+
+		if (m_askClearDiscordCache)
+			ImGui::OpenPopup("##diag_discord_cache");
+		pushDiagModalStyle();
+		{
+			const ImGuiViewport* vp = ImGui::GetMainViewport();
+			ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+		}
+		if (ImGui::BeginPopupModal(
+				"##diag_discord_cache",
+				nullptr,
+				ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove))
+		{
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
+			ImGui::TextUnformatted("Очистить кэш Discord?");
+			ImGui::PopStyleColor();
+			ImGui::Dummy({ 0.f, 4.f });
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+			ImGui::TextWrapped("Discord будет закрыт, папки Cache / Code Cache / GPUCache будут удалены.");
+			ImGui::PopStyleColor();
+			drawDiagConfirmButtons(m_askClearDiscordCache, [&]() {
+				ZapretDiagnostics::ClearDiscordCache();
+				AppLog::Instance().Append(LogSource::Zapret, "[Диагностика] Кэш Discord очищен.");
+			});
+			ImGui::EndPopup();
+		}
+		popDiagModalStyle();
 
 		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
 		ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
@@ -922,23 +972,20 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 		const int visibleCount = m_manager
 			? m_manager->GetVisibleStrategyCount(m_showExtraStrategies)
 			: ZapretStrategies::CountVisibleStrategies(m_showExtraStrategies);
-		ImGui::Text("(%d)", visibleCount + (m_hasSmartStrategy ? 1 : 0));
+		ImGui::Text("(%d)", visibleCount);
 		ImGui::PopStyleColor();
 
-		if ((strategyTestActive || smartTuneActive) && m_manager)
+		if (strategyTestActive && m_manager)
 		{
 			ImGui::SameLine(0.f, 10.f);
-			const float progress = smartTuneActive
-				? m_manager->GetSmartStrategyTuneProgress()
-				: m_manager->GetStrategyTestProgress();
+			const float progress = m_manager->GetStrategyTestProgress();
 			const float barY = headerRowY + (textLineH - barH) * 0.5f;
 			ImGui::SetCursorPosY(barY);
 
 			const float barWidth = ImGui::GetContentRegionAvail().x;
 			if (barWidth > 24.f)
 			{
-				const bool completed = strategyTestState == StrategyTestState::Completed
-					|| smartTuneState == SmartStrategyTuneState::Completed;
+				const bool completed = strategyTestState == StrategyTestState::Completed;
 				const ImVec4 barColor = completed
 					? ImVec4(0.83f, 0.69f, 0.22f, 0.85f)
 					: ImVec4(0.22f, 0.78f, 0.42f, 0.65f);
@@ -953,10 +1000,9 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 
 		ImGui::SetCursorPosY(headerRowY + textLineH + UiMetrics::kRowGap);
 
+		int openDetailIndex = -1;
 		DrawStrategyGrid(
 			m_selectedStrategy,
-			m_selectedSmartIndex,
-			m_hasSmartStrategy,
 			m_showExtraStrategies,
 			innerWidth,
 			colors,
@@ -965,7 +1011,17 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 			strategyTestState,
 			testingStrategyIndex,
 			m_manager,
-			tgProxyRunning);
+			tgProxyRunning,
+			&openDetailIndex);
+		if (openDetailIndex >= 0)
+		{
+			m_detailStrategyIndex = openDetailIndex;
+			m_selectedStrategy = openDetailIndex;
+			m_detailQuickTest = false;
+			if (m_manager)
+				m_manager->RememberSelectedStrategy(openDetailIndex);
+			m_view = View::Detail;
+		}
 
 		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
 		const float detailsBtnW = 88.f;
@@ -974,22 +1030,14 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 
 		ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
 		ImGui::SetCursorPosY(fileRowY + (fileRowH - ImGui::GetTextLineHeight()) * 0.5f);
-		if (smartSelected)
-		{
-			if (!smartStatus.summary.empty())
-				ImGui::Text("Файл: custom (%s)", smartStatus.summary.c_str());
-			else
-				ImGui::TextUnformatted("Файл: custom (general)");
-		}
-		else if (m_manager)
+		if (m_manager)
 			ImGui::Text("Файл: %s", m_manager->GetStrategyFileName(m_selectedStrategy).c_str());
 		else
 			ImGui::TextUnformatted("Файл: —");
 		ImGui::PopStyleColor();
 
 		ImGui::SetCursorPos({ innerWidth - detailsBtnW, fileRowY });
-		const bool canShowDetails = smartSelected
-			|| (m_manager && !m_manager->GetStrategyLabel(m_selectedStrategy).empty());
+		const bool canShowDetails = m_manager && !m_manager->GetStrategyLabel(m_selectedStrategy).empty();
 		if (UiCommon::SecondaryButton("Подробно", { detailsBtnW, fileRowH }, colors, canShowDetails) && canShowDetails)
 			m_strategyDetailsOpen = !m_strategyDetailsOpen;
 		ImGui::SetCursorPosY(fileRowY + fileRowH);
@@ -997,12 +1045,8 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 		if (m_strategyDetailsOpen && canShowDetails)
 		{
 			const StrategyDescription* description = nullptr;
-			const char* title = kSmartStrategyLabel;
-			if (smartSelected)
-			{
-				description = StrategyDescriptions::GetSmartStrategy();
-			}
-			else if (m_manager)
+			const char* title = "";
+			if (m_manager)
 			{
 				title = m_manager->GetStrategyLabel(m_selectedStrategy).c_str();
 				description = StrategyDescriptions::GetById(title);
@@ -1021,40 +1065,13 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 				ImGui::PopStyleColor();
 			}
 
-			const StrategyTestEntry* runtimeStats = smartSelected
-				? (m_manager ? m_manager->GetStore().GetResult(kSmartStrategyLabel) : nullptr)
-				: (m_manager ? m_manager->GetStrategyResult(m_selectedStrategy) : nullptr);
+			const StrategyTestEntry* runtimeStats = m_manager
+				? m_manager->GetStrategyResult(m_selectedStrategy)
+				: nullptr;
 			DrawStrategyRuntimeStats(runtimeStats, innerWidth, colors);
-
-			if (smartSelected && !smartStatus.explanation.empty())
-			{
-				ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
-				ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
-				ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + innerWidth - UiMetrics::kCardPad * 2.f);
-				ImGui::TextUnformatted(smartStatus.explanation.c_str());
-				ImGui::PopTextWrapPos();
-				ImGui::PopStyleColor();
-			}
 		}
 
-		if (running && m_manager && m_manager->IsActiveSmartStrategy() && !smartSelected)
-		{
-			ImGui::Dummy({ 0.f, 4.f });
-			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
-			if (!smartStatus.summary.empty())
-			{
-				ImGui::TextWrapped(
-					"Сейчас работает Умная стратегия (%s). Выберите карточку или нажмите «Перезапуск».",
-					smartStatus.summary.c_str());
-			}
-			else
-			{
-				ImGui::TextUnformatted(
-					"Сейчас работает Умная стратегия. Выберите карточку или нажмите «Перезапуск».");
-			}
-			ImGui::PopStyleColor();
-		}
-		else if (running && activeStrategy >= 0 && !smartSelected && activeStrategy != m_selectedStrategy)
+		if (running && activeStrategy >= 0 && activeStrategy != m_selectedStrategy)
 		{
 			ImGui::Dummy({ 0.f, 4.f });
 			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
@@ -1076,18 +1093,6 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 			ApplyAutoSelectStrategyChange(running, activeStrategy);
 		}
 
-		if (m_autoSelect)
-		{
-			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
-			ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width - UiMetrics::kCardPad * 2.f);
-			ImGui::TextUnformatted(
-				"При одновременной недоступности Discord и YouTube (~20 сек) переключится на стратегию "
-				"с большим временем работы и меньшим числом сбоев; иначе — следующая по списку. "
-				"Пока обход работает, стратегия не меняется.");
-			ImGui::PopTextWrapPos();
-			ImGui::PopStyleColor();
-		}
-
 		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
 		if (UiCommon::StyledCheckbox("Отобразить дополнительные стратегии", &m_showExtraStrategies, colors))
 		{
@@ -1096,12 +1101,11 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 			ClampSelectedStrategy();
 		}
 
-		if (m_manager && !m_manager->GetStore().GetLastStrategy().empty())
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+		if (UiCommon::StyledCheckbox("Упрощенное тестирование", &m_quickStrategyTest, colors))
 		{
-			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
-			ImGui::Text("Последняя стратегия: %s", m_manager->GetStore().GetLastStrategy().c_str());
-			ImGui::Text("Файл: settings.ini [zapret_results]");
-			ImGui::PopStyleColor();
+			if (m_appSettings)
+				m_appSettings->SetQuickStrategyTest(m_quickStrategyTest);
 		}
 	}
 	UiCommon::EndCard();
@@ -1110,12 +1114,308 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 	ImGui::PopStyleVar();
 }
 
-void UiAntiZapretPage::AddSmartStrategy()
+void UiAntiZapretPage::DrawDetailView(ThemeManager& theme, FontManager& fonts, float width)
 {
-	if (m_hasSmartStrategy)
+	const UiThemeColors colors = theme.GetColors();
+	const UiAccentColors accents = theme.GetAccents();
+	if (!m_manager || m_detailStrategyIndex < 0)
+	{
+		m_view = View::List;
 		return;
+	}
 
-	m_hasSmartStrategy = true;
-	if (m_manager)
-		m_manager->SetSmartStrategyEnabled(true);
+	const int strategyIndex = m_detailStrategyIndex;
+	const std::string label = m_manager->GetStrategyLabel(strategyIndex);
+	const std::string fileName = m_manager->GetStrategyFileName(strategyIndex);
+	const StrategyDescription* description = StrategyDescriptions::GetById(label.c_str());
+	if (!description)
+		description = StrategyDescriptions::GetById(fileName.c_str());
+	const StrategyTestEntry* result = m_manager->GetStrategyResult(strategyIndex);
+	const std::vector<StrategyTargetResultView> targets = m_manager->GetStrategyTargetResults(strategyIndex);
+	const int activeStrategy = m_manager->GetActiveStrategyIndex();
+	const bool running = m_manager->GetCachedRunStatus() == ZapretRunStatus::Running
+		|| m_manager->GetCachedRunStatus() == ZapretRunStatus::Starting;
+
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.f, UiMetrics::kRowGap));
+
+	if (UiCommon::SecondaryButton("<- Назад", ImVec2(100.f, UiMetrics::kSmallBtnHeight), colors))
+	{
+		m_view = View::List;
+		ImGui::PopStyleVar();
+		return;
+	}
+	ImGui::SameLine(0.f, UiMetrics::kGridGap);
+	ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+	ImGui::TextUnformatted("Антизапрет  >  Стратегия");
+	ImGui::PopStyleColor();
+
+	ImGui::Dummy(ImVec2(0.f, 4.f));
+	UiCommon::PageTitle(fonts, 0xE774, label.c_str(), fileName.c_str(), colors);
+
+	const float actionBtnW = 120.f;
+	const float testBtnW = 140.f;
+	const bool testBusy = m_manager->GetStrategyTestState() == StrategyTestState::Running
+		|| m_manager->GetSmartStrategyTuneState() == SmartStrategyTuneState::Running;
+	if (UiCommon::AccentButton(
+			"Запустить",
+			ImVec2(actionBtnW, UiMetrics::kSmallBtnHeight),
+			UiCommon::FixedStartAccent(),
+			colors,
+			!m_manager->IsOperationInFlight() && !testBusy)
+		&& m_manager)
+	{
+		m_selectedStrategy = strategyIndex;
+		m_manager->RememberSelectedStrategy(strategyIndex);
+		m_manager->RequestStart(strategyIndex, GameFilterModeFromIndex(m_gameFilterMode));
+	}
+	ImGui::SameLine(0.f, UiMetrics::kGridGap);
+	if (UiCommon::SecondaryButton(
+			"Запустить тест",
+			ImVec2(testBtnW, UiMetrics::kSmallBtnHeight),
+			colors,
+			!m_manager->IsOperationInFlight() && !testBusy)
+		&& m_manager)
+	{
+		m_selectedStrategy = strategyIndex;
+		m_manager->RememberSelectedStrategy(strategyIndex);
+		m_manager->RequestSingleStrategyTest(
+			strategyIndex,
+			GameFilterModeFromIndex(m_gameFilterMode),
+			m_detailQuickTest);
+	}
+	ImGui::SameLine(0.f, UiMetrics::kGridGap);
+	DetailBesideButtonCheckbox("Упрощенное тестирование", &m_detailQuickTest, colors);
+
+	ImGui::Dummy(ImVec2(0.f, UiMetrics::kSectionGap));
+
+	if (UiCommon::BeginCard("##strategy_detail_info", width, colors))
+	{
+		UiCommon::SectionHeader(label.c_str(), colors);
+		ImGui::Dummy(ImVec2(0.f, 4.f));
+		UiCommon::InfoLine("Файл", fileName.c_str(), colors);
+		char statusBuf[128] = {};
+		if (activeStrategy == strategyIndex && running)
+			snprintf(statusBuf, sizeof statusBuf, "Активна сейчас");
+		else if (activeStrategy == strategyIndex)
+			snprintf(statusBuf, sizeof statusBuf, "Выбрана");
+		else
+			snprintf(statusBuf, sizeof statusBuf, "Не активна");
+		UiCommon::InfoLine("Статус", statusBuf, colors);
+
+		if (description)
+		{
+			ImGui::Dummy(ImVec2(0.f, UiMetrics::kRowGap));
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+			ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width - UiMetrics::kCardPad * 2.f);
+			ImGui::TextUnformatted(description->summary);
+			ImGui::PopTextWrapPos();
+			ImGui::PopStyleColor();
+		}
+	}
+	UiCommon::EndCard();
+	UiCommon::CardGap();
+
+	if (UiCommon::BeginCard("##strategy_detail_runtime", width, colors))
+	{
+		UiCommon::SectionHeader("Статистика работы", colors);
+		ImGui::Dummy(ImVec2(0.f, 4.f));
+		char runtimeBuffer[64] = {};
+		FormatRuntimeDuration(result ? result->runtimeSec : 0, runtimeBuffer, sizeof runtimeBuffer);
+		UiCommon::InfoLine("Накопленное время", runtimeBuffer, colors);
+		char dualBuf[32] = {};
+		snprintf(dualBuf, sizeof dualBuf, "%d", result ? result->providerDualOutageCount : 0);
+		UiCommon::InfoLine("Сбои провайдера (D+Y)", dualBuf, colors);
+	}
+	UiCommon::EndCard();
+	UiCommon::CardGap();
+
+	if (UiCommon::BeginCard("##strategy_detail_test", width, colors))
+	{
+		UiCommon::SectionHeader("Последний тест", colors);
+		ImGui::Dummy(ImVec2(0.f, 4.f));
+		if (!result)
+		{
+			UiCommon::CaptionText("Стратегия ещё не тестировалась.", colors, width);
+		}
+		else
+		{
+			char modeBuf[48] = {};
+			snprintf(modeBuf, sizeof modeBuf, "%s", result->fullTest ? "Полный (standard)" : "Упрощенный");
+			UiCommon::InfoLine("Режим", modeBuf, colors);
+
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+			ImGui::TextUnformatted("Сервисы");
+			ImGui::PopStyleColor();
+			ImGui::SameLine(0.f, 12.f);
+
+			auto drawSvc = [&](const char* name, bool ok, const ImVec4& brand)
+			{
+				ImGui::PushStyleColor(ImGuiCol_Text, brand);
+				ImGui::TextUnformatted(name);
+				ImGui::PopStyleColor();
+				ImGui::SameLine(0.f, 4.f);
+				ImGui::PushStyleColor(ImGuiCol_Text, ok ? accents.ok : accents.fail);
+				ImGui::TextUnformatted(ok ? "OK" : "FAIL");
+				ImGui::PopStyleColor();
+			};
+
+			drawSvc("Discord", result->discordOk, accents.discord);
+			ImGui::SameLine(0.f, 10.f);
+			drawSvc("YouTube", result->youtubeOk, accents.youtube);
+			ImGui::SameLine(0.f, 10.f);
+			drawSvc("Telegram", result->telegramOk, accents.telegram);
+
+			char pingBuf[48] = {};
+			if (result->pingMs >= 0)
+				snprintf(pingBuf, sizeof pingBuf, "%d ms", result->pingMs);
+			else
+				snprintf(pingBuf, sizeof pingBuf, "—");
+			UiCommon::InfoLine("Пинг", pingBuf, colors);
+
+			if (result->fullTest || result->httpOk > 0 || result->httpErr > 0)
+			{
+				char scoreBuf[96] = {};
+				snprintf(
+					scoreBuf,
+					sizeof scoreBuf,
+					"HTTP OK: %d  ERR: %d  |  Ping OK: %d  Fail: %d",
+					result->httpOk,
+					result->httpErr,
+					result->pingOk,
+					result->pingFail);
+				UiCommon::CaptionText(scoreBuf, colors, width);
+			}
+		}
+	}
+	UiCommon::EndCard();
+	UiCommon::CardGap();
+
+	if (UiCommon::BeginCard("##strategy_detail_targets", width, colors))
+	{
+		UiCommon::SectionHeader("Цели теста", colors);
+		ImGui::Dummy(ImVec2(0.f, 4.f));
+		if (targets.empty())
+		{
+			UiCommon::CaptionText(
+				"Нет данных теста. Нажмите «Запустить тест» или выполните подбор стратегий.",
+				colors,
+				width);
+		}
+		else if (ImGui::BeginTable(
+					 "##strategy_targets",
+					 3,
+					 ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp))
+		{
+			ImGui::TableSetupColumn("Цель", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("Результат", ImGuiTableColumnFlags_WidthFixed, 100.f);
+			ImGui::TableSetupColumn("Статус", ImGuiTableColumnFlags_WidthFixed, 64.f);
+			ImGui::TableHeadersRow();
+			for (const StrategyTargetResultView& row : targets)
+			{
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+
+				ImVec4 nameColor = colors.textPrimary;
+				if (row.name.find("Discord") != std::string::npos)
+					nameColor = accents.discord;
+				else if (row.name.find("YouTube") != std::string::npos)
+					nameColor = accents.youtube;
+				else if (row.name.find("Telegram") != std::string::npos)
+					nameColor = accents.telegram;
+				ImGui::PushStyleColor(ImGuiCol_Text, nameColor);
+				ImGui::TextUnformatted(row.name.c_str());
+				ImGui::PopStyleColor();
+
+				ImGui::TableSetColumnIndex(1);
+				const bool detailIsStatus = (row.detail == "OK" || row.detail == "FAIL");
+				if (detailIsStatus)
+					ImGui::PushStyleColor(ImGuiCol_Text, row.ok ? accents.ok : accents.fail);
+				else if (row.isPing && row.ok)
+					ImGui::PushStyleColor(ImGuiCol_Text, accents.ok);
+				else if (row.isPing && !row.ok)
+					ImGui::PushStyleColor(ImGuiCol_Text, accents.fail);
+				else
+					ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
+				ImGui::TextUnformatted(row.detail.c_str());
+				ImGui::PopStyleColor();
+
+				ImGui::TableSetColumnIndex(2);
+				ImGui::PushStyleColor(ImGuiCol_Text, row.ok ? accents.ok : accents.fail);
+				ImGui::TextUnformatted(row.ok ? "OK" : "FAIL");
+				ImGui::PopStyleColor();
+			}
+			ImGui::EndTable();
+		}
+	}
+	UiCommon::EndCard();
+
+	if (description)
+	{
+		UiCommon::CardGap();
+		if (UiCommon::BeginCard("##strategy_detail_desc", width, colors))
+		{
+			const float innerWidth = ImGui::GetContentRegionAvail().x;
+			DrawStrategyDetailsPanel(description, "Описание", innerWidth, colors);
+		}
+		UiCommon::EndCard();
+	}
+	else
+	{
+		UiCommon::CardGap();
+		if (UiCommon::BeginCard("##strategy_detail_desc", width, colors))
+		{
+			UiCommon::SectionHeader("Описание", colors);
+			ImGui::Dummy(ImVec2(0.f, 4.f));
+			UiCommon::CaptionText(
+				"Стратегия из файла (описание недоступно). Добавьте запись в strategy_descriptions.cpp.",
+				colors,
+				width);
+		}
+		UiCommon::EndCard();
+	}
+
+	ImGui::Dummy(ImVec2(0.f, UiMetrics::kCardGap));
+	ImGui::PopStyleVar();
+}
+
+void UiAntiZapretPage::StartDiagnostics()
+{
+	if (m_diagnosticsRunning.load())
+		return;
+	m_diagnosticsRunning.store(true);
+	m_diagnosticsStatus = "Диагностика...";
+	m_askClearDiscordCache = false;
+	m_askRemoveConflicts = false;
+	std::thread([this]() {
+		auto report = ZapretDiagnostics::Run();
+		{
+			std::lock_guard<std::mutex> lock(m_diagnosticsMutex);
+			m_diagnosticsReport = std::move(report);
+			m_diagnosticsPending = true;
+		}
+		m_diagnosticsRunning.store(false);
+	}).detach();
+}
+
+void UiAntiZapretPage::ApplyPendingDiagnostics()
+{
+	ZapretDiagnostics::Report report;
+	{
+		std::lock_guard<std::mutex> lock(m_diagnosticsMutex);
+		if (!m_diagnosticsPending)
+			return;
+		report = std::move(m_diagnosticsReport);
+		m_diagnosticsPending = false;
+	}
+	for (const auto& line : report.lines)
+		AppLog::Instance().Append(LogSource::Zapret, std::string("[Диагностика] ") + line.text);
+	char buf[128];
+	snprintf(buf, sizeof buf, "Диагностика: ошибок %d, предупреждений %d", report.errorCount, report.warnCount);
+	m_diagnosticsStatus = buf;
+	if (!report.conflictingServices.empty())
+	{
+		m_pendingConflictServices = report.conflictingServices;
+		m_askRemoveConflicts = true;
+	}
+	m_askClearDiscordCache = report.askClearDiscordCache;
 }

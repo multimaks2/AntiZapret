@@ -314,8 +314,7 @@ namespace
 
 		ImGui::PopStyleVar();
 		ImGui::PopStyleColor(4);
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Удалить");
+		UiCommon::SetItemTooltip("Удалить");
 		return pressed;
 	}
 
@@ -437,6 +436,7 @@ namespace
 		const char* scope,
 		const char* serviceId,
 		uint32_t iconCode,
+		bool brandIcon,
 		const char* title,
 		const char* description,
 		bool& enabled,
@@ -454,7 +454,8 @@ namespace
 
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 		const ImVec2 rowMax = { pos.x + width, pos.y + rowH };
-		drawList->AddRectFilled(pos, rowMax, ImGui::GetColorU32(colors.navActive), UiMetrics::kCardRadius);
+		// Quiet surface (tile), not navActive — dropdown sits on this and must not fight a loud fill.
+		drawList->AddRectFilled(pos, rowMax, ImGui::GetColorU32(colors.tileBg), UiMetrics::kCardRadius);
 		drawList->AddRect(
 			pos,
 			rowMax,
@@ -478,14 +479,14 @@ namespace
 			if (iconHovered)
 			{
 				ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-				ImGui::SetTooltip("Открыть сайт\n%s", openUrl);
+				UiCommon::SetItemTooltip("Открыть сайт\n%s", openUrl);
 			}
 			if (ImGui::IsItemClicked())
 				OpenUrlInDefaultBrowser(openUrl);
 		}
 
 		const std::string glyph = IconUtf8(iconCode);
-		ImFont* iconFont = fonts.GetIconFont();
+		ImFont* iconFont = brandIcon ? fonts.GetBrandFont() : fonts.GetIconFont();
 		if (iconFont && !glyph.empty())
 		{
 			const float iconH = iconFont->LegacySize;
@@ -742,6 +743,7 @@ void UiRoutingPage::DrawServiceRoutes(FontManager& fonts, float width, const UiT
 			"services",
 			service.id.c_str(),
 			service.icon,
+			service.brandIcon,
 			service.name.c_str(),
 			service.description.c_str(),
 			service.enabled,

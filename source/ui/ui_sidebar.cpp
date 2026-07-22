@@ -2,6 +2,9 @@
 
 #include "gfx/font_manager.h"
 #include "gfx/theme_manager.h"
+#include "ui/ui_common.h"
+
+#include "imgui_internal.h"
 
 #include <Windows.h>
 #include <algorithm>
@@ -108,15 +111,16 @@ float UiSidebar::Draw(
 	const float btnWidth = m_width - kPad * 2.f - stripRightInset;
 	const float collapseMix = CollapseMix();
 
+	using IconSet = NavItem::IconSet;
 	static const NavItem kNavItems[] = {
-		{ 0xE80F, "Главная", UiTab::Home },
-		{ 0xE774, "Антизапрет", UiTab::AntiZapret },
-		{ 0xE8BD, "TG WS Proxy", UiTab::TgWsProxy },
-		{ 0xE705, "VPN", UiTab::Vpn },
-		{ 0xE945, "Маршрутизация", UiTab::Routing },
-		{ 0xE756, "Консоль", UiTab::Console },
-		{ 0xE713, "Настройки", UiTab::Settings },
-		{ 0xE946, "О приложении", UiTab::About },
+		{ 0xf015, IconSet::Solid, "Главная", UiTab::Home },
+		{ 0xf3ed, IconSet::Solid, "Антизапрет", UiTab::AntiZapret },
+		{ 0xf2c6, IconSet::Brands, "TG WS Proxy", UiTab::TgWsProxy },
+		{ 0xf0ac, IconSet::Solid, "VPN", UiTab::Vpn },
+		{ 0xf4d7, IconSet::Solid, "Маршрутизация", UiTab::Routing },
+		{ 0xf120, IconSet::Solid, "Консоль", UiTab::Console },
+		{ 0xf013, IconSet::Solid, "Настройки", UiTab::Settings },
+		{ 0xf05a, IconSet::Solid, "О приложении", UiTab::About },
 	};
 
 	for (int i = 0; i < static_cast<int>(std::size(kNavItems)); ++i)
@@ -128,7 +132,7 @@ float UiSidebar::Draw(
 		else if (kNavItems[i].tab == UiTab::TgWsProxy)
 			versionInfo = &tgWsProxyVersion;
 
-		DrawNavButton(kNavItems[i], pos, btnWidth, kBtnHeight, collapseMix, activeTab, colors, accents, iconFont, versionInfo);
+		DrawNavButton(kNavItems[i], pos, btnWidth, kBtnHeight, collapseMix, activeTab, colors, accents, fonts, versionInfo);
 	}
 
 	const float toggleY = origin.y + height - kBtnHeight - kBottom;
@@ -153,7 +157,7 @@ float UiSidebar::Draw(
 	}
 
 	const uint32_t toggleIcon = m_collapsed ? kIconChevronRight : kIconChevronLeft;
-	DrawMdl2Icon(
+	DrawGlyphIcon(
 		ImGui::GetWindowDrawList(),
 		iconFont,
 		togglePos.x + 10.f,
@@ -177,6 +181,10 @@ float UiSidebar::Draw(
 
 	const ImVec2 stripMin = { stripAnchor.x + kRightStripOffsetX, stripAnchor.y };
 	const ImVec2 stripMax = { stripMin.x + kRightStripWidth, stripAnchor.y + height };
+	// Foreground so the strip sits above MainArea; when a *modal* is open, also paint
+	// ModalWindowDimBg on top so the strip matches the dimmed workspace (otherwise it
+	// stays bright and "cuts" through the overlay). Context menus / combo popups must
+	// not dim — they are not modals.
 	ImDrawList* overlayDrawList = ImGui::GetForegroundDrawList();
 	overlayDrawList->PushClipRect(sidebarMin, stripMax, true);
 	overlayDrawList->AddRectFilled(
@@ -185,6 +193,15 @@ float UiSidebar::Draw(
 		ToU32(colors.bg),
 		kRightStripRadius,
 		ImDrawFlags_RoundCornersLeft);
+	if (ImGui::GetTopMostPopupModal() != nullptr)
+	{
+		overlayDrawList->AddRectFilled(
+			stripMin,
+			stripMax,
+			ImGui::GetColorU32(ImGuiCol_ModalWindowDimBg),
+			kRightStripRadius,
+			ImDrawFlags_RoundCornersLeft);
+	}
 	overlayDrawList->PopClipRect();
 
 	activeTab = m_page;
@@ -234,7 +251,7 @@ void UiSidebar::DrawNavButton(
 	UiTab activeTab,
 	const UiThemeColors& colors,
 	const UiAccentColors& accents,
-	ImFont* iconFont,
+	FontManager& fonts,
 	const UiSidebarVersionInfo* versionInfo)
 {
 	ImGui::SetCursorScreenPos(pos);
@@ -263,7 +280,20 @@ void UiSidebar::DrawNavButton(
 
 	const bool active = m_page == item.tab;
 	const ImVec4 textColor = active ? colors.textPrimary : colors.textMuted;
-	DrawMdl2Icon(drawList, iconFont, rectMin.x + 10.f, rectMin.y + 11.f, item.iconCode, ToU32(textColor), kIconSize);
+	ImFont* glyphFont = fonts.GetIconFont();
+	switch (item.iconSet)
+	{
+	case NavItem::IconSet::Solid:
+		glyphFont = fonts.GetSolidFont();
+		break;
+	case NavItem::IconSet::Brands:
+		glyphFont = fonts.GetBrandFont();
+		break;
+	case NavItem::IconSet::Mdl2:
+	default:
+		break;
+	}
+	DrawGlyphIcon(drawList, glyphFont, rectMin.x + 10.f, rectMin.y + 11.f, item.iconCode, ToU32(textColor), kIconSize);
 
 	const float labelAlpha = 1.f - collapseMix;
 	if (labelAlpha > 0.01f)
@@ -291,8 +321,8 @@ void UiSidebar::DrawNavButton(
 			drawList->AddCircleFilled(lampCenter, kStatusDotRadius, WithAlpha(statusColor, collapseMix));
 		}
 
-		// Expanded sidebar: version text only (top-right).
-		if (labelAlpha > 0.01f && !versionInfo->version.empty())
+		// Expanded sidebar: version text only (top-right). Hide when this tab is open — page title shows it.
+		if (labelAlpha > 0.01f && !versionInfo->version.empty() && item.tab != activeTab)
 		{
 			ImFont* font = ImGui::GetFont();
 			const float versionFontSize = ImGui::GetFontSize() * kVersionFontScale;
@@ -311,7 +341,7 @@ void UiSidebar::DrawNavButton(
 	}
 }
 
-void UiSidebar::DrawMdl2Icon(
+void UiSidebar::DrawGlyphIcon(
 	ImDrawList* drawList,
 	ImFont* iconFont,
 	float x,
@@ -345,17 +375,7 @@ ImU32 UiSidebar::ToU32(const ImVec4& color, float alpha)
 
 ImU32 UiSidebar::StatusColor(ComponentUpdateStatus status, const UiThemeColors& colors, const UiAccentColors& accents)
 {
-	switch (status)
-	{
-	case ComponentUpdateStatus::UpToDate:
-		return ToU32(accents.ok);
-	case ComponentUpdateStatus::Checking:
-	case ComponentUpdateStatus::UpdateAvailable:
-		return ToU32(accents.warn);
-	case ComponentUpdateStatus::Unknown:
-	case ComponentUpdateStatus::Error:
-		return ToU32(accents.fail);
-	default:
-		return WithAlpha(ToU32(colors.textMuted), 0.6f);
-	}
+	(void)colors;
+	(void)accents;
+	return ToU32(UiCommon::FixedVersionStatusAccent(status));
 }

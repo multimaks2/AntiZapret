@@ -1,13 +1,17 @@
 #include "ui/ui_console_page.h"
 
 #include "app/app_log.h"
+#include "app/app_settings.h"
 #include "gfx/font_manager.h"
 #include "gfx/theme_manager.h"
 #include "ui/ui_common.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 
 #include <Windows.h>
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <string>
@@ -31,11 +35,11 @@ namespace
 	{
 		switch (source)
 		{
-		case LogSource::Zapret: return 0xE774;
-		case LogSource::Telegram: return 0xE8BD;
-		case LogSource::VpnRouting: return 0xE705;
+		case LogSource::Zapret: return 0xf3ed;     // FA solid: shield-halved
+		case LogSource::Telegram: return 0xf2c6;   // FA brands: telegram
+		case LogSource::VpnRouting: return 0xf0ac; // FA solid: globe
 		}
-		return 0xE756;
+		return 0xf120; // FA solid: terminal
 	}
 
 	const char* SourceTag(LogSource source)
@@ -71,9 +75,28 @@ namespace
 
 	std::string FormatLogLine(const LogEntry& entry)
 	{
-		return IconUtf8(SourceTabIcon(entry.source)) + "  "
-			+ SourceTag(entry.source) + "  "
-			+ FormatTime(entry.time) + "  " + entry.text;
+		std::string action = entry.action;
+		std::string result = entry.result;
+		if (action.empty())
+			AppLog::ParseActionResult(entry.text, action, result);
+		if (action.empty())
+			action = entry.text;
+
+		std::string line = IconUtf8(SourceTabIcon(entry.source));
+		if (!line.empty())
+			line += " ";
+		line += SourceTag(entry.source);
+		line += " [";
+		line += FormatTime(entry.time);
+		line += "] [";
+		line += action;
+		line += "]";
+		if (!result.empty())
+		{
+			line += " : ";
+			line += result;
+		}
+		return line;
 	}
 
 	bool DrawFilterButton(const char* label, bool selected, const UiThemeColors& colors)
@@ -100,11 +123,89 @@ void UiConsolePage::SetFilterFromTab(UiTab tab)
 	m_filter = FilterForSidebarTab(tab);
 }
 
+void UiConsolePage::RebuildDisplayBuffer(const std::vector<LogEntry>& entries)
+{
+	std::string text;
+	text.reserve(entries.size() * 96);
+	for (size_t i = 0; i < entries.size(); ++i)
+	{
+		if (i > 0)
+			text += '\n';
+		text += FormatLogLine(entries[i]);
+	}
+
+	m_displayBuf.assign(text.begin(), text.end());
+	m_displayBuf.push_back('\0');
+	m_cachedCount = entries.size();
+	m_cachedFilter = m_filter;
+	m_cachedTail = entries.empty() ? std::string() : entries.back().text;
+}
+
+void UiConsolePage::ApplyLogInertiaScroll(ImGuiWindow* logWindow, float wheelCaptured, float wheelMultiplier)
+{
+	if (!logWindow)
+		return;
+
+	const float deltaTime = ImGui::GetIO().DeltaTime;
+	const float maxScroll = logWindow->ScrollMax.y;
+
+	if (!m_logScrollReady)
+	{
+		m_logScrollY = logWindow->Scroll.y;
+		m_logScrollDisplay = logWindow->Scroll.y;
+		m_logScrollVelocity = 0.f;
+		m_logScrollReady = true;
+	}
+
+	if (wheelCaptured != 0.f)
+	{
+		// Ignore ImGui's NewFrame instant jump — keep our own scroll and add inertia.
+		m_autoScroll = false;
+		m_logScrollVelocity -= wheelCaptured * 220.f * wheelMultiplier;
+	}
+
+	if (m_autoScroll && wheelCaptured == 0.f && std::fabs(m_logScrollVelocity) < 0.5f)
+	{
+		m_logScrollY = maxScroll;
+		m_logScrollDisplay = maxScroll;
+		m_logScrollVelocity = 0.f;
+		ImGui::SetScrollY(logWindow, maxScroll);
+		return;
+	}
+
+	if (std::fabs(m_logScrollVelocity) > 0.5f)
+	{
+		m_logScrollY += m_logScrollVelocity * deltaTime;
+		m_logScrollVelocity *= expf(-deltaTime * 7.f);
+	}
+
+	m_logScrollY = (std::max)(0.f, (std::min)(m_logScrollY, maxScroll));
+	if (m_logScrollY <= 0.f || m_logScrollY >= maxScroll)
+		m_logScrollVelocity = 0.f;
+
+	const float smoothK = 1.f - expf(-deltaTime * 14.f);
+	m_logScrollDisplay += (m_logScrollY - m_logScrollDisplay) * smoothK;
+	if (std::fabs(m_logScrollY - m_logScrollDisplay) < 0.25f)
+		m_logScrollDisplay = m_logScrollY;
+	m_logScrollDisplay = (std::max)(0.f, (std::min)(m_logScrollDisplay, maxScroll));
+
+	// Must run before InputTextMultiline draws (it snapshots Scroll.y at begin).
+	ImGui::SetScrollY(logWindow, m_logScrollDisplay);
+
+	if (maxScroll > 0.f
+		&& m_logScrollY >= maxScroll - 1.f
+		&& std::fabs(m_logScrollVelocity) < 0.5f)
+		m_autoScroll = true;
+}
+
 void UiConsolePage::DrawContent(ThemeManager& theme, FontManager& fonts, float width)
 {
+	(void)fonts;
 	const UiThemeColors colors = theme.GetColors();
 
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, UiMetrics::kRowGap });
+	const float contentStartY = ImGui::GetCursorPosY();
+
 	UiCommon::PageTitle(
 		fonts,
 		0xE756,
@@ -141,13 +242,25 @@ void UiConsolePage::DrawContent(ThemeManager& theme, FontManager& fonts, float w
 
 	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 
-	const float logHeight = ImGui::GetContentRegionAvail().y - UiMetrics::kCardGap;
+	// Fill the page viewport — do not use GetContentRegionAvail().y (it grows with custom page scroll).
+	const float headerUsed = ImGui::GetCursorPosY() - contentStartY;
+	const float logAreaH = (std::max)(
+		120.f,
+		ImGui::GetWindowHeight() - headerUsed - ImGui::GetStyle().WindowPadding.y - UiMetrics::kCardGap);
+
 	if (UiCommon::BeginCard("##console_log", width, colors))
 	{
 		const std::vector<LogEntry> entries = AppLog::Instance().Snapshot(m_filter);
 
 		if (entries.empty())
 		{
+			m_displayBuf.clear();
+			m_displayBuf.push_back('\0');
+			m_cachedCount = 0;
+			m_cachedTail.clear();
+			m_logScrollReady = false;
+			m_logScrollVelocity = 0.f;
+			m_autoScroll = true;
 			UiCommon::CaptionText(
 				"Логов пока нет. Сообщения появятся при запуске сервисов и изменении настроек.",
 				colors,
@@ -155,44 +268,72 @@ void UiConsolePage::DrawContent(ThemeManager& theme, FontManager& fonts, float w
 		}
 		else
 		{
-			std::string body;
-			body.reserve(entries.size() * 64);
-			for (const LogEntry& entry : entries)
+			const std::string tail = entries.back().text;
+			if (m_displayBuf.empty()
+				|| m_cachedCount != entries.size()
+				|| m_cachedFilter != m_filter
+				|| m_cachedTail != tail)
 			{
-				body += FormatLogLine(entry);
-				body += '\n';
+				RebuildDisplayBuffer(entries);
 			}
-
-			std::vector<char> buffer(body.begin(), body.end());
-			buffer.push_back('\0');
 
 			const bool light = UiCommon::IsLightTheme(colors);
 			const ImVec4 consoleBg = light
 				? ImVec4(0.92f, 0.92f, 0.94f, 1.f)
 				: ImVec4(colors.inputBg.x, colors.inputBg.y, colors.inputBg.z, 1.f);
-			const ImVec4 consoleText = colors.textPrimary;
+
+			const float innerWidth = ImGui::GetContentRegionAvail().x;
+			const float innerHeight = (std::max)(96.f, logAreaH - UiMetrics::kCardPad * 2.f - 4.f);
+
 			ImGui::PushStyleColor(ImGuiCol_FrameBg, consoleBg);
 			ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, consoleBg);
 			ImGui::PushStyleColor(ImGuiCol_FrameBgActive, consoleBg);
-			ImGui::PushStyleColor(ImGuiCol_Text, consoleText);
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
 			ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UiMetrics::kCardRadius);
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, { 8.f, 8.f });
-			const float innerWidth = ImGui::GetContentRegionAvail().x;
-			const float innerHeight = logHeight > 120.f ? logHeight - 32.f : 120.f;
-			ImGui::InputTextMultiline(
-				"##console_output",
-				buffer.data(),
-				buffer.size(),
-				{ innerWidth, innerHeight },
-				ImGuiInputTextFlags_ReadOnly);
-			if (m_autoScroll && ImGui::IsItemVisible())
+
+			ImGuiWindow* parentBefore = ImGui::GetCurrentWindow();
+			char childName[256] = {};
+			ImFormatString(childName, IM_ARRAYSIZE(childName), "%s/%s", parentBefore->Name, "##console_log_text");
+
+			// Steal wheel for our inertia. ImGui NewFrame may already have jumped Scroll —
+			// we overwrite it below before InputText snapshots Scroll.y for drawing.
+			const ImVec2 logMin = ImGui::GetCursorScreenPos();
+			const ImVec2 logMax = { logMin.x + innerWidth, logMin.y + innerHeight };
+			ImGuiIO& io = ImGui::GetIO();
+			const bool pointerOverLog = io.MousePos.x >= logMin.x && io.MousePos.x < logMax.x
+				&& io.MousePos.y >= logMin.y && io.MousePos.y < logMax.y;
+			const float wheelCaptured = pointerOverLog ? io.MouseWheel : 0.f;
+			if (pointerOverLog)
 			{
-				const float scrollMax = ImGui::GetScrollMaxY();
-				if (scrollMax > 0.f)
-					ImGui::SetScrollY(scrollMax);
+				io.MouseWheel = 0.f;
+				io.MouseWheelH = 0.f;
 			}
-			if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.f)
-				m_autoScroll = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 2.f;
+
+			ImGuiWindow* logWindow = ImGui::FindWindowByName(childName);
+			ApplyLogInertiaScroll(logWindow, wheelCaptured, AppSettings::kDefaultScrollMultiplier);
+
+			ImGui::InputTextMultiline(
+				"##console_log_text",
+				m_displayBuf.data(),
+				m_displayBuf.size(),
+				{ innerWidth, innerHeight },
+				ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_WordWrap);
+
+			// Sync when user drags the scrollbar (InputText owns that interaction).
+			logWindow = ImGui::FindWindowByName(childName);
+			if (logWindow)
+			{
+				const ImGuiID scrollId = ImGui::GetWindowScrollbarID(logWindow, ImGuiAxis_Y);
+				if (GImGui->ActiveId == scrollId || GImGui->ActiveIdPreviousFrame == scrollId)
+				{
+					m_logScrollY = logWindow->Scroll.y;
+					m_logScrollDisplay = logWindow->Scroll.y;
+					m_logScrollVelocity = 0.f;
+					m_autoScroll = logWindow->Scroll.y >= logWindow->ScrollMax.y - 2.f;
+				}
+			}
+
 			ImGui::PopStyleVar(2);
 			ImGui::PopStyleColor(4);
 		}

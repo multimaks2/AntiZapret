@@ -260,6 +260,13 @@ bool ProbeTelegram()
 	return ProbeUrl("https://kws2.web.telegram.org", 2500);
 }
 
+bool ProbeHttpsUrl(const char* url, int timeoutMs)
+{
+	if (!url || url[0] == '\0')
+		return false;
+	return ProbeUrl(url, static_cast<DWORD>(timeoutMs > 0 ? timeoutMs : 5000));
+}
+
 bool ProbeTelegramMtProxy(const char* host, int port, const uint8_t secret[16], int timeoutMs)
 {
 	if (!host || !secret || port <= 0 || port > 65535)
@@ -317,21 +324,76 @@ bool ProbeTelegramMtProxy(const char* host, int port, const uint8_t secret[16], 
 
 int MeasureIcmpPingMs()
 {
+	return MeasureIcmpPingMs("1.1.1.1", 1200);
+}
+
+int MeasureIcmpPingMs(const char* host, int timeoutMs)
+{
+	if (!host || host[0] == '\0')
+		return -1;
+
+	EnsureWinsock();
+
+	const DWORD echoTimeout = static_cast<DWORD>(timeoutMs > 0 ? timeoutMs : 1200);
+
 	HANDLE icmp = IcmpCreateFile();
 	if (icmp == INVALID_HANDLE_VALUE)
 		return -1;
 
-	IN_ADDR destinationAddr = {};
-	if (InetPtonA(AF_INET, "1.1.1.1", &destinationAddr) != 1)
+	addrinfo hints = {};
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+
+	addrinfo* resolved = nullptr;
+	if (getaddrinfo(host, nullptr, &hints, &resolved) != 0 || !resolved)
+	{
+		// Fallback: try as literal IPv4.
+		IN_ADDR destinationAddr = {};
+		if (InetPtonA(AF_INET, host, &destinationAddr) != 1)
+		{
+			IcmpCloseHandle(icmp);
+			return -1;
+		}
+
+		const IPAddr destination = destinationAddr.S_un.S_addr;
+		char sendData[4] = {};
+		unsigned char replyBuffer[sizeof(ICMP_ECHO_REPLY) + sizeof(sendData) + 16] = {};
+		const DWORD replies = IcmpSendEcho(
+			icmp,
+			destination,
+			sendData,
+			sizeof(sendData),
+			nullptr,
+			replyBuffer,
+			static_cast<DWORD>(sizeof(replyBuffer)),
+			echoTimeout);
+		IcmpCloseHandle(icmp);
+		if (replies == 0)
+			return -1;
+		const ICMP_ECHO_REPLY* reply = reinterpret_cast<const ICMP_ECHO_REPLY*>(replyBuffer);
+		if (reply->Status != 0)
+			return -1;
+		return static_cast<int>(reply->RoundTripTime);
+	}
+
+	IPAddr destination = 0;
+	for (addrinfo* entry = resolved; entry != nullptr; entry = entry->ai_next)
+	{
+		if (entry->ai_family != AF_INET || !entry->ai_addr)
+			continue;
+		destination = reinterpret_cast<sockaddr_in*>(entry->ai_addr)->sin_addr.S_un.S_addr;
+		break;
+	}
+	freeaddrinfo(resolved);
+
+	if (destination == 0)
 	{
 		IcmpCloseHandle(icmp);
 		return -1;
 	}
 
-	const IPAddr destination = destinationAddr.S_un.S_addr;
 	char sendData[4] = {};
 	unsigned char replyBuffer[sizeof(ICMP_ECHO_REPLY) + sizeof(sendData) + 16] = {};
-	const DWORD timeoutMs = 1200;
 	const DWORD replies = IcmpSendEcho(
 		icmp,
 		destination,
@@ -340,7 +402,7 @@ int MeasureIcmpPingMs()
 		nullptr,
 		replyBuffer,
 		static_cast<DWORD>(sizeof(replyBuffer)),
-		timeoutMs);
+		echoTimeout);
 	IcmpCloseHandle(icmp);
 
 	if (replies == 0)

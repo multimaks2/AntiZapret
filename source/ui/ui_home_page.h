@@ -32,7 +32,6 @@ private:
 	bool m_preferencesLoaded = false;
 	int m_selectedStrategy = 0;
 	bool m_autoSelect = false;
-	bool m_hasSmartStrategy = false;
 
 	float m_cardDownloadBps = 0.f;
 	float m_cardUploadBps = 0.f;

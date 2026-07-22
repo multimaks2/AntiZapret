@@ -12,7 +12,6 @@
 #include "ui/ui_common.h"
 #include "ui/ui_vpn_page.h"
 #include "vpn/vpn_manager.h"
-#include "zapret/smart_strategy_engine.h"
 #include "zapret/strategies.hpp"
 #include "zapret/zapret_manager.h"
 #include "imgui.h"
@@ -38,62 +37,73 @@ namespace
 		return "Не работает";
 	}
 
-	ImVec4 RunStatusColor(ZapretRunStatus status, const UiAccentColors& accents)
+	ImVec4 RunStatusColor(ZapretRunStatus status)
 	{
+		// Fixed — independent of theme accents.
+		constexpr ImVec4 kOk = { 33 / 255.f, 176 / 255.f, 77 / 255.f, 1.f };
+		constexpr ImVec4 kWarn = { 230 / 255.f, 170 / 255.f, 50 / 255.f, 1.f };
+		constexpr ImVec4 kFail = { 196 / 255.f, 72 / 255.f, 72 / 255.f, 1.f };
 		switch (status)
 		{
-		case ZapretRunStatus::Running: return accents.ok;
-		case ZapretRunStatus::Starting: return accents.warn;
-		case ZapretRunStatus::Stopped: return accents.fail;
+		case ZapretRunStatus::Running: return kOk;
+		case ZapretRunStatus::Starting: return kWarn;
+		case ZapretRunStatus::Stopped: return kFail;
 		}
-		return accents.fail;
+		return kFail;
 	}
 
-	std::string FormatSpeed(float bytesPerSec)
+	ImVec4 FixedOk()
 	{
-		const float mbit = bytesPerSec * 8.f / 1000000.f;
-		char buffer[64] = {};
-		if (bytesPerSec < 1024.f)
-		{
-			snprintf(buffer, sizeof buffer, "%.0f B/s (%.2f Мбит/с)", bytesPerSec, mbit);
-			return buffer;
-		}
-		if (bytesPerSec < 1024.f * 1024.f)
-		{
-			snprintf(buffer, sizeof buffer, "%.1f KB/s (%.1f Мбит/с)", bytesPerSec / 1024.f, mbit);
-			return buffer;
-		}
-		snprintf(
-			buffer,
-			sizeof buffer,
-			"%.2f MB/s (%.1f Мбит/с)",
-			bytesPerSec / (1024.f * 1024.f),
-			mbit);
-		return buffer;
+		return { 33 / 255.f, 176 / 255.f, 77 / 255.f, 1.f };
 	}
 
-	std::string FormatSpeedPrimary(float bytesPerSec)
+	ImVec4 FixedWarn()
+	{
+		return { 230 / 255.f, 170 / 255.f, 50 / 255.f, 1.f };
+	}
+
+	ImVec4 FixedFail()
+	{
+		return { 196 / 255.f, 72 / 255.f, 72 / 255.f, 1.f };
+	}
+
+	std::string FormatSpeed(float bytesPerSec, bool bitsMode)
 	{
 		char buffer[32] = {};
+		if (bitsMode)
+		{
+			const float bits = bytesPerSec * 8.f;
+			if (bits < 1000.f)
+				snprintf(buffer, sizeof buffer, "%.0f бит/с", bits);
+			else if (bits < 1000000.f)
+			{
+				const float kbit = bits / 1000.f;
+				if (kbit < 10.f)
+					snprintf(buffer, sizeof buffer, "%.2f Кбит/с", kbit);
+				else if (kbit < 100.f)
+					snprintf(buffer, sizeof buffer, "%.1f Кбит/с", kbit);
+				else
+					snprintf(buffer, sizeof buffer, "%.0f Кбит/с", kbit);
+			}
+			else
+			{
+				const float mbit = bits / 1000000.f;
+				if (mbit < 10.f)
+					snprintf(buffer, sizeof buffer, "%.2f Мбит/с", mbit);
+				else if (mbit < 100.f)
+					snprintf(buffer, sizeof buffer, "%.1f Мбит/с", mbit);
+				else
+					snprintf(buffer, sizeof buffer, "%.0f Мбит/с", mbit);
+			}
+			return buffer;
+		}
+
 		if (bytesPerSec < 1024.f)
-			snprintf(buffer, sizeof buffer, "%.0f B/s", bytesPerSec);
+			snprintf(buffer, sizeof buffer, "%.0f Б/с", bytesPerSec);
 		else if (bytesPerSec < 1024.f * 1024.f)
-			snprintf(buffer, sizeof buffer, "%.1f KB/s", bytesPerSec / 1024.f);
+			snprintf(buffer, sizeof buffer, "%.1f КБ/с", bytesPerSec / 1024.f);
 		else
-			snprintf(buffer, sizeof buffer, "%.2f MB/s", bytesPerSec / (1024.f * 1024.f));
-		return buffer;
-	}
-
-	std::string FormatSpeedMbit(float bytesPerSec)
-	{
-		char buffer[32] = {};
-		const float mbit = bytesPerSec * 8.f / 1000000.f;
-		if (mbit < 10.f)
-			snprintf(buffer, sizeof buffer, "%.2f Мбит/с", mbit);
-		else if (mbit < 100.f)
-			snprintf(buffer, sizeof buffer, "%.1f Мбит/с", mbit);
-		else
-			snprintf(buffer, sizeof buffer, "%.0f Мбит/с", mbit);
+			snprintf(buffer, sizeof buffer, "%.2f МБ/с", bytesPerSec / (1024.f * 1024.f));
 		return buffer;
 	}
 
@@ -122,17 +132,41 @@ namespace
 		return buffer;
 	}
 
-	std::string FormatAxisSpeed(float bps)
+	std::string FormatAxisSpeed(float bps, bool bitsMode)
 	{
+		char buffer[16] = {};
+		if (bitsMode)
+		{
+			const float bits = bps * 8.f;
+			if (bits < 1000.f)
+			{
+				snprintf(buffer, sizeof buffer, "%.0f b", bits);
+				return buffer;
+			}
+			if (bits < 1000000.f)
+			{
+				const float kb = bits / 1000.f;
+				if (kb >= 10.f)
+					snprintf(buffer, sizeof buffer, "%.0f Kb", kb);
+				else
+					snprintf(buffer, sizeof buffer, "%.1f Kb", kb);
+				return buffer;
+			}
+			const float mb = bits / 1000000.f;
+			if (mb >= 10.f)
+				snprintf(buffer, sizeof buffer, "%.0f Mb", mb);
+			else
+				snprintf(buffer, sizeof buffer, "%.1f Mb", mb);
+			return buffer;
+		}
+
 		if (bps < 1024.f)
 		{
-			char buffer[16] = {};
 			snprintf(buffer, sizeof buffer, "%.0f B", bps);
 			return buffer;
 		}
 		if (bps < 1024.f * 1024.f)
 		{
-			char buffer[16] = {};
 			const float kb = bps / 1024.f;
 			if (kb >= 10.f)
 				snprintf(buffer, sizeof buffer, "%.0f K", kb);
@@ -140,13 +174,89 @@ namespace
 				snprintf(buffer, sizeof buffer, "%.1f K", kb);
 			return buffer;
 		}
-		char buffer[16] = {};
 		const float mb = bps / (1024.f * 1024.f);
 		if (mb >= 10.f)
 			snprintf(buffer, sizeof buffer, "%.0f M", mb);
 		else
 			snprintf(buffer, sizeof buffer, "%.1f M", mb);
 		return buffer;
+	}
+
+	// Steam-style segmented control: МБ/с | Мбит/с
+	bool DrawSpeedUnitToggle(bool bitsMode, const UiThemeColors& colors)
+	{
+		const char* leftLabel = "МБ/с";
+		const char* rightLabel = "Мбит/с";
+		const float padX = 10.f;
+		const float padY = 4.f;
+		const float gap = 1.f;
+		const ImVec2 leftSize = ImGui::CalcTextSize(leftLabel);
+		const ImVec2 rightSize = ImGui::CalcTextSize(rightLabel);
+		const float segH = (std::max)(leftSize.y, rightSize.y) + padY * 2.f;
+		const float leftW = leftSize.x + padX * 2.f;
+		const float rightW = rightSize.x + padX * 2.f;
+		const float totalW = leftW + gap + rightW;
+
+		const float avail = ImGui::GetContentRegionAvail().x;
+		if (avail > totalW)
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - totalW);
+
+		const ImVec2 origin = ImGui::GetCursorScreenPos();
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		const float rounding = 6.f;
+
+		drawList->AddRectFilled(
+			origin,
+			{ origin.x + totalW, origin.y + segH },
+			ImGui::GetColorU32(UiCommon::WithAlpha(colors.inputBg, 0.95f)),
+			rounding);
+
+		bool changed = false;
+		ImGui::PushID("##net_speed_unit");
+
+		ImGui::InvisibleButton("##bytes", { leftW, segH });
+		const bool leftHovered = ImGui::IsItemHovered();
+		if (ImGui::IsItemClicked() && bitsMode)
+			changed = true;
+		{
+			const ImVec2 a = origin;
+			const ImVec2 b = { origin.x + leftW, origin.y + segH };
+			if (!bitsMode)
+				drawList->AddRectFilled(a, b, ImGui::GetColorU32(colors.navActive), rounding, ImDrawFlags_RoundCornersLeft);
+			else if (leftHovered)
+				drawList->AddRectFilled(a, b, ImGui::GetColorU32(UiCommon::WithAlpha(colors.navHover, 0.85f)), rounding, ImDrawFlags_RoundCornersLeft);
+			drawList->AddText(
+				{ a.x + padX, a.y + (segH - leftSize.y) * 0.5f },
+				ImGui::GetColorU32(!bitsMode ? colors.textPrimary : colors.textMuted),
+				leftLabel);
+		}
+
+		ImGui::SameLine(0.f, gap);
+		ImGui::InvisibleButton("##bits", { rightW, segH });
+		const bool rightHovered = ImGui::IsItemHovered();
+		if (ImGui::IsItemClicked() && !bitsMode)
+			changed = true;
+		{
+			const ImVec2 a = { origin.x + leftW + gap, origin.y };
+			const ImVec2 b = { a.x + rightW, origin.y + segH };
+			if (bitsMode)
+				drawList->AddRectFilled(a, b, ImGui::GetColorU32(colors.navActive), rounding, ImDrawFlags_RoundCornersRight);
+			else if (rightHovered)
+				drawList->AddRectFilled(a, b, ImGui::GetColorU32(UiCommon::WithAlpha(colors.navHover, 0.85f)), rounding, ImDrawFlags_RoundCornersRight);
+			drawList->AddText(
+				{ a.x + padX, a.y + (segH - rightSize.y) * 0.5f },
+				ImGui::GetColorU32(bitsMode ? colors.textPrimary : colors.textMuted),
+				rightLabel);
+		}
+
+		drawList->AddRect(
+			origin,
+			{ origin.x + totalW, origin.y + segH },
+			ImGui::GetColorU32(colors.tileBorder),
+			rounding);
+
+		ImGui::PopID();
+		return changed;
 	}
 
 	std::string FormatRelativeTime(float secondsAgo)
@@ -382,8 +492,8 @@ namespace
 		const TrafficMonitor& monitor,
 		float width,
 		float height,
-		const UiThemeColors& colors,
-		const UiAccentColors& accents)
+		bool bitsMode,
+		const UiThemeColors& colors)
 	{
 		const ImVec2 origin = ImGui::GetCursorScreenPos();
 		const ImVec2 rectMax = { origin.x + width, origin.y + height };
@@ -393,7 +503,7 @@ namespace
 
 		const float scaleMax = (std::max)(monitor.GetDisplayScaleMax(), 1024.f);
 		const float scrollPhase = (std::clamp)(monitor.GetScrollPhase(), 0.f, 1.f);
-		const float labelWidth = 42.f;
+		const float labelWidth = bitsMode ? 48.f : 42.f;
 		const float graphPadRight = 10.f;
 		const float graphPadTop = 8.f;
 		const float timeAxisH = 18.f;
@@ -417,7 +527,7 @@ namespace
 			drawList->AddLine({ graphLeft, y }, { graphRight, y }, gridColor, 1.f);
 
 			const float speed = scaleMax * t;
-			const std::string label = FormatAxisSpeed(speed);
+			const std::string label = FormatAxisSpeed(speed, bitsMode);
 			const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
 			drawList->AddText(
 				{ graphLeft - textSize.x - 6.f, y - textSize.y * 0.5f },
@@ -455,26 +565,29 @@ namespace
 		TessellateSmooth(downControl, downSmooth);
 		TessellateSmooth(upControl, upSmooth);
 
+		const ImVec4 downAccent = UiCommon::FixedDownloadAccent();
+		const ImVec4 upAccent = UiCommon::FixedUploadAccent();
+
 		drawList->PushClipRect({ graphLeft, graphTop }, { graphRight, graphBottom }, true);
 		DrawSeriesArea(
 			drawList,
 			downControl,
 			downSmooth,
 			graphBottom,
-			ImGui::GetColorU32(accents.download),
-			ImGui::GetColorU32(UiCommon::WithAlpha(accents.download, 0.18f)));
+			ImGui::GetColorU32(downAccent),
+			ImGui::GetColorU32(UiCommon::WithAlpha(downAccent, 0.28f)));
 		DrawSeriesArea(
 			drawList,
 			upControl,
 			upSmooth,
 			graphBottom,
-			ImGui::GetColorU32(accents.upload),
-			ImGui::GetColorU32(UiCommon::WithAlpha(accents.upload, 0.12f)));
+			ImGui::GetColorU32(upAccent),
+			ImGui::GetColorU32(UiCommon::WithAlpha(upAccent, 0.22f)));
 
 		if (!downSmooth.empty())
-			drawList->AddCircleFilled(downSmooth.back(), 3.2f, ImGui::GetColorU32(accents.download), 12);
+			drawList->AddCircleFilled(downSmooth.back(), 3.2f, ImGui::GetColorU32(downAccent), 12);
 		if (!upSmooth.empty())
-			drawList->AddCircleFilled(upSmooth.back(), 3.2f, ImGui::GetColorU32(accents.upload), 12);
+			drawList->AddCircleFilled(upSmooth.back(), 3.2f, ImGui::GetColorU32(upAccent), 12);
 
 		// Hover scrubber.
 		ImGui::SetCursorScreenPos({ graphLeft, graphTop });
@@ -503,8 +616,8 @@ namespace
 
 			const float downY = graphBottom - (std::clamp)(downHover / scaleMax, 0.f, 1.f) * graphH;
 			const float upY = graphBottom - (std::clamp)(upHover / scaleMax, 0.f, 1.f) * graphH;
-			drawList->AddCircleFilled({ mouseX, downY }, 3.5f, ImGui::GetColorU32(accents.download), 12);
-			drawList->AddCircleFilled({ mouseX, upY }, 3.5f, ImGui::GetColorU32(accents.upload), 12);
+			drawList->AddCircleFilled({ mouseX, downY }, 3.5f, ImGui::GetColorU32(downAccent), 12);
+			drawList->AddCircleFilled({ mouseX, upY }, 3.5f, ImGui::GetColorU32(upAccent), 12);
 
 			char tip[160] = {};
 			snprintf(
@@ -512,9 +625,10 @@ namespace
 				sizeof tip,
 				"%s\n↓ %s\n↑ %s",
 				FormatRelativeTime(ageSec).c_str(),
-				FormatSpeed(downHover).c_str(),
-				FormatSpeed(upHover).c_str());
-			ImGui::SetTooltip("%s", tip);
+				FormatSpeed(downHover, bitsMode).c_str(),
+				FormatSpeed(upHover, bitsMode).c_str());
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+				UiCommon::ShowTooltip("%s", tip);
 		}
 		drawList->PopClipRect();
 
@@ -558,8 +672,8 @@ namespace
 	void DrawRateCard(
 		const char* title,
 		float bytesPerSec,
+		bool bitsMode,
 		ImVec4 accent,
-		const UiThemeColors& colors,
 		float width,
 		float height)
 	{
@@ -582,16 +696,11 @@ namespace
 			ImGui::GetColorU32(UiCommon::WithAlpha(accent, 0.95f)),
 			title);
 
-		const std::string primary = FormatSpeedPrimary(bytesPerSec);
-		const std::string mbit = FormatSpeedMbit(bytesPerSec);
+		const std::string primary = FormatSpeed(bytesPerSec, bitsMode);
 		drawList->AddText(
 			{ pos.x + 12.f, pos.y + 8.f + ImGui::GetTextLineHeight() + 4.f },
 			ImGui::GetColorU32(accent),
 			primary.c_str());
-		drawList->AddText(
-			{ pos.x + 12.f, pos.y + 8.f + ImGui::GetTextLineHeight() * 2.f + 6.f },
-			ImGui::GetColorU32(colors.textMuted),
-			mbit.c_str());
 
 		ImGui::Dummy({ width, height });
 	}
@@ -600,12 +709,13 @@ namespace
 		std::uint64_t bytesIn,
 		std::uint64_t bytesOut,
 		const UiThemeColors& colors,
-		const UiAccentColors& accents,
 		float width,
 		float height)
 	{
 		const ImVec2 pos = ImGui::GetCursorScreenPos();
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		const ImVec4 downAccent = UiCommon::FixedDownloadAccent();
+		const ImVec4 upAccent = UiCommon::FixedUploadAccent();
 
 		drawList->AddRectFilled(
 			pos,
@@ -629,20 +739,20 @@ namespace
 
 		drawList->AddText(
 			{ pos.x + 12.f, labelY },
-			ImGui::GetColorU32(UiCommon::WithAlpha(accents.download, 0.9f)),
+			ImGui::GetColorU32(UiCommon::WithAlpha(downAccent, 0.9f)),
 			"Загружено");
 		drawList->AddText(
 			{ pos.x + 12.f, valueY },
-			ImGui::GetColorU32(accents.download),
+			ImGui::GetColorU32(downAccent),
 			FormatBytes(bytesIn).c_str());
 
 		drawList->AddText(
 			{ midX + 6.f, labelY },
-			ImGui::GetColorU32(UiCommon::WithAlpha(accents.upload, 0.9f)),
+			ImGui::GetColorU32(UiCommon::WithAlpha(upAccent, 0.9f)),
 			"Отдано");
 		drawList->AddText(
 			{ midX + 6.f, valueY },
-			ImGui::GetColorU32(accents.upload),
+			ImGui::GetColorU32(upAccent),
 			FormatBytes(bytesOut).c_str());
 
 		ImGui::Dummy({ width, height });
@@ -652,8 +762,7 @@ namespace
 		float downBps,
 		float upBps,
 		float scaleMaxBytesPerSec,
-		const UiThemeColors& colors,
-		const UiAccentColors& accents)
+		const UiThemeColors& colors)
 	{
 		const float barH = 7.f;
 		const float barW = ImGui::GetContentRegionAvail().x;
@@ -671,13 +780,13 @@ namespace
 			dl->AddRectFilled(
 				origin,
 				{ origin.x + barW * (std::clamp)(value / denom, 0.f, 1.f), origin.y + barH },
-				ImGui::GetColorU32(UiCommon::WithAlpha(color, 0.8f)),
+				ImGui::GetColorU32(UiCommon::WithAlpha(color, 0.85f)),
 				3.f);
 			ImGui::Dummy({ barW, barH + 5.f });
 		};
 
-		drawBar(downBps, accents.download);
-		drawBar(upBps, accents.upload);
+		drawBar(downBps, UiCommon::FixedDownloadAccent());
+		drawBar(upBps, UiCommon::FixedUploadAccent());
 	}
 
 	void DrawMiniBadge(const char* label, ImVec4 color, const UiThemeColors& colors, ImVec2* outSize = nullptr)
@@ -838,14 +947,7 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 		if (m_settings)
 			m_autoSelect = m_settings->GetAutoSelectBestStrategy();
 		if (m_zapret)
-		{
-			m_hasSmartStrategy = m_zapret->IsSmartStrategyEnabled();
-			const std::string& last = m_zapret->GetStore().GetLastStrategy();
-			if (m_hasSmartStrategy && last == SmartStrategyEngine::kLabel)
-				m_selectedStrategy = m_zapret->GetPreferredStrategyIndex(false);
-			else
-				m_selectedStrategy = m_zapret->GetPreferredStrategyIndex(m_autoSelect);
-		}
+			m_selectedStrategy = m_zapret->GetPreferredStrategyIndex(m_autoSelect);
 		m_preferencesLoaded = true;
 	}
 
@@ -928,14 +1030,13 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 	}
 	else if (azRunning && m_zapret)
 	{
-		if (m_zapret->IsActiveSmartStrategy())
-			strategyNote = std::string("Стратегия: ") + SmartStrategyEngine::kLabel;
-		else if (activeStrategy >= 0)
-			strategyNote = std::string("Стратегия: ") + m_zapret->GetStrategyLabel(activeStrategy);
+		const int activeIndex = m_zapret->GetActiveStrategyIndex();
+		if (activeIndex >= 0)
+			strategyNote = std::string("Стратегия: ") + m_zapret->GetStrategyLabel(activeIndex);
 	}
 
 	const char* azStatusText = RunStatusLabel(azStatus);
-	ImVec4 azStatusColor = RunStatusColor(azStatus, accents);
+	ImVec4 azStatusColor = RunStatusColor(azStatus);
 	if (strategySelectionActive)
 	{
 		azStatusText = strategyTestPaused ? "Подбор приостановлен" : "Подбор стратегий";
@@ -959,7 +1060,9 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 				const char* label = m_zapret
 					? m_zapret->GetStrategyTestButtonLabel()
 					: "Остановить подбор";
-				const ImVec4& accent = strategyTestRunning ? accents.fail : accents.download;
+				const ImVec4 accent = strategyTestRunning
+					? UiCommon::FixedStopAccent()
+					: UiCommon::FixedStartAccent();
 				if (UiCommon::AccentButton(
 					label,
 					{ btnW, UiMetrics::kBtnHeight },
@@ -971,33 +1074,26 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 				}
 				if (strategyTestRunning)
 				{
-					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-					{
-						ImGui::SetTooltip(
-							"Можно полностью остановить, нажав правой кнопкой мыши.");
-					}
+					UiCommon::SetItemTooltip(
+						"Можно полностью остановить, нажав правой кнопкой мыши.");
 					if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && m_zapret)
 						m_zapret->RequestStopStrategyTest();
 				}
 			}
 			else if (azRunning)
 			{
-				if (UiCommon::AccentButton("Остановить", { btnW, UiMetrics::kBtnHeight }, accents.fail, colors) && m_zapret)
+				if (UiCommon::AccentButton("Остановить", { btnW, UiMetrics::kBtnHeight }, UiCommon::FixedStopAccent(), colors) && m_zapret)
 					m_zapret->RequestStop();
 			}
 			else if (UiCommon::AccentButton(
 				"Запустить",
 				{ btnW, UiMetrics::kBtnHeight },
-				accents.download,
+				UiCommon::FixedStartAccent(),
 				colors,
 				m_zapret && !m_zapret->IsOperationInFlight()) && m_zapret)
 			{
-				const bool smartActive = m_hasSmartStrategy
-					&& m_zapret->GetStore().GetLastStrategy() == SmartStrategyEngine::kLabel;
 				const bool firstRun = m_zapret->GetStore().GetResults().empty();
-				if (smartActive)
-					m_zapret->RequestStartSmartStrategy(ZapretStrategies::GameFilterMode::Disabled);
-				else if (firstRun)
+				if (firstRun)
 					m_zapret->HandleStrategyTestButton(ZapretStrategies::GameFilterMode::Disabled);
 				else
 					m_zapret->RequestStart(m_selectedStrategy, ZapretStrategies::GameFilterMode::Disabled);
@@ -1012,14 +1108,14 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 		"TG WS Proxy",
 		"MTProto для Telegram",
 		tgRunning ? "Работает" : "Не работает",
-		tgRunning ? accents.ok : accents.fail,
+		tgRunning ? FixedOk() : FixedFail(),
 		nullptr,
 		colors,
 		[&](float btnW)
 		{
 			const char* label = m_tgProxy ? m_tgProxy->GetPrimaryActionLabel() : "Запустить";
 			const bool canAction = m_tgProxy && m_tgProxy->CanPrimaryAction();
-			const ImVec4 btnColor = tgRunning ? accents.fail : accents.download;
+			const ImVec4 btnColor = tgRunning ? UiCommon::FixedStopAccent() : UiCommon::FixedStartAccent();
 			const bool openTelegram = m_settings && m_settings->GetOpenTelegramOnProxyStart();
 			if (UiCommon::AccentButton(label, { btnW, UiMetrics::kBtnHeight }, btnColor, colors, canAction) && m_tgProxy)
 				m_tgProxy->HandlePrimaryAction(openTelegram);
@@ -1034,20 +1130,20 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 		"VPN",
 		vpnSubtitle.c_str(),
 		vpnRunning ? "Подключён" : (vpnEnabled ? "Подключение..." : "Отключён"),
-		vpnRunning ? accents.ok : (vpnEnabled ? accents.warn : accents.fail),
+		vpnRunning ? FixedOk() : (vpnEnabled ? FixedWarn() : FixedFail()),
 		nullptr,
 		colors,
 		[&](float btnW)
 		{
 			if (vpnRunning || vpnEnabled)
 			{
-				if (UiCommon::AccentButton("Отключить VPN", { btnW, UiMetrics::kBtnHeight }, accents.fail, colors) && m_vpnPage)
+				if (UiCommon::AccentButton("Отключить VPN", { btnW, UiMetrics::kBtnHeight }, UiCommon::FixedStopAccent(), colors) && m_vpnPage)
 					m_vpnPage->SetVpnEnabled(false);
 			}
 			else if (UiCommon::AccentButton(
 				"Подключить VPN",
 				{ btnW, UiMetrics::kBtnHeight },
-				accents.download,
+				UiCommon::FixedStartAccent(),
 				colors,
 				m_vpnPage && m_vpnPage->HasActiveServer()) && m_vpnPage)
 			{
@@ -1059,7 +1155,19 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 
 	if (UiCommon::BeginCard("##home_traffic", width, colors))
 	{
-		UiCommon::SectionHeader("Мониторинг сети", colors);
+		const bool bitsMode = m_settings && m_settings->GetNetworkSpeedBits();
+		bool displayBits = bitsMode;
+		{
+			const ImVec2 headerStart = ImGui::GetCursorPos();
+			UiCommon::SectionHeader("Мониторинг сети", colors);
+			ImGui::SameLine(0.f, 0.f);
+			ImGui::SetCursorPosY(headerStart.y);
+			if (DrawSpeedUnitToggle(bitsMode, colors) && m_settings)
+			{
+				displayBits = !bitsMode;
+				m_settings->SetNetworkSpeedBits(displayBits);
+			}
+		}
 		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
 
 		const float downBps = m_traffic ? m_traffic->GetDisplayDownloadBps() : 0.f;
@@ -1069,7 +1177,7 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 		const float scaleMax = m_traffic ? (std::max)(m_traffic->GetDisplayScaleMax(), 1.f) : 1.f;
 
 		m_cardSampleTimer += ImGui::GetIO().DeltaTime;
-		constexpr float kCardSampleIntervalSec = 0.25f;
+		constexpr float kCardSampleIntervalSec = 0.75f;
 		if (!m_cardSampleReady || m_cardSampleTimer >= kCardSampleIntervalSec)
 		{
 			m_cardSampleTimer = 0.f;
@@ -1081,17 +1189,17 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 		const float gap = 8.f;
 		const float cardH = ImGui::GetTextLineHeight() * 3.f + 20.f;
 		const float cardW = (ImGui::GetContentRegionAvail().x - gap * 2.f) / 3.f;
-		DrawRateCard("Загрузка", m_cardDownloadBps, accents.download, colors, cardW, cardH);
+		DrawRateCard("Загрузка", m_cardDownloadBps, displayBits, UiCommon::FixedDownloadAccent(), cardW, cardH);
 		ImGui::SameLine(0.f, gap);
-		DrawRateCard("Отдача", m_cardUploadBps, accents.upload, colors, cardW, cardH);
+		DrawRateCard("Отдача", m_cardUploadBps, displayBits, UiCommon::FixedUploadAccent(), cardW, cardH);
 		ImGui::SameLine(0.f, gap);
-		DrawSessionCard(bytesIn, bytesOut, colors, accents, cardW, cardH);
+		DrawSessionCard(bytesIn, bytesOut, colors, cardW, cardH);
 
 		ImGui::Dummy({ 0.f, 8.f });
-		DrawSpeedProgressBars(downBps, upBps, scaleMax, colors, accents);
+		DrawSpeedProgressBars(downBps, upBps, scaleMax, colors);
 
 		if (m_traffic)
-			DrawSpeedGraph(*m_traffic, ImGui::GetContentRegionAvail().x, 196.f, colors, accents);
+			DrawSpeedGraph(*m_traffic, ImGui::GetContentRegionAvail().x, 196.f, displayBits, colors);
 	}
 	UiCommon::EndCard();
 

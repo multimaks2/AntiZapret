@@ -3,6 +3,8 @@
 #include "gfx/font_manager.h"
 
 #include <Windows.h>
+#include <algorithm>
+#include <cstdarg>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -27,6 +29,46 @@ ImVec4 UiCommon::StatusColor(const UiAccentColors& accents, bool active, bool ok
 	if (ok)
 		return accents.ok;
 	return accents.fail;
+}
+
+ImVec4 UiCommon::FixedVersionStatusAccent(ComponentUpdateStatus status)
+{
+	// Same palette as sidebar status lamps — does not follow theme accents.
+	switch (status)
+	{
+	case ComponentUpdateStatus::UpToDate:
+		return FixedStartAccent();
+	case ComponentUpdateStatus::Checking:
+	case ComponentUpdateStatus::UpdateAvailable:
+		return { 230 / 255.f, 170 / 255.f, 50 / 255.f, 1.f };
+	case ComponentUpdateStatus::Unknown:
+	case ComponentUpdateStatus::Error:
+		return FixedStopAccent();
+	default:
+		return WithAlpha({ 140 / 255.f, 140 / 255.f, 140 / 255.f, 1.f }, 0.75f);
+	}
+}
+
+ImVec4 UiCommon::FixedStartAccent()
+{
+	// Classic app green (Dark/Light download/ok) — never follows theme tint.
+	return { 33 / 255.f, 176 / 255.f, 77 / 255.f, 1.f };
+}
+
+ImVec4 UiCommon::FixedStopAccent()
+{
+	return { 196 / 255.f, 72 / 255.f, 72 / 255.f, 1.f };
+}
+
+ImVec4 UiCommon::FixedDownloadAccent()
+{
+	return FixedStartAccent();
+}
+
+ImVec4 UiCommon::FixedUploadAccent()
+{
+	// Classic Dark/Light upload blue — readable on tinted theme backgrounds.
+	return { 80 / 255.f, 160 / 255.f, 255 / 255.f, 1.f };
 }
 
 namespace
@@ -68,6 +110,12 @@ void UiCommon::VersionBadge(const char* version, const ImVec4& accent, const UiT
 	const ImVec2 max = { min.x + badgeW, min.y + badgeH };
 
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	(void)colors;
+	drawList->AddRectFilled(
+		min,
+		max,
+		ImGui::ColorConvertFloat4ToU32(WithAlpha(accent, 0.11f)),
+		3.f);
 	drawList->AddRect(
 		min,
 		max,
@@ -79,7 +127,7 @@ void UiCommon::VersionBadge(const char* version, const ImVec4& accent, const UiT
 		font,
 		versionFontSize,
 		{ min.x + padX, min.y + padY },
-		ImGui::ColorConvertFloat4ToU32(colors.textPrimary),
+		ImGui::ColorConvertFloat4ToU32(accent),
 		version);
 	ImGui::Dummy({ badgeW, centerInLine ? lineH : badgeH });
 }
@@ -232,18 +280,44 @@ bool UiCommon::SecondaryButton(const char* label, ImVec2 size, const UiThemeColo
 {
 	if (!enabled)
 		ImGui::BeginDisabled();
-	ImGui::PushStyleColor(ImGuiCol_Button, WithAlpha(colors.sidebarBg, 0.95f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors.navHover);
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive, colors.navActive);
+
+	ImVec4 btn;
+	ImVec4 btnHover;
+	ImVec4 btnActive;
+	float borderAlpha = 0.f;
+	if (colors.classicControls)
+	{
+		btn = WithAlpha(colors.sidebarBg, 0.95f);
+		btnHover = colors.navHover;
+		btnActive = colors.navActive;
+	}
+	else
+	{
+		const bool light = IsLightTheme(colors);
+		btn = light ? WithAlpha(colors.sidebarBg, 0.95f) : Blend(colors.tileBg, colors.textPrimary, 0.14f);
+		btnHover = light ? colors.navHover : Blend(colors.tileBg, colors.textPrimary, 0.22f);
+		btnActive = light ? colors.navActive : Blend(colors.tileBg, colors.textPrimary, 0.28f);
+		borderAlpha = light ? 0.55f : 0.70f;
+	}
+
+	ImGui::PushStyleColor(ImGuiCol_Button, btn);
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btnHover);
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, btnActive);
 	ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
+	if (borderAlpha > 0.f)
+		ImGui::PushStyleColor(ImGuiCol_Border, WithAlpha(colors.tileBorder, borderAlpha));
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UiMetrics::kCardRadius);
+	if (borderAlpha > 0.f)
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.f);
+	else
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.f);
 	if (size.y > 0.f)
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, { 10.f, (size.y - ImGui::GetFontSize()) * 0.5f });
 	const bool pressed = ImGui::Button(label, size);
 	if (size.y > 0.f)
 		ImGui::PopStyleVar();
-	ImGui::PopStyleVar();
-	ImGui::PopStyleColor(4);
+	ImGui::PopStyleVar(2);
+	ImGui::PopStyleColor(borderAlpha > 0.f ? 5 : 4);
 	if (!enabled)
 		ImGui::EndDisabled();
 	return pressed && enabled;
@@ -274,7 +348,11 @@ float UiCommon::DrawServiceInline(
 	const char* statusText = statusOverride
 		? statusOverride
 		: (online ? "Работает" : "Недоступен");
-	const ImVec4 statusColor = online ? accents.ok : colors.textMuted;
+	// Fixed status colors — never follow theme accents (e.g. red theme making "Работает" red).
+	constexpr ImVec4 kOk = { 33 / 255.f, 176 / 255.f, 77 / 255.f, 1.f };
+	constexpr ImVec4 kMuted = { 140 / 255.f, 140 / 255.f, 140 / 255.f, 1.f };
+	const ImVec4 statusColor = online ? kOk : kMuted;
+	(void)accents;
 	const float startX = ImGui::GetCursorPosX();
 
 	ImGui::PushStyleColor(ImGuiCol_Text, brandColor);
@@ -324,15 +402,77 @@ void UiCommon::SyncImGuiStyle(const UiThemeColors& colors)
 		style.Colors[ImGuiCol_Border] = WithAlpha(colors.tileBorder, 0.55f);
 		style.Colors[ImGuiCol_SliderGrab] = { 0.38f, 0.38f, 0.41f, 1.f };
 		style.Colors[ImGuiCol_SliderGrabActive] = { 0.28f, 0.28f, 0.30f, 1.f };
+		style.Colors[ImGuiCol_FrameBg] = { 0.74f, 0.74f, 0.77f, 0.98f };
+		style.Colors[ImGuiCol_FrameBgHovered] = { 0.68f, 0.68f, 0.71f, 0.98f };
+		style.Colors[ImGuiCol_FrameBgActive] = { 0.62f, 0.62f, 0.65f, 0.98f };
+		style.Colors[ImGuiCol_ChildBg] = colors.tileBg;
 	}
-	else
+	else if (colors.classicControls)
 	{
 		style.Colors[ImGuiCol_PopupBg] = WithAlpha(colors.tileBg, 0.98f);
 		style.Colors[ImGuiCol_Border] = WithAlpha(colors.tileBorder, 0.35f);
 		style.Colors[ImGuiCol_SliderGrab] = { 0.62f, 0.62f, 0.65f, 1.f };
 		style.Colors[ImGuiCol_SliderGrabActive] = colors.textPrimary;
+		style.Colors[ImGuiCol_FrameBg] = colors.inputBg;
+		style.Colors[ImGuiCol_FrameBgHovered] = WithAlpha(colors.navHover, 0.95f);
+		style.Colors[ImGuiCol_FrameBgActive] = WithAlpha(colors.navActive, 0.95f);
+		style.Colors[ImGuiCol_ChildBg] = colors.tileBg;
+	}
+	else
+	{
+		const ImVec4 raised = Blend(colors.tileBg, colors.textPrimary, 0.12f);
+		const ImVec4 raisedMore = Blend(colors.tileBg, colors.textPrimary, 0.18f);
+		style.Colors[ImGuiCol_PopupBg] = WithAlpha(raisedMore, 0.98f);
+		style.Colors[ImGuiCol_Border] = WithAlpha(colors.tileBorder, 0.65f);
+		style.Colors[ImGuiCol_SliderGrab] = { 0.62f, 0.62f, 0.65f, 1.f };
+		style.Colors[ImGuiCol_SliderGrabActive] = colors.textPrimary;
+		style.Colors[ImGuiCol_FrameBg] = WithAlpha(raised, 0.98f);
+		style.Colors[ImGuiCol_FrameBgHovered] = WithAlpha(raisedMore, 0.98f);
+		style.Colors[ImGuiCol_FrameBgActive] = WithAlpha(Blend(colors.tileBg, colors.textPrimary, 0.24f), 0.98f);
+		style.Colors[ImGuiCol_ChildBg] = colors.tileBg;
 	}
 	style.GrabRounding = 8.f;
+	style.PopupRounding = UiMetrics::kCardRadius;
+	style.FrameBorderSize = colors.classicControls ? 0.f : 1.f;
+	ConfigureTooltips(style);
+}
+
+void UiCommon::ConfigureTooltips(ImGuiStyle& style)
+{
+	style.HoverDelayNormal = 2.5f;
+	style.HoverFlagsForTooltipMouse =
+		ImGuiHoveredFlags_Stationary
+		| ImGuiHoveredFlags_DelayNormal
+		| ImGuiHoveredFlags_AllowWhenDisabled;
+	style.HoverFlagsForTooltipNav =
+		ImGuiHoveredFlags_NoSharedDelay
+		| ImGuiHoveredFlags_DelayNormal;
+	style.PopupRounding = UiMetrics::kCardRadius;
+}
+
+void UiCommon::ShowTooltip(const char* fmt, ...)
+{
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UiMetrics::kCardRadius);
+	ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, UiMetrics::kCardRadius);
+	va_list args;
+	va_start(args, fmt);
+	ImGui::SetTooltipV(fmt, args);
+	va_end(args);
+	ImGui::PopStyleVar(2);
+}
+
+void UiCommon::SetItemTooltip(const char* fmt, ...)
+{
+	if (!ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+		return;
+
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UiMetrics::kCardRadius);
+	ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, UiMetrics::kCardRadius);
+	va_list args;
+	va_start(args, fmt);
+	ImGui::SetTooltipV(fmt, args);
+	va_end(args);
+	ImGui::PopStyleVar(2);
 }
 
 float UiCommon::ExpSmooth(float current, float target, float deltaTime, float speed)
@@ -355,19 +495,57 @@ float UiCommon::AnimateMix(float current, bool expanded, float deltaTime, float 
 void UiCommon::PushInputStyle(const UiThemeColors& colors)
 {
 	const bool light = IsLightTheme(colors);
-	const ImVec4 controlBg = light ? ImVec4(0.74f, 0.74f, 0.77f, 0.98f) : colors.inputBg;
-	const ImVec4 controlHover = light ? ImVec4(0.68f, 0.68f, 0.71f, 0.98f) : WithAlpha(colors.navHover, 0.95f);
-	const ImVec4 controlActive = light ? ImVec4(0.62f, 0.62f, 0.65f, 0.98f) : WithAlpha(colors.navActive, 0.95f);
-	const ImVec4 popupBg = light ? ImVec4(0.84f, 0.84f, 0.86f, 0.98f) : WithAlpha(colors.tileBg, 0.98f);
-	const ImVec4 popupHeader = light ? ImVec4(0.78f, 0.78f, 0.81f, 0.98f) : WithAlpha(colors.navHover, 0.55f);
-	const ImVec4 popupHeaderHover = light ? ImVec4(0.72f, 0.72f, 0.75f, 0.98f) : WithAlpha(colors.navHover, 0.85f);
-	const ImVec4 popupHeaderActive = light ? ImVec4(0.66f, 0.66f, 0.69f, 0.98f) : WithAlpha(colors.navActive, 0.95f);
+	ImVec4 controlBg;
+	ImVec4 controlHover;
+	ImVec4 controlActive;
+	ImVec4 popupBg;
+	ImVec4 popupHeader;
+	ImVec4 popupHeaderHover;
+	ImVec4 popupHeaderActive;
+	float borderAlpha;
+
+	if (light)
+	{
+		controlBg = { 0.74f, 0.74f, 0.77f, 0.98f };
+		controlHover = { 0.68f, 0.68f, 0.71f, 0.98f };
+		controlActive = { 0.62f, 0.62f, 0.65f, 0.98f };
+		popupBg = { 0.84f, 0.84f, 0.86f, 0.98f };
+		popupHeader = { 0.78f, 0.78f, 0.81f, 0.98f };
+		popupHeaderHover = { 0.72f, 0.72f, 0.75f, 0.98f };
+		popupHeaderActive = { 0.66f, 0.66f, 0.69f, 0.98f };
+		borderAlpha = 0.55f;
+	}
+	else if (colors.classicControls)
+	{
+		controlBg = colors.inputBg;
+		controlHover = WithAlpha(colors.navHover, 0.95f);
+		controlActive = WithAlpha(colors.navActive, 0.95f);
+		popupBg = WithAlpha(colors.tileBg, 0.98f);
+		popupHeader = WithAlpha(colors.navHover, 0.55f);
+		popupHeaderHover = WithAlpha(colors.navHover, 0.85f);
+		popupHeaderActive = WithAlpha(colors.navActive, 0.95f);
+		borderAlpha = 0.35f;
+	}
+	else
+	{
+		const ImVec4 raised = Blend(colors.tileBg, colors.textPrimary, 0.14f);
+		const ImVec4 raisedHover = Blend(colors.tileBg, colors.textPrimary, 0.22f);
+		const ImVec4 raisedActive = Blend(colors.tileBg, colors.textPrimary, 0.28f);
+		controlBg = WithAlpha(raised, 0.98f);
+		controlHover = WithAlpha(raisedHover, 0.98f);
+		controlActive = WithAlpha(raisedActive, 0.98f);
+		popupBg = WithAlpha(Blend(colors.tileBg, colors.textPrimary, 0.18f), 0.98f);
+		popupHeader = WithAlpha(raisedHover, 0.75f);
+		popupHeaderHover = WithAlpha(raisedActive, 0.95f);
+		popupHeaderActive = WithAlpha(raisedActive, 1.f);
+		borderAlpha = 0.70f;
+	}
 
 	ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
 	ImGui::PushStyleColor(ImGuiCol_FrameBg, controlBg);
 	ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, controlHover);
 	ImGui::PushStyleColor(ImGuiCol_FrameBgActive, controlActive);
-	ImGui::PushStyleColor(ImGuiCol_Border, WithAlpha(colors.tileBorder, light ? 0.55f : 0.35f));
+	ImGui::PushStyleColor(ImGuiCol_Border, WithAlpha(colors.tileBorder, borderAlpha));
 	ImGui::PushStyleColor(ImGuiCol_Button, controlBg);
 	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, controlHover);
 	ImGui::PushStyleColor(ImGuiCol_ButtonActive, controlActive);
@@ -378,24 +556,35 @@ void UiCommon::PushInputStyle(const UiThemeColors& colors)
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UiMetrics::kCardRadius);
 	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, { 10.f, 7.f });
 	ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, UiMetrics::kCardRadius);
+	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, colors.classicControls ? 0.f : 1.f);
 }
 
 void UiCommon::PopInputStyle()
 {
-	ImGui::PopStyleVar(3);
+	ImGui::PopStyleVar(4);
 	ImGui::PopStyleColor(12);
 }
 
 void UiCommon::PushSliderStyle(const UiThemeColors& colors)
 {
 	const bool light = IsLightTheme(colors);
-	// Track must contrast with tileBg (0.10 in dark theme); inputBg RGB is darker.
-	const ImVec4 trackBg = light
-		? ImVec4(0.80f, 0.80f, 0.83f, 1.f)
-		: ImVec4(colors.inputBg.x, colors.inputBg.y, colors.inputBg.z, 1.f);
-	const ImVec4 trackHover = light
-		? ImVec4(0.74f, 0.74f, 0.77f, 1.f)
-		: ImVec4(colors.navHover.x, colors.navHover.y, colors.navHover.z, 1.f);
+	ImVec4 trackBg;
+	ImVec4 trackHover;
+	if (light)
+	{
+		trackBg = { 0.80f, 0.80f, 0.83f, 1.f };
+		trackHover = { 0.74f, 0.74f, 0.77f, 1.f };
+	}
+	else if (colors.classicControls)
+	{
+		trackBg = { colors.inputBg.x, colors.inputBg.y, colors.inputBg.z, 1.f };
+		trackHover = { colors.navHover.x, colors.navHover.y, colors.navHover.z, 1.f };
+	}
+	else
+	{
+		trackBg = Blend(colors.tileBg, colors.textPrimary, 0.14f);
+		trackHover = Blend(colors.tileBg, colors.textPrimary, 0.22f);
+	}
 	const ImVec4 grab = light ? ImVec4(0.36f, 0.36f, 0.39f, 1.f) : ImVec4(0.55f, 0.55f, 0.58f, 1.f);
 	const ImVec4 grabActive = light ? ImVec4(0.24f, 0.24f, 0.26f, 1.f) : colors.textPrimary;
 
@@ -443,20 +632,7 @@ bool UiCommon::StrategyButton(
 	if (selected)
 		pressed = AccentButton(label, size, accent, colors);
 	else
-	{
-		ImGui::PushStyleColor(ImGuiCol_Button, WithAlpha(colors.sidebarBg, 0.95f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors.navHover);
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, colors.navActive);
-		ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
-		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UiMetrics::kCardRadius);
-		if (size.y > 0.f)
-			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, { 10.f, (size.y - ImGui::GetFontSize()) * 0.5f });
-		pressed = ImGui::Button(label, size);
-		if (size.y > 0.f)
-			ImGui::PopStyleVar();
-		ImGui::PopStyleVar();
-		ImGui::PopStyleColor(4);
-	}
+		pressed = SecondaryButton(label, size, colors);
 	ImGui::PopID();
 	return pressed;
 }
@@ -469,8 +645,11 @@ void UiCommon::DrawStrategyIndicators(
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	const float radius = 4.f;
 	const float gap = 2.f;
-	float cx = buttonMin.x + radius + 2.5f;
-	const float cy = buttonMin.y - radius + 10.5f;
+	// Pixel-center snap keeps the disc stable between frames.
+	float cx = std::floor(buttonMin.x + radius + 2.5f) + 0.5f;
+	const float cy = std::floor(buttonMin.y - radius + 10.5f) + 0.5f;
+	// Explicit segments — ArcFast auto-step undersamples tiny radii into an octagon.
+	constexpr int kCircleSegs = 32;
 
 	const ImU32 serviceColors[] = {
 		IM_COL32(88, 101, 242, 255),
@@ -478,27 +657,55 @@ void UiCommon::DrawStrategyIndicators(
 		IM_COL32(0, 136, 204, 255),
 	};
 
+	// Idle lamps must stay readable on tinted SecondaryButton fills (Matrix/Ocean/…).
+	const bool light = IsLightTheme(colors);
+	const ImU32 idleColor = light
+		? ImGui::GetColorU32(WithAlpha(colors.textMuted, 0.85f))
+		: (colors.classicControls
+			? IM_COL32(110, 110, 115, 230)
+			: ImGui::GetColorU32(Blend(colors.tileBg, colors.textPrimary, 0.58f)));
+	const ImU32 failedColor = light
+		? ImGui::GetColorU32(WithAlpha(colors.textMuted, 0.45f))
+		: (colors.classicControls
+			? IM_COL32(80, 80, 80, 200)
+			: ImGui::GetColorU32(Blend(colors.tileBg, colors.textPrimary, 0.32f)));
+	const ImU32 ringColor = light
+		? ImGui::GetColorU32(WithAlpha(colors.textMuted, 0.55f))
+		: ImGui::GetColorU32(WithAlpha(colors.textPrimary, colors.classicControls ? 0.25f : 0.40f));
+
+	auto mulAlpha = [](ImU32 col, float a) -> ImU32
+	{
+		const int alpha = static_cast<int>(std::lround(static_cast<float>((col >> 24) & 0xFFu) * a));
+		return (col & 0x00FFFFFFu) | (static_cast<ImU32>(std::clamp(alpha, 0, 255)) << 24);
+	};
+
 	const bool serviceOk[] = { state.discordOk, state.youtubeOk, state.telegramOk };
 	for (int service = 0; service < 3; ++service)
 	{
-		ImU32 color = IM_COL32(110, 110, 115, 230);
-		if (state.hasResult)
-			color = serviceOk[service] ? serviceColors[service] : IM_COL32(80, 80, 80, 200);
+		const bool lit = state.hasResult && serviceOk[service];
+		const ImU32 color = lit
+			? serviceColors[service]
+			: (state.hasResult ? failedColor : idleColor);
 
-		drawList->AddCircleFilled({ cx, cy }, radius, color, 8);
-		cx += radius * 2.f + gap;
+		const ImVec2 c = { cx, cy };
+		if (!lit)
+			drawList->AddCircleFilled(c, radius + 0.85f, ringColor, kCircleSegs);
+		// Soft halo hides residual polygon edges at ~8px diameter.
+		drawList->AddCircleFilled(c, radius + 0.45f, mulAlpha(color, 0.40f), kCircleSegs);
+		drawList->AddCircleFilled(c, radius, color, kCircleSegs);
+		cx = std::floor(cx + radius * 2.f + gap) + 0.5f;
 	}
 
 	ImFont* font = ImGui::GetFont();
 	const float belowY = cy + radius + 2.f;
-	const float circlesCenterX = buttonMin.x + radius + 2.5f + radius * 2.f + gap;
+	const float circlesCenterX = std::floor(buttonMin.x + radius + 2.5f) + 0.5f + radius * 2.f + gap;
 
 	if (state.isBest)
 	{
 		const char* label = "Лучший*";
 		const float labelFontSize = ImGui::GetFontSize() * 0.65f;
 		const ImVec2 labelSize = font->CalcTextSizeA(labelFontSize, FLT_MAX, 0.f, label);
-		const ImU32 labelColor = IsLightTheme(colors)
+		const ImU32 labelColor = light
 			? IM_COL32(120, 85, 10, 255)
 			: IM_COL32(212, 175, 55, 255);
 		drawList->AddText(
@@ -513,9 +720,15 @@ void UiCommon::DrawStrategyIndicators(
 bool UiCommon::StyledCheckbox(const char* label, bool* value, const UiThemeColors& colors)
 {
 	const float boxSize = 18.f;
+	const float labelGap = 8.f;
+	const bool hasVisibleLabel = label && label[0] && !(label[0] == '#' && label[1] == '#');
+	const float textW = hasVisibleLabel ? ImGui::CalcTextSize(label).x : 0.f;
+	const float textH = ImGui::GetTextLineHeight();
+	const float hitW = boxSize + (hasVisibleLabel ? labelGap + textW : 0.f);
+
 	const ImVec2 pos = ImGui::GetCursorScreenPos();
 	ImGui::PushID(label);
-	ImGui::InvisibleButton("##styled_cb", { boxSize, boxSize });
+	ImGui::InvisibleButton("##styled_cb", { hitW, boxSize });
 	const bool hovered = ImGui::IsItemHovered();
 	bool changed = false;
 	if (ImGui::IsItemClicked())
@@ -526,12 +739,29 @@ bool UiCommon::StyledCheckbox(const char* label, bool* value, const UiThemeColor
 	ImGui::PopID();
 
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
-	const ImVec4 bg = hovered ? WithAlpha(colors.navHover, 0.95f) : colors.inputBg;
-	drawList->AddRectFilled(pos, { pos.x + boxSize, pos.y + boxSize }, ImGui::GetColorU32(bg), UiMetrics::kCardRadius);
+	const bool light = IsLightTheme(colors);
+	ImVec4 boxBg;
+	float borderAlpha;
+	if (light)
+	{
+		boxBg = hovered ? WithAlpha(colors.navHover, 0.95f) : colors.inputBg;
+		borderAlpha = 0.55f;
+	}
+	else if (colors.classicControls)
+	{
+		boxBg = hovered ? WithAlpha(colors.navHover, 0.95f) : colors.inputBg;
+		borderAlpha = 0.35f;
+	}
+	else
+	{
+		boxBg = Blend(colors.tileBg, colors.textPrimary, hovered ? 0.22f : 0.14f);
+		borderAlpha = 0.70f;
+	}
+	drawList->AddRectFilled(pos, { pos.x + boxSize, pos.y + boxSize }, ImGui::GetColorU32(boxBg), UiMetrics::kCardRadius);
 	drawList->AddRect(
 		pos,
 		{ pos.x + boxSize, pos.y + boxSize },
-		ImGui::GetColorU32(WithAlpha(colors.tileBorder, 0.35f)),
+		ImGui::GetColorU32(WithAlpha(colors.tileBorder, borderAlpha)),
 		UiMetrics::kCardRadius);
 
 	if (*value)
@@ -549,14 +779,14 @@ bool UiCommon::StyledCheckbox(const char* label, bool* value, const UiThemeColor
 			2.f);
 	}
 
-	const bool hasVisibleLabel = label && label[0] && !(label[0] == '#' && label[1] == '#');
 	if (hasVisibleLabel)
 	{
-		ImGui::SameLine(0.f, 8.f);
-		ImGui::AlignTextToFramePadding();
-		ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
-		ImGui::TextUnformatted(label);
-		ImGui::PopStyleColor();
+		// textY = boxY + boxH/2 - textH/2
+		const float textY = pos.y + (boxSize - textH) * 0.5f;
+		drawList->AddText(
+			ImVec2(pos.x + boxSize + labelGap, textY),
+			ImGui::GetColorU32(colors.textPrimary),
+			label);
 	}
 	return changed;
 }
@@ -788,9 +1018,29 @@ bool UiCommon::IconToolButton(
 		ImGui::BeginDisabled();
 
 	ImGui::PushID(id);
-	ImGui::PushStyleColor(ImGuiCol_Button, WithAlpha(colors.inputBg, 0.95f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors.navHover);
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive, colors.navActive);
+	ImVec4 btn;
+	ImVec4 btnHover;
+	ImVec4 btnActive;
+	float borderAlpha = 0.f;
+	if (colors.classicControls || IsLightTheme(colors))
+	{
+		btn = WithAlpha(colors.inputBg, 0.95f);
+		btnHover = colors.navHover;
+		btnActive = colors.navActive;
+	}
+	else
+	{
+		btn = Blend(colors.tileBg, colors.textPrimary, 0.14f);
+		btnHover = Blend(colors.tileBg, colors.textPrimary, 0.22f);
+		btnActive = Blend(colors.tileBg, colors.textPrimary, 0.28f);
+		borderAlpha = 0.70f;
+	}
+	ImGui::PushStyleColor(ImGuiCol_Button, btn);
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btnHover);
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, btnActive);
+	if (borderAlpha > 0.f)
+		ImGui::PushStyleColor(ImGuiCol_Border, WithAlpha(colors.tileBorder, borderAlpha));
+	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, borderAlpha > 0.f ? 1.f : 0.f);
 
 	wchar_t wide[] = { static_cast<wchar_t>(iconCode), 0 };
 	char utf8[8] = {};
@@ -805,10 +1055,11 @@ bool UiCommon::IconToolButton(
 	if (iconFont)
 		ImGui::PopFont();
 
-	if (tooltip && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-		ImGui::SetTooltip("%s", tooltip);
+	if (tooltip)
+		SetItemTooltip("%s", tooltip);
 
-	ImGui::PopStyleColor(3);
+	ImGui::PopStyleVar();
+	ImGui::PopStyleColor(borderAlpha > 0.f ? 4 : 3);
 	ImGui::PopID();
 
 	if (!enabled)

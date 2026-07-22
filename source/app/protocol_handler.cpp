@@ -1,6 +1,7 @@
 #include "app/protocol_handler.h"
 
 #include "app/app_log.h"
+#include "window/window_manager.h"
 
 #include <shellapi.h>
 
@@ -21,8 +22,14 @@ namespace
 		HWND existing = FindWindowW(ProtocolHandler::kWindowClassName, nullptr);
 		if (!existing)
 			return;
+
+		// Hidden in tray — ask the running instance to restore the window.
 		if (!IsWindowVisible(existing))
-			ShowWindow(existing, SW_SHOW);
+		{
+			PostMessageW(existing, WindowManager::kRestoreFromTrayMessage, 0, 0);
+			return;
+		}
+
 		if (IsIconic(existing))
 			ShowWindow(existing, SW_RESTORE);
 		else

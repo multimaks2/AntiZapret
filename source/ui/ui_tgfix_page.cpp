@@ -16,20 +16,9 @@ namespace
 {
 	const std::string kEmptyTelegramLink;
 
-	ImVec4 ComponentVersionAccent(ComponentUpdateStatus status, const UiAccentColors& accents)
+	ImVec4 ComponentVersionAccent(ComponentUpdateStatus status)
 	{
-		switch (status)
-		{
-		case ComponentUpdateStatus::UpToDate:
-			return accents.ok;
-		case ComponentUpdateStatus::Checking:
-		case ComponentUpdateStatus::UpdateAvailable:
-			return accents.warn;
-		case ComponentUpdateStatus::Unknown:
-		case ComponentUpdateStatus::Error:
-		default:
-			return accents.fail;
-		}
+		return UiCommon::FixedVersionStatusAccent(status);
 	}
 
 	bool IsDisplayVersion(const std::string& raw)
@@ -77,7 +66,7 @@ void UiTgFixPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 			nullptr,
 			colors,
 			tgVersion.empty() ? nullptr : tgVersion.c_str(),
-			ComponentVersionAccent(updateCheck.GetTgProxyStatus(), accents),
+			ComponentVersionAccent(updateCheck.GetTgProxyStatus()),
 			updateBtnLabel,
 			showUpdateBtn && !updateApplying))
 	{
@@ -106,7 +95,7 @@ void UiTgFixPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 
 		const char* actionLabel = m_manager ? m_manager->GetPrimaryActionLabel() : "Запустить TG WS Proxy";
 		const bool canAction = m_manager && m_manager->CanPrimaryAction();
-		const ImVec4 actionColor = running ? accents.fail : accents.download;
+		const ImVec4 actionColor = running ? UiCommon::FixedStopAccent() : UiCommon::FixedStartAccent();
 
 		if (UiCommon::AccentButton(actionLabel, { innerWidth, 40.f }, actionColor, colors, canAction) && m_manager)
 			m_manager->HandlePrimaryAction(openTelegram);
@@ -149,16 +138,18 @@ void UiTgFixPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 		const std::string& link = m_manager ? m_manager->GetTelegramLinkCached() : kEmptyTelegramLink;
 		const char* linkText = link.empty() ? "tg://proxy?..." : link.c_str();
 
-		ImGui::PushStyleColor(ImGuiCol_ChildBg, colors.inputBg);
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+		ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_Border));
+		ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, colors.classicControls ? 0.f : 1.f);
 		ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiMetrics::kCardRadius);
-		ImGui::BeginChild("##link_box", { innerWidth, 36.f }, ImGuiChildFlags_None);
+		ImGui::BeginChild("##link_box", { innerWidth, 36.f }, ImGuiChildFlags_Borders);
 		ImGui::SetCursorPos({ 10.f, 9.f });
 		ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
 		ImGui::TextUnformatted(linkText);
 		ImGui::PopStyleColor();
 		ImGui::EndChild();
-		ImGui::PopStyleVar();
-		ImGui::PopStyleColor();
+		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor(2);
 
 		ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 

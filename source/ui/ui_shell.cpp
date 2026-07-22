@@ -12,13 +12,13 @@
 #include "vpn/vpn_flag_icons.h"
 #include "vpn/vpn_module_update_check.h"
 #include "vpn/vpn_rules_updater.h"
-#include "zapret/smart_strategy_engine.h"
 #include "zapret/strategies.hpp"
 #include "zapret/zapret_paths.h"
 #include "zapret/zapret_update_apply.h"
 #include "zapret/zapret_update_check.h"
 #include "imgui.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <string>
 
@@ -28,6 +28,18 @@ namespace
 	constexpr float kTitlePadLeft = 12.f;
 	constexpr float kButtonSize = 14.f;
 	constexpr float kButtonGap = 8.f;
+
+	std::wstring Utf8ToWideLocal(const std::string& text)
+	{
+		if (text.empty())
+			return {};
+		const int needed = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+		if (needed <= 1)
+			return {};
+		std::wstring wide(static_cast<size_t>(needed - 1), L'\0');
+		MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), needed);
+		return wide;
+	}
 
 	void SetWindowTitleUtf8(HWND hwnd, const char* text)
 	{
@@ -87,8 +99,8 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		ZapretPaths::EnsureDataLayout();
 		m_appSettings.Load();
 		m_appSettings.SyncWindowsAutostart();
-		theme.SetLight(m_appSettings.GetLightTheme());
-		theme.SetMix(m_appSettings.GetLightTheme() ? 1.f : 0.f);
+		if (theme.GetTheme() != m_appSettings.GetThemeId())
+			theme.SetTheme(m_appSettings.GetThemeId());
 
 		m_tgWsProxyManager.SetSettings(&m_appSettings);
 		m_antiZapretPage.SetManager(&m_zapretManager);
@@ -126,31 +138,20 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		// Тумблеры «Автозапуск обхода / TG / VPN» — при любом старте приложения.
 		if (m_appSettings.GetAutostartBypass())
 		{
-			if (m_zapretManager.IsSmartStrategyEnabled()
-				&& m_zapretManager.GetStore().GetLastStrategy() == SmartStrategyEngine::kLabel)
+			const int strategyIndex = m_zapretManager.GetPreferredStrategyIndex(
+				m_appSettings.GetAutoSelectBestStrategy());
+			if (strategyIndex >= 0)
 			{
-				AppLog::Instance().Append(LogSource::Zapret, "Автозапуск: AntiZapret, Умная стратегия");
+				char msg[128] = {};
+				snprintf(
+					msg,
+					sizeof msg,
+					"Автозапуск: AntiZapret, стратегия %s",
+					ZapretStrategies::GetStrategyLabel(strategyIndex).data());
+				AppLog::Instance().Append(LogSource::Zapret, msg);
 				if (m_appSettings.GetAutoStartTgProxyWithAntiZapret())
 					m_antiZapretPage.SetStartupAutostartBypass(true);
-				m_zapretManager.RequestStartSmartStrategy(ZapretStrategies::GameFilterMode::Disabled);
-			}
-			else
-			{
-				const int strategyIndex = m_zapretManager.GetPreferredStrategyIndex(
-					m_appSettings.GetAutoSelectBestStrategy());
-				if (strategyIndex >= 0)
-				{
-					char msg[128] = {};
-					snprintf(
-						msg,
-						sizeof msg,
-						"Автозапуск: AntiZapret, стратегия %s",
-						ZapretStrategies::GetStrategyLabel(strategyIndex).data());
-					AppLog::Instance().Append(LogSource::Zapret, msg);
-					if (m_appSettings.GetAutoStartTgProxyWithAntiZapret())
-						m_antiZapretPage.SetStartupAutostartBypass(true);
-					m_zapretManager.RequestStart(strategyIndex, ZapretStrategies::GameFilterMode::Disabled);
-				}
+				m_zapretManager.RequestStart(strategyIndex, ZapretStrategies::GameFilterMode::Disabled);
 			}
 		}
 		if (m_appSettings.GetAutostartTelegram())
@@ -209,9 +210,6 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		}
 
 		std::string strategyName;
-		if (m_zapretManager.IsActiveSmartStrategy())
-			strategyName = SmartStrategyEngine::kLabel;
-		else
 		{
 			const int activeIndex = m_zapretManager.GetActiveStrategyIndex();
 			if (activeIndex >= 0)
@@ -408,6 +406,135 @@ void UiShell::ShutdownDiscord()
 	m_discordPresence.Shutdown();
 }
 
+TrayMenuState UiShell::GetTrayMenuState()
+{
+	TrayMenuState state = {};
+	const ZapretRunStatus azStatus = m_zapretManager.GetCachedRunStatus();
+	state.azRunning = azStatus == ZapretRunStatus::Running || azStatus == ZapretRunStatus::Starting;
+	state.azBusy = m_zapretManager.IsOperationInFlight();
+	state.azProbeRunning = m_zapretManager.GetStrategyTestState() == StrategyTestState::Running
+		|| m_zapretManager.GetStrategyTestState() == StrategyTestState::Paused;
+	state.azActiveStrategy = m_zapretManager.GetActiveStrategyIndex();
+
+	const bool showExtra = m_appSettings.GetShowExtraStrategies();
+	const int visibleCount = m_zapretManager.GetVisibleStrategyCount(showExtra);
+	state.strategies.reserve(static_cast<size_t>(visibleCount));
+	for (int i = 0; i < visibleCount; ++i)
+	{
+		const int strategyIndex = m_zapretManager.GetVisibleStrategyAt(i, showExtra);
+		if (strategyIndex < 0)
+			continue;
+		const std::string& label = m_zapretManager.GetStrategyLabel(strategyIndex);
+		state.strategies.emplace_back(strategyIndex, Utf8ToWideLocal(label));
+	}
+
+	state.tgRunning = m_tgWsProxyManager.IsRunning();
+	state.tgCanAction = m_tgWsProxyManager.CanPrimaryAction();
+
+	m_vpnPage.EnsureStoreLoadedForTray();
+	state.vpnActive = m_vpnManager.IsRunning() || m_vpnPage.IsVpnEnabled();
+	state.vpnCanStart = m_vpnPage.HasActiveServer();
+	state.vpnWorkMode = m_vpnPage.GetWorkMode();
+	state.vpnTransportMode = m_vpnPage.GetTransportMode();
+	state.vpnActiveServer = m_vpnPage.GetActiveServerIndex();
+
+	const int serverCount = m_vpnPage.GetServerCount();
+	constexpr int kMaxServers = 64;
+	state.vpnServers.reserve(static_cast<size_t>((std::min)(serverCount, kMaxServers)));
+	if (serverCount <= kMaxServers)
+	{
+		for (int i = 0; i < serverCount; ++i)
+			state.vpnServers.emplace_back(i, Utf8ToWideLocal(m_vpnPage.GetServerTrayLabel(i)));
+	}
+	else
+	{
+		// Keep active server visible, then fill remaining slots.
+		std::vector<char> used(static_cast<size_t>(serverCount), 0);
+		if (state.vpnActiveServer >= 0 && state.vpnActiveServer < serverCount)
+		{
+			state.vpnServers.emplace_back(
+				state.vpnActiveServer,
+				Utf8ToWideLocal(m_vpnPage.GetServerTrayLabel(state.vpnActiveServer)));
+			used[static_cast<size_t>(state.vpnActiveServer)] = 1;
+		}
+		for (int i = 0; i < serverCount && static_cast<int>(state.vpnServers.size()) < kMaxServers; ++i)
+		{
+			if (used[static_cast<size_t>(i)])
+				continue;
+			state.vpnServers.emplace_back(i, Utf8ToWideLocal(m_vpnPage.GetServerTrayLabel(i)));
+		}
+	}
+	return state;
+}
+
+void UiShell::HandleTrayCommand(TrayCommand command, int param)
+{
+	switch (command)
+	{
+	case TrayCommand::AzStart:
+	{
+		if (m_zapretManager.IsOperationInFlight())
+			break;
+		const int strategyIndex = m_zapretManager.GetPreferredStrategyIndex(
+			m_appSettings.GetAutoSelectBestStrategy());
+		if (strategyIndex >= 0)
+			m_zapretManager.RequestStart(strategyIndex, ZapretStrategies::GameFilterMode::Disabled);
+		break;
+	}
+	case TrayCommand::AzStop:
+		m_zapretManager.RequestStop();
+		break;
+	case TrayCommand::AzProbe:
+		m_zapretManager.HandleStrategyTestButton(ZapretStrategies::GameFilterMode::Disabled);
+		break;
+	case TrayCommand::AzStopProbe:
+		m_zapretManager.RequestStopStrategyTest();
+		break;
+	case TrayCommand::AzStartStrategy:
+		if (param >= 0)
+			m_zapretManager.RequestStart(param, ZapretStrategies::GameFilterMode::Disabled);
+		break;
+	case TrayCommand::TgToggle:
+		m_tgWsProxyManager.HandlePrimaryAction(m_appSettings.GetOpenTelegramOnProxyStart());
+		break;
+	case TrayCommand::TgCopyLink:
+		m_tgWsProxyManager.CopyTelegramLinkToClipboard();
+		break;
+	case TrayCommand::TgOpenTelegram:
+		m_tgWsProxyManager.OpenTelegramLink();
+		break;
+	case TrayCommand::VpnToggle:
+		if (m_vpnManager.IsRunning() || m_vpnPage.IsVpnEnabled())
+			m_vpnPage.SetVpnEnabled(false);
+		else if (m_vpnPage.HasActiveServer())
+			m_vpnPage.SetVpnEnabled(true);
+		break;
+	case TrayCommand::VpnSetWorkMode:
+		m_vpnPage.SetWorkModeFromTray(param);
+		break;
+	case TrayCommand::VpnSetTransportMode:
+		m_vpnPage.SetTransportModeFromTray(param);
+		break;
+	case TrayCommand::VpnSelectServer:
+		m_vpnPage.SelectServerFromTray(param);
+		break;
+	case TrayCommand::Open:
+	case TrayCommand::Exit:
+	default:
+		break;
+	}
+}
+
+void UiShell::UpdateBackground(float deltaTime)
+{
+	if (!m_zapretPageInitialized)
+		return;
+	m_tgWsProxyManager.Update(deltaTime);
+	m_zapretManager.Update(deltaTime);
+	m_vpnManager.Update(deltaTime);
+	m_vpnPage.UpdateRuntime();
+}
+
 float UiShell::TitleBarHeight()
 {
 	return kTitleBarHeight;
@@ -479,8 +606,9 @@ void UiShell::TitleBar::DrawBrand(ImDrawList* drawList, ImVec2 barMin, float hei
 	const float badgeY = barMin.y + (height - badgeH) * 0.5f;
 	const ImVec2 badgeMin = { badgeX, badgeY };
 	const ImVec2 badgeMax = { badgeX + badgeW, badgeY + badgeH };
-	const ImU32 border = ImGui::GetColorU32(theme.GetAccents().ok);
-	const ImU32 fill = IM_COL32(33, 176, 77, 28);
+	const ImVec4 versionAccent = UiCommon::FixedVersionStatusAccent(ComponentUpdateStatus::UpToDate);
+	const ImU32 border = ImGui::ColorConvertFloat4ToU32(versionAccent);
+	const ImU32 fill = ImGui::ColorConvertFloat4ToU32(UiCommon::WithAlpha(versionAccent, 0.11f));
 	drawList->AddRectFilled(badgeMin, badgeMax, fill, 3.f);
 	drawList->AddRect(badgeMin, badgeMax, border, 3.f, 0, 1.25f);
 	drawList->AddText(

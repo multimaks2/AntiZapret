@@ -49,6 +49,7 @@ struct ServiceCatalogEntry
 {
 	const char* id;
 	uint32_t icon;
+	bool brandIcon; // true = Font Awesome Brands, false = Segoe MDL2
 	const char* name;
 	const char* description;
 	ServiceCatalogRegion region;
@@ -59,6 +60,7 @@ struct ServiceRouteEntry
 {
 	std::string id;
 	uint32_t icon = 0;
+	bool brandIcon = false;
 	std::string name;
 	std::string description;
 	ServiceCatalogRegion region = ServiceCatalogRegion::Foreign;

@@ -84,7 +84,7 @@ function Copy-RuntimeFile {
 	return 'locked'
 }
 
-$TargetAntiZapret = Join-Path $TargetRoot 'anti-zapret'
+$TargetAntiZapret = Join-Path $TargetRoot 'zapret-discord-youtube'
 $TargetBin = Join-Path $TargetAntiZapret 'bin'
 $TargetLists = Join-Path $TargetAntiZapret 'lists'
 $TargetService = Join-Path $TargetAntiZapret '.service'
@@ -151,6 +151,19 @@ if (Test-Path -LiteralPath $versionHeader) {
 $appVersionPath = Join-Path $TargetRoot 'version.txt'
 Set-Content -LiteralPath $appVersionPath -Value $appVersion -NoNewline -Encoding ascii
 Write-Host "Wrote app version.txt: $appVersion"
+
+# Font Awesome webfonts (sidebar Solid + Brands for services).
+$fontsSrc = Join-Path $Root 'vendor\fontawesome'
+$fontsDst = Join-Path $TargetRoot 'fonts'
+if (Test-Path -LiteralPath $fontsSrc) {
+	New-Item -ItemType Directory -Force -Path $fontsDst | Out-Null
+	foreach ($fontName in @('fa-brands-400.ttf', 'fa-solid-900.ttf')) {
+		$src = Join-Path $fontsSrc $fontName
+		if (Test-Path -LiteralPath $src) {
+			Copy-Item -LiteralPath $src -Destination (Join-Path $fontsDst $fontName) -Force
+		}
+	}
+}
 
 Write-Host "Deployed zapret runtime to $TargetRoot (copied=$copied skipped=$skipped locked=$locked)"
 if ($locked -gt 0) {

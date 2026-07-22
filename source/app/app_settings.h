@@ -3,6 +3,8 @@
 #include <array>
 #include <string>
 
+#include "gfx/theme_manager.h"
+
 class AppSettings
 {
 public:
@@ -28,8 +30,11 @@ public:
 	bool GetOpenTelegramOnProxyStart() const { return m_openTelegramOnProxyStart; }
 	void SetOpenTelegramOnProxyStart(bool value);
 
-	bool GetLightTheme() const { return m_lightTheme; }
+	bool GetLightTheme() const;
 	void SetLightTheme(bool value);
+
+	UiThemeId GetThemeId() const { return m_themeId; }
+	void SetThemeId(UiThemeId value);
 
 	bool GetAutostartApp() const { return m_autostartApp; }
 	void SetAutostartApp(bool value);
@@ -64,6 +69,13 @@ public:
 	bool GetShowExtraStrategies() const;
 	void SetShowExtraStrategies(bool value);
 
+	bool GetQuickStrategyTest() const;
+	void SetQuickStrategyTest(bool value);
+
+	// false = МБ/с (bytes), true = Мбит/с (bits) — Steam-style network metrics.
+	bool GetNetworkSpeedBits() const { return m_networkSpeedBits; }
+	void SetNetworkSpeedBits(bool value);
+
 	float GetPageScrollMultiplier(int pageIndex) const;
 	void SetPageScrollMultiplier(int pageIndex, float value);
 	void SavePageScrollMultipliers();
@@ -80,7 +92,7 @@ private:
 	bool m_autoStartTgProxyWithAntiZapret = false;
 	bool m_suppressTgAutoStartWithAntiZapret = false;
 	bool m_openTelegramOnProxyStart = false;
-	bool m_lightTheme = false;
+	UiThemeId m_themeId = UiThemeId::Dark;
 	bool m_autostartApp = false;
 	bool m_autostartBypass = false;
 	bool m_autostartTelegram = false;
@@ -92,5 +104,7 @@ private:
 	std::string m_discordDownloadUrl = "https://github.com/multimaks2/AntiZapret/releases/latest";
 	bool m_autoSelectBestStrategy = false;
 	bool m_showExtraStrategies = false;
+	bool m_quickStrategyTest = false;
+	bool m_networkSpeedBits = false;
 	std::array<float, kPageScrollCount> m_pageScrollMultipliers {};
 };
