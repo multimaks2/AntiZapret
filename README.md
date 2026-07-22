@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/multimaks2/AntiZapret/releases/download/v1.3.5i/AntiZapret-Installer.exe"><img src="https://img.shields.io/badge/download-Installer%20v1.3.5i-2ea44f?style=for-the-badge" alt="Download Installer"></a>
-  <a href="https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.5i"><img src="https://img.shields.io/badge/release-v1.3.5i-24292f?style=for-the-badge" alt="Release"></a>
+  <a href="https://github.com/multimaks2/AntiZapret/releases/download/v1.3.6/AntiZapret-Installer.exe"><img src="https://img.shields.io/badge/download-Installer%20v1.3.6-2ea44f?style=for-the-badge" alt="Download Installer"></a>
+  <a href="https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.6"><img src="https://img.shields.io/badge/release-v1.3.6-24292f?style=for-the-badge" alt="Release"></a>
   <img src="https://img.shields.io/badge/platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
 </p>
 
@@ -106,14 +106,14 @@ Telegram ✈️
 
 ## 📥 Скачать
 
-Последний релиз: **[v1.3.5i](https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.5i)** 🎉
+Последний релиз: **[v1.3.6](https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.6)** 🎉
 
 **Рекомендуется:** скачать и запустить установщик  
-➡️ **[AntiZapret-Installer.exe](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.5i/AntiZapret-Installer.exe)**  
+➡️ **[AntiZapret-Installer.exe](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.6/AntiZapret-Installer.exe)**  
 (нужны права администратора)
 
 Альтернатива без установщика: архив  
-[`AntiZapret-1.3.5i-win32.zip`](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.5i/AntiZapret-1.3.5i-win32.zip) → распаковать → запустить `AntiZapret.exe` **от имени администратора** 🔑
+[`AntiZapret-1.3.6-win32.zip`](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.6/AntiZapret-1.3.6-win32.zip) → распаковать → запустить `AntiZapret.exe` **от имени администратора** 🔑
 
 ---
 

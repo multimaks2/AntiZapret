@@ -1,6 +1,7 @@
 #include "vpn/vpn_import.h"
 
 #include "app/app_log.h"
+#include "app/app_settings.h"
 
 #include <Windows.h>
 #include <WinInet.h>
@@ -789,7 +790,7 @@ namespace
 		return SanitizeHwid(utf8);
 	}
 
-	std::string BuildSubscriptionHwid()
+	std::string BuildSystemHwid()
 	{
 		std::string hwid = GetMachineGuid();
 		if (hwid.size() >= 10)
@@ -813,6 +814,19 @@ namespace
 		while (hwid.size() < 10)
 			hwid.push_back('0');
 		return hwid;
+	}
+
+	std::string BuildSubscriptionHwid()
+	{
+		{
+			AppSettings settings;
+			settings.Load();
+			const std::string custom = SanitizeHwid(settings.GetCustomHwid());
+			// Empty / too short custom -> always fall back to system HWID.
+			if (!custom.empty() && custom.size() >= 8)
+				return custom;
+		}
+		return BuildSystemHwid();
 	}
 
 	std::string BuildSubscriptionRequestHeaders(std::string& outHwid)
@@ -1568,4 +1582,9 @@ VpnImportResult VpnImport::ImportFromText(const std::string& text, int nextNodeI
 	}
 
 	return result;
+}
+
+std::string VpnImport::GetSystemHwid()
+{
+	return BuildSystemHwid();
 }

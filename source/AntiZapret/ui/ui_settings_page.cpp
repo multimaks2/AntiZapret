@@ -4,6 +4,7 @@
 #include "gfx/font_manager.h"
 #include "gfx/theme_manager.h"
 #include "ui/ui_common.h"
+#include "vpn/vpn_import.h"
 #include "vpn/vpn_manager.h"
 #include "vpn/vpn_store.h"
 #include "imgui.h"
@@ -54,6 +55,13 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 			m_discordDownloadUrl,
 			sizeof m_discordDownloadUrl,
 			m_appSettings->GetDiscordDownloadUrl().c_str(),
+			_TRUNCATE);
+		const std::string storedHwid = m_appSettings->GetCustomHwid();
+		const std::string systemHwid = VpnImport::GetSystemHwid();
+		strncpy_s(
+			m_customHwid,
+			sizeof m_customHwid,
+			(storedHwid.empty() ? systemHwid : storedHwid).c_str(),
 			_TRUNCATE);
 		m_loadedFromSettings = true;
 	}
@@ -162,6 +170,46 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 				info.name);
 			ImGui::PopID();
 		}
+	}
+	UiCommon::EndCard();
+	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
+
+	if (UiCommon::BeginCard("##settings_hwid", width, colors))
+	{
+		const float innerWidth = ImGui::GetContentRegionAvail().x;
+		UiCommon::SectionHeader("HWID для VPN-подписок", colors);
+		ImGui::Dummy({ 0.f, 4.f });
+		UiCommon::CaptionText(
+			"Заголовок x-hwid при импорте подписки. По умолчанию в поле уже стоит системный HWID — "
+			"можно заменить на свой.",
+			colors,
+			innerWidth);
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+
+		const std::string systemHwid = VpnImport::GetSystemHwid();
+		auto saveHwidFromEdit = [&]() {
+			if (!m_appSettings)
+				return;
+			// Same as system (or empty) -> keep auto mode, don't store a duplicate override.
+			if (m_customHwid[0] == '\0' || systemHwid == m_customHwid)
+				m_appSettings->SetCustomHwid({});
+			else
+				m_appSettings->SetCustomHwid(m_customHwid);
+		};
+
+		UiCommon::PushInputStyle(colors);
+		ImGui::SetNextItemWidth(innerWidth);
+		if (ImGui::InputText(
+				"##custom_hwid",
+				m_customHwid,
+				sizeof m_customHwid,
+				ImGuiInputTextFlags_EnterReturnsTrue))
+		{
+			saveHwidFromEdit();
+		}
+		if (ImGui::IsItemDeactivatedAfterEdit())
+			saveHwidFromEdit();
+		UiCommon::PopInputStyle();
 	}
 	UiCommon::EndCard();
 	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });

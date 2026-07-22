@@ -25,6 +25,7 @@ private:
 	float m_discordShareButtonMix = 1.f;
 	float m_discordDownloadButtonMix = 1.f;
 	char m_discordDownloadUrl[512] = {};
+	char m_customHwid[96] = {};
 	bool m_loadedFromSettings = false;
 	VpnManager* m_vpnManager = nullptr;
 };

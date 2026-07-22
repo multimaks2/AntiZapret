@@ -1,6 +1,7 @@
 #include "app/application.h"
 
 #include "app/app_update_gate.h"
+#include "app/app_version.h"
 #include "app/process_job.h"
 #include "app/protocol_handler.h"
 #include "gfx/d3d11_renderer.h"
@@ -104,6 +105,7 @@ bool Application::Initialize()
 
 	ProcessJob::EnsureInitialized();
 	ProcessJob::CleanupOrphansAtStartup();
+	AppVersion::SyncLocalFile();
 
 	CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 	ImGui_ImplWin32_EnableDpiAwareness();

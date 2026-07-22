@@ -21,4 +21,7 @@ namespace VpnImport
 	bool ParseShareLink(const std::string& line, VpnNode& outNode, int nodeIndex, std::string& outError);
 	// Clean name glyphs, guess country from host, fix Capybara grouping.
 	void NormalizeNodeDisplay(VpnNode& node);
+
+	// MachineGuid-based HWID used for subscription x-hwid when custom override is empty.
+	std::string GetSystemHwid();
 }

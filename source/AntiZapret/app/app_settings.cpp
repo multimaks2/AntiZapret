@@ -160,6 +160,13 @@ void AppSettings::Load()
 			continue;
 		}
 
+		if (currentSection == "vpn")
+		{
+			if (key == "custom_hwid")
+				m_customHwid = value;
+			continue;
+		}
+
 		if (currentSection == "antizapret")
 		{
 			if (key == "auto_select_best")
@@ -215,6 +222,9 @@ void AppSettings::Save()
 	ui["discord_download_url"] = m_discordDownloadUrl;
 	ui["network_speed_bits"] = m_networkSpeedBits ? "1" : "0";
 
+	SettingsDocument::KeyMap vpn;
+	vpn["custom_hwid"] = m_customHwid;
+
 	SettingsDocument::KeyMap scroll;
 	scroll["home"] = std::to_string(m_pageScrollMultipliers[0]);
 	scroll["antizapret"] = std::to_string(m_pageScrollMultipliers[1]);
@@ -231,6 +241,7 @@ void AppSettings::Save()
 	SettingsDocument::SetSection(doc, "tg_proxy", tgProxy);
 	SettingsDocument::SetSection(doc, "antizapret", antizapret);
 	SettingsDocument::SetSection(doc, "ui", ui);
+	SettingsDocument::SetSection(doc, "vpn", vpn);
 	SettingsDocument::SetSection(doc, "scroll", scroll);
 	SettingsDocument::Save(doc);
 }
@@ -369,6 +380,14 @@ void AppSettings::SetNetworkSpeedBits(bool value)
 	if (m_networkSpeedBits == value)
 		return;
 	m_networkSpeedBits = value;
+	Save();
+}
+
+void AppSettings::SetCustomHwid(const std::string& value)
+{
+	if (m_customHwid == value)
+		return;
+	m_customHwid = value;
 	Save();
 }
 

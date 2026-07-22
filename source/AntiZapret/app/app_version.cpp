@@ -19,23 +19,54 @@ namespace
 			return {};
 		return value.substr(start);
 	}
+
+	std::wstring VersionFilePath()
+	{
+		return ZapretPaths::GetAppDirectory() + L"\\version.txt";
+	}
+}
+
+std::string ReadEmbedded()
+{
+	return ANTIZAPRET_VERSION;
 }
 
 std::string ReadLocal()
 {
-	const std::wstring dir = ZapretPaths::GetAppDirectory();
-	const std::wstring path = dir + L"\\version.txt";
-	std::ifstream input(path);
-	if (input)
+	// Always show the version baked into the running binary.
+	// version.txt can lag behind after a partial update/install and used to show e.g. 1.3.5
+	// while the title should already be 1.3.5i.
+	return ReadEmbedded();
+}
+
+void SyncLocalFile()
+{
+	const std::string embedded = ReadEmbedded();
+	const std::wstring path = VersionFilePath();
+
+	std::string existing;
 	{
-		std::string line;
-		while (std::getline(input, line))
+		std::ifstream input(path);
+		if (input)
 		{
-			const std::string trimmed = Trim(line);
-			if (!trimmed.empty())
-				return trimmed;
+			std::string line;
+			while (std::getline(input, line))
+			{
+				const std::string trimmed = Trim(line);
+				if (!trimmed.empty())
+				{
+					existing = trimmed;
+					break;
+				}
+			}
 		}
 	}
-	return ANTIZAPRET_VERSION;
+
+	if (existing == embedded)
+		return;
+
+	std::ofstream output(path, std::ios::binary | std::ios::trunc);
+	if (output)
+		output << embedded << "\n";
 }
 }

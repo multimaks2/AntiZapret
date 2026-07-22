@@ -76,6 +76,10 @@ public:
 	bool GetNetworkSpeedBits() const { return m_networkSpeedBits; }
 	void SetNetworkSpeedBits(bool value);
 
+	// Optional override for VPN subscription x-hwid header. Empty = auto (MachineGuid).
+	const std::string& GetCustomHwid() const { return m_customHwid; }
+	void SetCustomHwid(const std::string& value);
+
 	float GetPageScrollMultiplier(int pageIndex) const;
 	void SetPageScrollMultiplier(int pageIndex, float value);
 	void SavePageScrollMultipliers();
@@ -106,5 +110,6 @@ private:
 	bool m_showExtraStrategies = false;
 	bool m_quickStrategyTest = false;
 	bool m_networkSpeedBits = false;
+	std::string m_customHwid;
 	std::array<float, kPageScrollCount> m_pageScrollMultipliers {};
 };
