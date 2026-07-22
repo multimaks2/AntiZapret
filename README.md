@@ -1,19 +1,28 @@
-# AntiZapret
+# 🚀 AntiZapret
 
 <p align="center">
   <img src="screen/1.png" alt="AntiZapret — главная страница" width="900">
 </p>
 
-**AntiZapret** — одно Windows-приложение, в котором собраны несколько разных сервисов для обхода блокировок и работы сети. Вместо кучи отдельных утилит — общий интерфейс, общий запуск и быстрый обзор состояния.
+<p align="center">
+  <strong>Один клиент</strong> для обхода блокировок, Telegram-прокси, VPN и маршрутизации.<br>
+  Меньше отдельных утилит — больше спокойствия 😌
+</p>
+
+<p align="center">
+  <a href="https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.5"><img src="https://img.shields.io/badge/download-v1.3.5-2ea44f?style=for-the-badge" alt="Download"></a>
+  <a href="https://fontawesome.com/"><img src="https://img.shields.io/badge/icons-Font%20Awesome-528DD7?style=for-the-badge&logo=fontawesome&logoColor=white" alt="Font Awesome"></a>
+  <img src="https://img.shields.io/badge/platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
+</p>
 
 <details>
-<summary>Ещё скриншоты</summary>
+<summary>📸 Ещё скриншоты</summary>
 
 <br>
 
-| Антизапрет | TG Fix |
+| Антизапрет | TG WS Proxy |
 |:---:|:---:|
-| ![Антизапрет](screen/2.png) | ![TG Fix](screen/3.png) |
+| ![Антизапрет](screen/2.png) | ![TG WS Proxy](screen/3.png) |
 
 | Маршрутизация | Консоль |
 |:---:|:---:|
@@ -25,57 +34,120 @@
 
 </details>
 
-## Что внутри
+---
 
-Тезисно — что объединено в одном клиенте:
+## ✨ Что внутри
 
-- **Антизапрет (zapret)** — обход блокировок Discord, YouTube и связанных сервисов через стратегии и WinDivert
-- **TG WS Proxy** — MTProto-прокси для ускорения и стабильности Telegram
-- **VPN (mihomo)** — подключение к своим серверам (vmess / trojan и др.) с удобным списком узлов
-- **Маршрутизация** — правила, куда какой трафик идёт (обход / VPN / напрямую)
-- **Главная** — статус сервисов, быстрый старт/стоп и мониторинг сети
-- **Консоль и настройки** — логи, автозапуск, тема интерфейса
+Иконки сервисов — из [Font Awesome](https://fontawesome.com/) (Brands / Solid), как в самом приложении.
 
-Всё это собрано **для удобства**: один установщик-пакет, один UI, меньше ручной возни с отдельными программами.
+<table>
+<tr>
+<td width="50%" valign="top">
 
-## Скачать
+### <img src="screen/icons/shield-halved.svg" height="18" alt=""> Антизапрет (zapret)
+Обход блокировок
+<img src="screen/icons/discord.svg" height="14" alt="Discord">
+<img src="screen/icons/youtube.svg" height="14" alt="YouTube">
+и связанных сервисов через стратегии и WinDivert 🛡️
 
-Последний релиз: **[v1.3.5](https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.5)**  
-Архив: `AntiZapret-1.3.5-win32.zip` — распаковать и запустить `AntiZapret.exe` **от имени администратора**.
+</td>
+<td width="50%" valign="top">
 
-## Сборка из исходников
+### <img src="screen/icons/telegram.svg" height="18" alt=""> TG WS Proxy
+MTProto-прокси для ускорения и стабильности
+<img src="screen/icons/telegram.svg" height="14" alt="Telegram">
+Telegram ✈️
 
-Требования:
-- Windows
-- Visual Studio 2026 (toolset `v145`) с C++ desktop workload
-- Python 3 (для генерации стратегий, при необходимости)
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### <img src="screen/icons/globe.svg" height="18" alt=""> VPN (mihomo)
+Подключение к своим серверам (vmess / trojan и др.) с удобным списком узлов 🌍
+
+</td>
+<td width="50%" valign="top">
+
+### <img src="screen/icons/route.svg" height="18" alt=""> Маршрутизация
+Куда идёт трафик: обход / VPN / напрямую.
+У популярных сервисов —
+<img src="screen/icons/discord.svg" height="14" alt="">
+<img src="screen/icons/youtube.svg" height="14" alt="">
+<img src="screen/icons/spotify.svg" height="14" alt="">
+<img src="screen/icons/steam.svg" height="14" alt="">
+и другие бренды 🗺️
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### <img src="screen/icons/house.svg" height="18" alt=""> Главная
+Статус сервисов, быстрый старт/стоп, график сети и переключатель **Мбит/с ↔ МБ/с** 📊
+
+</td>
+<td width="50%" valign="top">
+
+### <img src="screen/icons/terminal.svg" height="18" alt=""> Консоль
+&nbsp;&nbsp;<img src="screen/icons/gear.svg" height="18" alt=""> **Настройки**
+Логи, автозапуск, темы оформления (включая Matrix 🟩) ⚙️
+
+</td>
+</tr>
+</table>
+
+Всё собрано **для удобства**: один пакет, один UI, меньше ручной возни 🎯
+
+---
+
+## 📥 Скачать
+
+Последний релиз: **[v1.3.5](https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.5)** 🎉
+
+Архив `AntiZapret-1.3.5-win32.zip` → распаковать → запустить `AntiZapret.exe` **от имени администратора** 🔑
+
+---
+
+## 🛠️ Сборка из исходников
+
+**Нужно:**
+- 🪟 Windows
+- 🧰 Visual Studio 2026 (toolset `v145`) + C++ desktop workload
+- 🐍 Python 3 (для генерации стратегий, при необходимости)
 
 ```bat
 create-app.bat
 ```
 
 Откройте сгенерированное решение Visual Studio и соберите `Release|Win32`.  
-Готовый `AntiZapret.exe` появится в `bin/x32`.
+Готовый `AntiZapret.exe` появится в `bin/x32` ✅
 
-## Структура репозитория
+---
 
-- `source/` — исходный код приложения
-- `vendor/` — сторонние зависимости
-- `utils/` — premake и скрипты сборки/генерации
-- `screen/` — скриншоты интерфейса
-- `premake5.lua` — описание проекта Premake
+## 📁 Структура репозитория
 
-## Благодарности
+| Путь | Что там |
+|:---|:---|
+| 📂 `source/` | исходный код приложения |
+| 📂 `vendor/` | сторонние зависимости (в т.ч. Font Awesome) |
+| 📂 `utils/` | Premake и скрипты сборки |
+| 📂 `screen/` | скриншоты интерфейса |
+| 📄 `premake5.lua` | описание проекта Premake |
 
-AntiZapret построен на открытых проектах и идеях. Отдельное спасибо авторам и сообществу:
+---
 
-### Обход блокировок и прокси
+## 🙏 Благодарности
+
+AntiZapret стоит на плечах открытых проектов. Огромное спасибо авторам и сообществу ❤️
+
+### 🛡️ Обход блокировок и прокси
 - [Flowseal / zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) — стратегии, списки и runtime для Discord/YouTube
 - [bol-van / zapret-win-bundle](https://github.com/bol-van/zapret-win-bundle) — `winws` и WinDivert в Windows-сборке
 - [WinDivert](https://reqrypt.org/windivert.html) — перехват сетевого трафика
 - [Flowseal / tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) — MTProto-прокси для Telegram
 
-### VPN и маршрутизация
+### 🌐 VPN и маршрутизация
 - [MetaCubeX / mihomo](https://github.com/MetaCubeX/mihomo) — VPN-ядро (Clash Meta)
 - [Wintun](https://www.wintun.net/) — TUN-адаптер для Windows
 - [2dust / v2rayN](https://github.com/2dust/v2rayN) — идеи и подход к VPN-интерфейсу
@@ -83,12 +155,14 @@ AntiZapret построен на открытых проектах и идеях
 - [runetfreedom / russia-v2ray-custom-routing-list](https://github.com/runetfreedom/russia-v2ray-custom-routing-list) — пресеты маршрутизации
 - [MetaCubeX / meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat) — GeoIP / geosite данные
 
-### Интерфейс и инструменты
+### 🎨 Интерфейс и инструменты
 - [ocornut / imgui](https://github.com/ocornut/imgui) — Dear ImGui
-- [Font Awesome](https://fontawesome.com/) — иконки сайдбара (Solid) и сервисов в маршрутизации (Brands)
+- [Font Awesome](https://fontawesome.com/) — иконки сайдбара (Solid) и сервисов в маршрутизации (Brands)  
+  🔎 каталог брендов: [fontawesome.com/search?f=brands](https://fontawesome.com/search?f=brands)
 - [Lua](https://www.lua.org/) — встроенный скриптовый движок
 - [Premake](https://premake.github.io/) — генерация проектов Visual Studio
 - [flagcdn.com](https://flagcdn.com/) — иконки флагов стран
 - Microsoft — DirectX 11 и Segoe MDL2 Assets
 
-AntiZapret **не аффилирован** с перечисленными проектами; все права на исходный код и торговые марки остаются у их авторов. Сторонние компоненты сохраняют свои лицензии (см. каталоги в `vendor/`).
+> AntiZapret **не аффилирован** с перечисленными проектами; права на код и торговые марки остаются у их авторов.  
+> Сторонние компоненты сохраняют свои лицензии (см. `vendor/`).
