@@ -23,28 +23,19 @@
 
 | Антизапрет | TG WS Proxy |
 |:---:|:---:|
-| <img width="1023" height="760" alt="2" src="https://github.com/user-attachments/assets/77117a35-a1c2-48a3-b361-705f79adbdc8" />
- | <img width="1023" height="760" alt="3" src="https://github.com/user-attachments/assets/6b278256-1786-4775-a1fb-1ccf29175d49" />
- |
+| <img width="1023" height="760" alt="Антизапрет" src="https://github.com/user-attachments/assets/77117a35-a1c2-48a3-b361-705f79adbdc8" /> | <img width="1023" height="760" alt="TG WS Proxy" src="https://github.com/user-attachments/assets/6b278256-1786-4775-a1fb-1ccf29175d49" /> |
 
 | VPN | Маршрутизация |
 |:---:|:---:|
-| <img width="1023" height="760" alt="4" src="https://github.com/user-attachments/assets/171a98bb-e275-4bc6-9c90-72385239f247" />
- | <img width="1023" height="760" alt="5" src="https://github.com/user-attachments/assets/9dfc1649-0bb7-49ee-bf54-d42792d9af86" />
- |
+| <img width="1023" height="760" alt="VPN" src="https://github.com/user-attachments/assets/171a98bb-e275-4bc6-9c90-72385239f247" /> | <img width="1023" height="760" alt="Маршрутизация" src="https://github.com/user-attachments/assets/9dfc1649-0bb7-49ee-bf54-d42792d9af86" /> |
 
 | Консоль | Настройки |
 |:---:|:---:|
-| <img width="1023" height="760" alt="6" src="https://github.com/user-attachments/assets/b8fe9aae-301f-4cb3-89cf-0eee9b2ea584" />
-
-) |<img width="1023" height="760" alt="7" src="https://github.com/user-attachments/assets/5eb49af6-fc89-4a15-a070-953e10632ace" />
-|
+| <img width="1023" height="760" alt="Консоль" src="https://github.com/user-attachments/assets/b8fe9aae-301f-4cb3-89cf-0eee9b2ea584" /> | <img width="1023" height="760" alt="Настройки" src="https://github.com/user-attachments/assets/5eb49af6-fc89-4a15-a070-953e10632ace" /> |
 
 | О приложении |
-|:---:|:---:|
-| <img width="1023" height="950" alt="8" src="https://github.com/user-attachments/assets/31d36ba8-847c-4d56-b8a0-05e64627bb42" />
- | 
-
+|:---:|
+| <img width="1023" height="950" alt="О приложении" src="https://github.com/user-attachments/assets/31d36ba8-847c-4d56-b8a0-05e64627bb42" /> |
 
 </details>
 
