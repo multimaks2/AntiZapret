@@ -139,9 +139,9 @@ if (Test-Path -LiteralPath $versionSrc) {
 	}
 }
 
-# App version.txt next to AntiZapret.exe / AntiZapret-Updater.exe (from source/version.h).
+# App version.txt next to AntiZapret.exe / AntiZapret-Updater.exe (from source/AntiZapret/version.h).
 $appVersion = '0.0.0'
-$versionHeader = Join-Path $Root 'source\version.h'
+$versionHeader = Join-Path $Root 'source\AntiZapret\version.h'
 if (Test-Path -LiteralPath $versionHeader) {
 	$headerText = Get-Content -LiteralPath $versionHeader -Raw
 	if ($headerText -match 'ANTIZAPRET_VERSION\s+"([^"]+)"') {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse vendor/zapret-discord-youtube general*.bat and emit source/zapret/strategies.hpp."""
+"""Parse vendor/zapret-discord-youtube general*.bat and emit source/AntiZapret/zapret/strategies.hpp."""
 
 from __future__ import annotations
 
@@ -570,7 +570,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--output",
-        default="source/zapret/strategies.hpp",
+        default="source/AntiZapret/zapret/strategies.hpp",
         help="Generated header path",
     )
     parser.add_argument(
@@ -580,7 +580,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--manifest",
-        default="source/zapret/strategies_manifest.json",
+        default="source/AntiZapret/zapret/strategies_manifest.json",
         help="Optional JSON manifest of merged strategies for description generation",
     )
     args = parser.parse_args()

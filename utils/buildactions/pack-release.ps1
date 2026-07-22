@@ -22,7 +22,7 @@ if (-not (Test-Path $exe)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-	$versionHeader = Get-Content (Join-Path $root "source\version.h") -Raw
+	$versionHeader = Get-Content (Join-Path $root "source\AntiZapret\version.h") -Raw
 	if ($versionHeader -match 'ANTIZAPRET_VERSION\s+"([^"]+)"') {
 		$Version = $Matches[1]
 	} else {

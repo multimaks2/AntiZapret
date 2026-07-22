@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate source/zapret/strategy_descriptions.cpp from strategies_manifest.json."""
+"""Generate source/AntiZapret/zapret/strategy_descriptions.cpp from strategies_manifest.json."""
 
 from __future__ import annotations
 
@@ -420,12 +420,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--manifest",
-        default="source/zapret/strategies_manifest.json",
+        default="source/AntiZapret/zapret/strategies_manifest.json",
         help="Strategy manifest generated together with strategies.hpp",
     )
     parser.add_argument(
         "--output",
-        default="source/zapret/strategy_descriptions.cpp",
+        default="source/AntiZapret/zapret/strategy_descriptions.cpp",
         help="Generated descriptions source path",
     )
     args = parser.parse_args()
