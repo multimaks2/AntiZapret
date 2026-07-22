@@ -40,8 +40,8 @@
 
 ## Скачать
 
-Последний релиз: **[v1.0.0](https://github.com/multimaks2/AntiZapret/releases/tag/v1.0.0)**  
-Архив: `AntiZapret-1.0.0-win32.zip` — распаковать и запустить `AntiZapret.exe` **от имени администратора**.
+Последний релиз: **[v1.3.5](https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.5)**  
+Архив: `AntiZapret-1.3.5-win32.zip` — распаковать и запустить `AntiZapret.exe` **от имени администратора**.
 
 ## Сборка из исходников
 
@@ -85,6 +85,7 @@ AntiZapret построен на открытых проектах и идеях
 
 ### Интерфейс и инструменты
 - [ocornut / imgui](https://github.com/ocornut/imgui) — Dear ImGui
+- [Font Awesome](https://fontawesome.com/) — иконки сайдбара (Solid) и сервисов в маршрутизации (Brands)
 - [Lua](https://www.lua.org/) — встроенный скриптовый движок
 - [Premake](https://premake.github.io/) — генерация проектов Visual Studio
 - [flagcdn.com](https://flagcdn.com/) — иконки флагов стран

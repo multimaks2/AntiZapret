@@ -124,10 +124,11 @@ void UiAboutPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 		DrawCreditsSection("VPN и маршрутизация", vpn, 6, colors);
 
 		const CreditEntry data[] = {
+			{ "Font Awesome", "Иконки сайдбара (Solid) и сервисов в маршрутизации (Brands)", "https://fontawesome.com/" },
 			{ "flagcdn.com", "Иконки флагов стран в списке VPN", "https://flagcdn.com/" },
-			{ "Segoe MDL2 Assets", "Иконки интерфейса (Microsoft)", "https://learn.microsoft.com/windows/apps/design/style/segoe-ui-symbol-font" },
+			{ "Segoe MDL2 Assets", "Дополнительные иконки интерфейса (Microsoft)", "https://learn.microsoft.com/windows/apps/design/style/segoe-ui-symbol-font" },
 		};
-		DrawCreditsSection("Данные и ресурсы", data, 2, colors);
+		DrawCreditsSection("Данные и ресурсы", data, 3, colors);
 
 		ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
 		ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
