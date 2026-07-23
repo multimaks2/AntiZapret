@@ -41,64 +41,7 @@
 
 ---
 
-## ✨ Что внутри
 
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### <img src="screen/icons/shield-halved.svg" height="18" alt=""> Антизапрет (zapret)
-Обход блокировок
-<img src="screen/icons/discord.svg" height="14" alt="Discord">
-<img src="screen/icons/youtube.svg" height="14" alt="YouTube">
-и связанных сервисов через стратегии и WinDivert 🛡️
-
-</td>
-<td width="50%" valign="top">
-
-### <img src="screen/icons/telegram.svg" height="18" alt=""> TG WS Proxy
-MTProto-прокси для ускорения и стабильности
-<img src="screen/icons/telegram.svg" height="14" alt="Telegram">
-Telegram ✈️
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### <img src="screen/icons/globe.svg" height="18" alt=""> VPN (mihomo)
-Подключение к своим серверам (vmess / trojan и др.) с удобным списком узлов 🌍
-
-</td>
-<td width="50%" valign="top">
-
-### <img src="screen/icons/route.svg" height="18" alt=""> Маршрутизация
-Куда идёт трафик: обход / VPN / напрямую.
-У популярных сервисов —
-<img src="screen/icons/discord.svg" height="14" alt="">
-<img src="screen/icons/youtube.svg" height="14" alt="">
-<img src="screen/icons/spotify.svg" height="14" alt="">
-<img src="screen/icons/steam.svg" height="14" alt="">
-и другие бренды 🗺️
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### <img src="screen/icons/house.svg" height="18" alt=""> Главная
-Статус сервисов, быстрый старт/стоп, график сети и переключатель **Мбит/с ↔ МБ/с** 📊
-
-</td>
-<td width="50%" valign="top">
-
-### <img src="screen/icons/terminal.svg" height="18" alt=""> Консоль
-&nbsp;&nbsp;<img src="screen/icons/gear.svg" height="18" alt=""> **Настройки**
-Логи, автозапуск, темы оформления (включая Matrix 🟩) ⚙️
-
-</td>
-</tr>
-</table>
 
 Всё собрано **для удобства**: один пакет, один UI, меньше ручной возни 🎯
 
