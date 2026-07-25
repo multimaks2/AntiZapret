@@ -1,5 +1,6 @@
 #pragma once
 
+#include "vpn/vpn_import.h"
 #include "vpn/vpn_node.h"
 #include "vpn/vpn_store.h"
 
@@ -61,7 +62,7 @@ private:
 		std::vector<VpnNode> importedNodes,
 		std::vector<std::string> errors,
 		const std::string& sourceUrl,
-		long long subscriptionExpireUnix);
+		const VpnImportResult& meta);
 	void ApplyPendingGeoLookups();
 	void ApplyPendingProbeResults();
 	void QueueCountryLookups();
@@ -69,7 +70,8 @@ private:
 		std::vector<VpnNode> importedNodes,
 		int duplicatesSkipped,
 		std::vector<std::string> errors,
-		long long subscriptionExpireUnix);
+		const VpnImportResult& meta);
+	void ApplySubscriptionMetaToSettings(VpnStoreSettings& settings, const VpnImportResult& meta);
 	void DrawListView(ThemeManager& theme, FontManager& fonts, float width);
 	void DrawDetailView(ThemeManager& theme, FontManager& fonts, float width);
 	void SyncVpnRuntime();
@@ -78,14 +80,18 @@ private:
 	int FindNodeIndexByUri(const std::string& uri) const;
 
 	void StartPing(bool selectedOnly);
-	void StartPingIndices(std::vector<int> indices);
+	void StartPingIndices(std::vector<int> indices, std::string groupKey = {});
 	void StartTcpPingIndices(std::vector<int> indices);
 	void StartRealPingIndices(std::vector<int> indices);
 	void StartSpeedTest(bool selectedOnly);
-	void StartSpeedTestIndices(std::vector<int> indices);
+	void StartSpeedTestIndices(std::vector<int> indices, std::string groupKey = {});
+	void StopPing();
+	void StopSpeed();
 	void StopProbe();
+	bool AnyProbeBusy() const;
 	void DeleteSelectedServer();
 	void DeleteGroupServers(const std::vector<int>& indices);
+	void RenameGroup(const std::string& oldGroupKey, const std::string& newDisplayName);
 	void ExportOutboundJson(int nodeIndex);
 	void ExportRuntimeConfig(int nodeIndex);
 	void OpenSelectedDetails();
@@ -137,6 +143,16 @@ private:
 		std::vector<std::string> errors;
 		std::string refreshSourceUrl; // non-empty => replace subscription nodes
 		long long subscriptionExpireUnix = 0;
+		long long subscriptionUploadBytes = 0;
+		long long subscriptionDownloadBytes = 0;
+		long long subscriptionTotalBytes = 0;
+		std::string subscriptionSupportUrl;
+		std::string subscriptionProfileTitle;
+		std::string subscriptionAnnounce;
+		std::string subscriptionProviderId;
+		std::string subscriptionUserId;
+		std::string subscriptionIconUrl;
+		bool hasSubscriptionCard = false;
 		bool ready = false;
 	};
 	PendingImportResult m_pendingImport;
@@ -152,8 +168,12 @@ private:
 	std::vector<PendingGeoResult> m_pendingGeo;
 	std::unordered_set<std::string> m_geoInFlight;
 
-	std::atomic<bool> m_probeRunning { false };
-	std::atomic<bool> m_probeCancel { false };
+	std::atomic<bool> m_pingRunning { false };
+	std::atomic<bool> m_pingCancel { false };
+	std::atomic<bool> m_speedRunning { false };
+	std::atomic<bool> m_speedCancel { false };
+	std::string m_pingGroupKey;
+	std::string m_speedGroupKey;
 	std::mutex m_probeMutex;
 	std::string m_toolbarStatus;
 
@@ -171,4 +191,10 @@ private:
 	bool m_probeDirty = false;
 	// Persistent group open state (avoid CollapsingHeader false when clipped).
 	std::unordered_map<std::string, bool> m_groupOpen;
+	// 0..1 appear animation per group (list fade-in).
+	std::unordered_map<std::string, float> m_groupAppear;
+	// RMB rename for non-subscription groups.
+	std::string m_renameGroupKey;
+	char m_renameGroupBuf[128] = {};
+	bool m_renameGroupRequestOpen = false;
 };

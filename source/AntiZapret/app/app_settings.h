@@ -121,7 +121,8 @@ private:
 	bool m_confirmAdult = false;
 	bool m_discordPresenceEnabled = true;
 	bool m_discordDownloadButtonEnabled = true;
-	std::string m_discordDownloadUrl = "https://github.com/multimaks2/AntiZapret/releases/latest";
+	std::string m_discordDownloadUrl =
+		"https://github.com/multimaks2/AntiZapret/releases/latest/download/AntiZapret-Installer.exe";
 	bool m_discordImportAntiZapretEnabled = false;
 	bool m_discordImportVpnEnabled = false;
 	bool m_discordImportTimedEnabled = true;

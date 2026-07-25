@@ -87,6 +87,37 @@ void VpnStore::ParseSettingsLine(const std::string& key, const std::string& valu
 		settings.lastSubscriptionUrl = value;
 	else if (key == "subscription_expire_unix")
 		settings.subscriptionExpireUnix = ParseInt64(value, 0);
+	else if (key == "subscription_upload_bytes")
+		settings.subscriptionUploadBytes = ParseInt64(value, 0);
+	else if (key == "subscription_download_bytes")
+		settings.subscriptionDownloadBytes = ParseInt64(value, 0);
+	else if (key == "subscription_total_bytes")
+		settings.subscriptionTotalBytes = ParseInt64(value, 0);
+	else if (key == "subscription_support_url")
+		settings.subscriptionSupportUrl = value;
+	else if (key == "subscription_profile_title")
+		settings.subscriptionProfileTitle = value;
+	else if (key == "subscription_announce")
+		settings.subscriptionAnnounce = value;
+	else if (key == "subscription_provider_id")
+		settings.subscriptionProviderId = value;
+	else if (key == "subscription_user_id")
+		settings.subscriptionUserId = value;
+	else if (key == "subscription_icon_url")
+	{
+		settings.subscriptionIconUrl = value;
+		const std::string lower = [&value]()
+		{
+			std::string s = value;
+			for (char& ch : s)
+				ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+			return s;
+		}();
+		if (lower.find("telesco.pe") != std::string::npos
+			|| lower.find("telegram.org") != std::string::npos
+			|| lower.find("telegram-cdn.org") != std::string::npos)
+			settings.subscriptionIconUrl.clear();
+	}
 }
 
 void VpnStore::LoadSettings(VpnStoreSettings& settings) const
@@ -119,6 +150,23 @@ void VpnStore::SaveSettings(const VpnStoreSettings& settings) const
 	keys["fix_discord"] = settings.fixDiscord ? "1" : "0";
 	keys["last_subscription_url"] = settings.lastSubscriptionUrl;
 	keys["subscription_expire_unix"] = std::to_string(settings.subscriptionExpireUnix);
+	keys["subscription_upload_bytes"] = std::to_string(settings.subscriptionUploadBytes);
+	keys["subscription_download_bytes"] = std::to_string(settings.subscriptionDownloadBytes);
+	keys["subscription_total_bytes"] = std::to_string(settings.subscriptionTotalBytes);
+	auto sanitizeLine = [](std::string value) {
+		for (char& ch : value)
+		{
+			if (ch == '\r' || ch == '\n' || ch == '\t')
+				ch = ' ';
+		}
+		return value;
+	};
+	keys["subscription_support_url"] = sanitizeLine(settings.subscriptionSupportUrl);
+	keys["subscription_profile_title"] = sanitizeLine(settings.subscriptionProfileTitle);
+	keys["subscription_announce"] = sanitizeLine(settings.subscriptionAnnounce);
+	keys["subscription_provider_id"] = sanitizeLine(settings.subscriptionProviderId);
+	keys["subscription_user_id"] = sanitizeLine(settings.subscriptionUserId);
+	keys["subscription_icon_url"] = sanitizeLine(settings.subscriptionIconUrl);
 	SettingsDocument::UpsertSection("vpn", keys);
 }
 

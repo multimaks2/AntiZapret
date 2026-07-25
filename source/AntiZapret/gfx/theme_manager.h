@@ -78,6 +78,8 @@ public:
 	bool IsLight() const;
 	UiThemeColors GetColors() const;
 	UiAccentColors GetAccents() const;
+	// Static palette (no live transition) — settings theme previews.
+	static UiThemeColors PaletteColors(UiThemeId id);
 	void ApplySystemTheme(HWND hwnd) const;
 	float GetClearColorRGBA(int channel) const;
 

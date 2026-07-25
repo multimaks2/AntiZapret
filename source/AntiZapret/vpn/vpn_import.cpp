@@ -451,34 +451,51 @@ namespace
 
 	std::string QueryHttpHeader(HINTERNET request, const char* headerName)
 	{
-		char buffer[512] = {};
+		if (!request || !headerName || !headerName[0])
+			return {};
+
 		const size_t nameLen = std::strlen(headerName);
-		if (nameLen + 1 >= sizeof(buffer))
-			return {};
-		std::memcpy(buffer, headerName, nameLen + 1);
-		DWORD bufferSize = sizeof(buffer);
+		std::vector<char> buffer(nameLen + 1, 0);
+		std::memcpy(buffer.data(), headerName, nameLen + 1);
+		DWORD bufferSize = static_cast<DWORD>(buffer.size());
 		DWORD index = 0;
-		if (!HttpQueryInfoA(request, HTTP_QUERY_CUSTOM, buffer, &bufferSize, &index))
-			return {};
-		buffer[sizeof(buffer) - 1] = '\0';
-		return Trim(std::string(buffer));
-	}
-
-	long long ParseSubscriptionExpireUnix(const std::string& userInfo)
-	{
-		if (userInfo.empty())
-			return 0;
-
-		std::string lower = userInfo;
-		for (char& ch : lower)
+		if (!HttpQueryInfoA(request, HTTP_QUERY_CUSTOM, buffer.data(), &bufferSize, &index))
 		{
-			if (ch >= 'A' && ch <= 'Z')
-				ch = static_cast<char>(ch - 'A' + 'a');
+			const DWORD err = GetLastError();
+			if (err != ERROR_INSUFFICIENT_BUFFER || bufferSize == 0)
+				return {};
+
+			buffer.assign(static_cast<size_t>(bufferSize) + 1, 0);
+			std::memcpy(buffer.data(), headerName, nameLen + 1);
+			bufferSize = static_cast<DWORD>(buffer.size());
+			index = 0;
+			if (!HttpQueryInfoA(request, HTTP_QUERY_CUSTOM, buffer.data(), &bufferSize, &index))
+				return {};
 		}
 
-		size_t pos = lower.find("expire=");
+		buffer[buffer.size() - 1] = '\0';
+		return Trim(std::string(buffer.data()));
+	}
+
+	struct SubscriptionUserInfo
+	{
+		long long expireUnix = 0;
+		long long uploadBytes = 0;
+		long long downloadBytes = 0;
+		long long totalBytes = 0;
+	};
+
+	long long ParseUserInfoLong(const std::string& userInfo, const std::string& lower, const char* key)
+	{
+		std::string pattern = key;
+		pattern += '=';
+		size_t pos = lower.find(pattern);
 		if (pos == std::string::npos)
-			pos = lower.find("expire:");
+		{
+			pattern = key;
+			pattern += ':';
+			pos = lower.find(pattern);
+		}
 		if (pos == std::string::npos)
 			return 0;
 
@@ -489,14 +506,37 @@ namespace
 		++pos;
 		while (pos < lower.size() && (lower[pos] == ' ' || lower[pos] == '\t'))
 			++pos;
+		return std::atoll(userInfo.c_str() + pos);
+	}
 
-		long long value = std::atoll(userInfo.c_str() + pos);
-		// Some panels send milliseconds.
-		if (value > 100000000000LL)
-			value /= 1000;
-		if (value < 1000000000LL) // before ~2001 — ignore junk
-			return 0;
-		return value;
+	SubscriptionUserInfo ParseSubscriptionUserInfo(const std::string& userInfo)
+	{
+		SubscriptionUserInfo info;
+		if (userInfo.empty())
+			return info;
+
+		std::string lower = userInfo;
+		for (char& ch : lower)
+		{
+			if (ch >= 'A' && ch <= 'Z')
+				ch = static_cast<char>(ch - 'A' + 'a');
+		}
+
+		long long expire = ParseUserInfoLong(userInfo, lower, "expire");
+		if (expire > 100000000000LL)
+			expire /= 1000;
+		if (expire >= 1000000000LL)
+			info.expireUnix = expire;
+
+		info.uploadBytes = ParseUserInfoLong(userInfo, lower, "upload");
+		info.downloadBytes = ParseUserInfoLong(userInfo, lower, "download");
+		info.totalBytes = ParseUserInfoLong(userInfo, lower, "total");
+		return info;
+	}
+
+	long long ParseSubscriptionExpireUnix(const std::string& userInfo)
+	{
+		return ParseSubscriptionUserInfo(userInfo).expireUnix;
 	}
 
 	void AssignNodeIdentity(VpnNode& node, int nodeIndex)
@@ -1168,15 +1208,83 @@ namespace
 		return uris;
 	}
 
+	struct SubscriptionFetchMeta
+	{
+		long long expireUnix = 0;
+		long long uploadBytes = 0;
+		long long downloadBytes = 0;
+		long long totalBytes = 0;
+		std::string profileTitle;
+		std::string supportUrl;
+		std::string announce;
+		std::string providerId;
+		std::string userId;
+		std::string iconUrl;
+		std::string contentFileName;
+		// True only when response carried subscription card headers (3x-ui / Remnawave style).
+		bool hasSubscriptionCard = false;
+	};
+
+	void SplitTrailingUserId(std::string& announce, std::string& outUserId)
+	{
+		outUserId.clear();
+		if (announce.empty())
+			return;
+		// Structured multi-line announces (3x-ui / Capybara) already embed user id — don't strip.
+		if (announce.find('\n') != std::string::npos || announce.find('\r') != std::string::npos)
+			return;
+
+		size_t end = announce.size();
+		while (end > 0 && (announce[end - 1] == ' ' || announce[end - 1] == '\t' || announce[end - 1] == '.'))
+			--end;
+		size_t start = end;
+		while (start > 0 && announce[start - 1] >= '0' && announce[start - 1] <= '9')
+			--start;
+		if (end - start < 4)
+			return;
+
+		outUserId = announce.substr(start, end - start);
+		while (start > 0 && (announce[start - 1] == ' ' || announce[start - 1] == '\t' || announce[start - 1] == '.'))
+			--start;
+		announce.resize(start);
+	}
+
+	std::string ParseContentDispositionFilename(const std::string& raw)
+	{
+		std::string lower = raw;
+		for (char& ch : lower)
+		{
+			if (ch >= 'A' && ch <= 'Z')
+				ch = static_cast<char>(ch - 'A' + 'a');
+		}
+		size_t pos = lower.find("filename=");
+		if (pos == std::string::npos)
+			pos = lower.find("filename*=");
+		if (pos == std::string::npos)
+			return {};
+		pos = raw.find('=', pos);
+		if (pos == std::string::npos || pos + 1 >= raw.size())
+			return {};
+		std::string value = Trim(raw.substr(pos + 1));
+		if (!value.empty() && (value.front() == '"' || value.front() == '\''))
+		{
+			const char q = value.front();
+			value.erase(value.begin());
+			const size_t end = value.find(q);
+			if (end != std::string::npos)
+				value.resize(end);
+		}
+		return Trim(value);
+	}
+
 	bool FetchSubscriptionText(
 		const std::string& url,
 		std::string& outText,
 		std::string& outError,
-		std::string& outProfileTitle,
-		long long& outExpireUnix)
+		SubscriptionFetchMeta* outMeta = nullptr)
 	{
-		outProfileTitle.clear();
-		outExpireUnix = 0;
+		if (outMeta)
+			*outMeta = {};
 		// Panels like Capybara/Remnawave:
 		// - unknown UA -> HTML install page
 		// - no x-hwid -> stub node "Данное приложение не поддерживается"
@@ -1241,17 +1349,114 @@ namespace
 			profileTitle = DecodeProfileTitleHeader(QueryHttpHeader(request, "profile-title"));
 		if (profileTitle.empty())
 			profileTitle = ProviderNameFromUrl(url);
-		outProfileTitle = profileTitle;
-		LogImportf("Profile-Title / провайдер: %s", outProfileTitle.c_str());
+		LogImportf("Profile-Title / провайдер: %s", profileTitle.c_str());
 
 		std::string userInfo = QueryHttpHeader(request, "subscription-userinfo");
 		if (userInfo.empty())
 			userInfo = QueryHttpHeader(request, "Subscription-Userinfo");
-		outExpireUnix = ParseSubscriptionExpireUnix(userInfo);
-		if (outExpireUnix > 0)
-			LogImportf("subscription-userinfo expire: %lld", outExpireUnix);
+		const SubscriptionUserInfo parsedInfo = ParseSubscriptionUserInfo(userInfo);
+		if (parsedInfo.expireUnix > 0)
+			LogImportf("subscription-userinfo expire: %lld", parsedInfo.expireUnix);
 		else if (!userInfo.empty())
 			LogImportf("subscription-userinfo: %s (expire не найден)", PreviewText(userInfo, 120).c_str());
+		if (parsedInfo.totalBytes > 0 || parsedInfo.downloadBytes > 0 || parsedInfo.uploadBytes > 0)
+		{
+			LogImportf(
+				"subscription-userinfo traffic: up=%lld down=%lld total=%lld",
+				parsedInfo.uploadBytes,
+				parsedInfo.downloadBytes,
+				parsedInfo.totalBytes);
+		}
+
+		std::string supportUrl = QueryHttpHeader(request, "support-url");
+		if (supportUrl.empty())
+			supportUrl = QueryHttpHeader(request, "Support-Url");
+		if (supportUrl.empty())
+			supportUrl = QueryHttpHeader(request, "Sub-Expire-Button-Link");
+		if (supportUrl.empty())
+			supportUrl = QueryHttpHeader(request, "profile-web-page-url");
+		if (supportUrl.empty())
+			supportUrl = QueryHttpHeader(request, "Profile-Web-Page-Url");
+
+		std::string announce = DecodeProfileTitleHeader(QueryHttpHeader(request, "Announce"));
+		if (announce.empty())
+			announce = DecodeProfileTitleHeader(QueryHttpHeader(request, "announce"));
+		// Normalize CRLF from panels to '\n' for ImGui wrapping.
+		{
+			std::string normalized;
+			normalized.reserve(announce.size());
+			for (size_t i = 0; i < announce.size(); ++i)
+			{
+				if (announce[i] == '\r')
+				{
+					if (i + 1 < announce.size() && announce[i + 1] == '\n')
+						continue;
+					normalized.push_back('\n');
+				}
+				else
+					normalized.push_back(announce[i]);
+			}
+			announce.swap(normalized);
+		}
+		std::string userId;
+		SplitTrailingUserId(announce, userId);
+
+		std::string providerId = QueryHttpHeader(request, "Providerid");
+		if (providerId.empty())
+			providerId = QueryHttpHeader(request, "providerid");
+		if (providerId.empty())
+			providerId = QueryHttpHeader(request, "Provider-Id");
+
+		std::string iconUrl = QueryHttpHeader(request, "profile-picture");
+		if (iconUrl.empty())
+			iconUrl = QueryHttpHeader(request, "Profile-Picture");
+		if (iconUrl.empty())
+			iconUrl = QueryHttpHeader(request, "logo");
+		if (iconUrl.empty())
+			iconUrl = QueryHttpHeader(request, "Logo");
+		if (iconUrl.empty())
+			iconUrl = QueryHttpHeader(request, "subscription-avatar");
+		iconUrl = DecodeProfileTitleHeader(iconUrl); // allow base64:url
+		// Do not scrape Telegram for avatars: t.me/telesco.pe are often blocked in RF
+		// and sync fetch stalls subscription refresh. Logo only from explicit headers.
+
+		std::string contentDisp = QueryHttpHeader(request, "Content-Disposition");
+		if (contentDisp.empty())
+			contentDisp = QueryHttpHeader(request, "content-disposition");
+		const std::string contentFileName = ParseContentDispositionFilename(contentDisp);
+
+		const bool hasSubscriptionCard =
+			!userInfo.empty()
+			|| parsedInfo.expireUnix > 0
+			|| !announce.empty()
+			|| (!profileTitle.empty() && (!supportUrl.empty() || parsedInfo.expireUnix > 0));
+
+		if (outMeta)
+		{
+			outMeta->expireUnix = parsedInfo.expireUnix;
+			outMeta->uploadBytes = parsedInfo.uploadBytes;
+			outMeta->downloadBytes = parsedInfo.downloadBytes;
+			outMeta->totalBytes = parsedInfo.totalBytes;
+			outMeta->profileTitle = profileTitle;
+			outMeta->supportUrl = supportUrl;
+			outMeta->announce = announce;
+			outMeta->providerId = providerId;
+			outMeta->userId = userId;
+			outMeta->iconUrl = iconUrl;
+			outMeta->contentFileName = contentFileName;
+			outMeta->hasSubscriptionCard = hasSubscriptionCard;
+		}
+		if (!announce.empty())
+			LogImportf("Announce: %s", PreviewText(announce, 160).c_str());
+		if (!providerId.empty())
+			LogImportf("Providerid: %s", providerId.c_str());
+		if (!userId.empty())
+			LogImportf("User id (from announce): %s", userId.c_str());
+		if (!contentFileName.empty())
+			LogImportf("Content-Disposition filename: %s", contentFileName.c_str());
+		if (!iconUrl.empty())
+			LogImportf("Profile icon URL: %s", PreviewText(iconUrl, 120).c_str());
+		LogImportf("Subscription card headers: %s", hasSubscriptionCard ? "yes" : "no");
 
 		char buffer[4096];
 		DWORD read = 0;
@@ -1468,16 +1673,38 @@ VpnImportResult VpnImport::ImportFromText(const std::string& text, int nextNodeI
 			LogImportf("[%zu] URL подписки — скачиваю...", i + 1);
 			std::string subscriptionText;
 			std::string error;
-			std::string profileTitle;
-			long long expireUnix = 0;
-			if (!FetchSubscriptionText(line, subscriptionText, error, profileTitle, expireUnix))
+			SubscriptionFetchMeta meta {};
+			if (!FetchSubscriptionText(line, subscriptionText, error, &meta))
 			{
 				LogImportf("[%zu] Скачивание не удалось: %s", i + 1, error.c_str());
 				result.errors.push_back(error);
 				continue;
 			}
-			if (expireUnix > 0)
-				result.subscriptionExpireUnix = expireUnix;
+			if (meta.expireUnix > 0)
+				result.subscriptionExpireUnix = meta.expireUnix;
+			result.subscriptionUploadBytes = meta.uploadBytes;
+			result.subscriptionDownloadBytes = meta.downloadBytes;
+			result.subscriptionTotalBytes = meta.totalBytes;
+			if (!meta.supportUrl.empty())
+				result.subscriptionSupportUrl = meta.supportUrl;
+			if (!meta.profileTitle.empty())
+				result.subscriptionProfileTitle = meta.profileTitle;
+			if (!meta.announce.empty())
+				result.subscriptionAnnounce = meta.announce;
+			if (!meta.providerId.empty())
+				result.subscriptionProviderId = meta.providerId;
+			if (!meta.userId.empty())
+				result.subscriptionUserId = meta.userId;
+			if (!meta.iconUrl.empty())
+				result.subscriptionIconUrl = meta.iconUrl;
+			result.hasSubscriptionCard = meta.hasSubscriptionCard;
+			if (!meta.contentFileName.empty() && result.subscriptionUserId.empty())
+			{
+				// Keep filename as secondary id when announce didn't embed one.
+				(void)meta.contentFileName;
+			}
+
+			std::string profileTitle = meta.profileTitle;
 			if (profileTitle.empty())
 				profileTitle = ProviderNameFromUrl(line);
 			LogImportf("[%zu] Группа провайдера: %s", i + 1, profileTitle.c_str());

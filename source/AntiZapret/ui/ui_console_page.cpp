@@ -208,10 +208,11 @@ void UiConsolePage::DrawContent(ThemeManager& theme, FontManager& fonts, float w
 
 	UiCommon::PageTitle(
 		fonts,
-		0xE756,
+		0xf120,
 		"Консоль",
 		"Логи Антизапрета, TG WS Proxy, VPN и маршрутизации",
-		colors);
+		colors,
+		UiCommon::TitleIconFont::Solid);
 
 	struct FilterOption
 	{

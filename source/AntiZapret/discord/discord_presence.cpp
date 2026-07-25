@@ -10,8 +10,9 @@
 namespace
 {
 	constexpr char kApplicationId[] = "1526697979879231658";
-	constexpr char kDownloadButtonLabel[] = "Скачать AntiZapret";
-	constexpr char kDefaultDownloadUrl[] = "https://github.com/multimaks2/AntiZapret/releases/latest";
+	constexpr char kDownloadButtonLabel[] = "⬇️ Скачать AntiZapret";
+	constexpr char kDefaultDownloadUrl[] =
+		"https://github.com/multimaks2/AntiZapret/releases/latest/download/AntiZapret-Installer.exe";
 	constexpr float kCallbackIntervalSec = 0.5f;
 	constexpr float kForceRefreshSec = 12.f;
 
@@ -19,25 +20,25 @@ namespace
 	{
 		if (!zapret && !tg && !vpn)
 		{
-			strncpy_s(out, outSize, "не использует сервисы", _TRUNCATE);
+			strncpy_s(out, outSize, "😴 ничего не запущено", _TRUNCATE);
 			return;
 		}
 
-		strncpy_s(out, outSize, "использует — ", _TRUNCATE);
+		out[0] = '\0';
 		bool first = true;
 		auto append = [&](const char* label) {
 			if (!first)
-				strncat_s(out, outSize, ", ", _TRUNCATE);
+				strncat_s(out, outSize, " ", _TRUNCATE);
 			strncat_s(out, outSize, label, _TRUNCATE);
 			first = false;
 		};
 
 		if (vpn)
-			append("VPN");
+			append("🔒 VPN");
 		if (zapret)
-			append("антизапрет");
+			append("🛡️ Антизапрет");
 		if (tg)
-			append("tg-ws-proxy");
+			append("✈️ TG");
 	}
 
 	bool LooksLikeHttpUrl(const std::string& url)
@@ -237,14 +238,14 @@ const char* AppRichPresence::TabLabel(UiTab tab)
 {
 	switch (tab)
 	{
-	case UiTab::Home: return "Главная";
-	case UiTab::AntiZapret: return "Антизапрет";
-	case UiTab::TgWsProxy: return "TG Fix";
-	case UiTab::Vpn: return "VPN";
-	case UiTab::Routing: return "Маршрутизация";
-	case UiTab::Console: return "Консоль";
-	case UiTab::Settings: return "Настройки";
-	case UiTab::About: return "О приложении";
+	case UiTab::Home: return "🏠 Главная";
+	case UiTab::AntiZapret: return "🛡️ Антизапрет";
+	case UiTab::TgWsProxy: return "✈️ TG Fix";
+	case UiTab::Vpn: return "🔒 VPN";
+	case UiTab::Routing: return "🗺️ Маршрутизация";
+	case UiTab::Console: return "📋 Консоль";
+	case UiTab::Settings: return "⚙️ Настройки";
+	case UiTab::About: return "ℹ️ О приложении";
 	}
 	return "AntiZapret";
 }

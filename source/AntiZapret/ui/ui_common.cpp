@@ -137,9 +137,10 @@ void UiCommon::PageTitle(
 	uint32_t iconCode,
 	const char* title,
 	const char* subtitle,
-	const UiThemeColors& colors)
+	const UiThemeColors& colors,
+	TitleIconFont iconFont)
 {
-	PageTitle(fonts, iconCode, title, subtitle, colors, nullptr, {}, nullptr, false);
+	PageTitle(fonts, iconCode, title, subtitle, colors, nullptr, {}, nullptr, false, iconFont);
 }
 
 void UiCommon::PageTitle(
@@ -149,9 +150,10 @@ void UiCommon::PageTitle(
 	const char* subtitle,
 	const UiThemeColors& colors,
 	const char* version,
-	const ImVec4& versionAccent)
+	const ImVec4& versionAccent,
+	TitleIconFont iconFont)
 {
-	PageTitle(fonts, iconCode, title, subtitle, colors, version, versionAccent, nullptr, false);
+	PageTitle(fonts, iconCode, title, subtitle, colors, version, versionAccent, nullptr, false, iconFont);
 }
 
 bool UiCommon::PageTitle(
@@ -163,10 +165,24 @@ bool UiCommon::PageTitle(
 	const char* version,
 	const ImVec4& versionAccent,
 	const char* updateButtonLabel,
-	bool updateButtonEnabled)
+	bool updateButtonEnabled,
+	TitleIconFont iconFontKind)
 {
 	const std::string glyph = CodepointUtf8(iconCode);
 	ImFont* iconFont = fonts.GetIconFont();
+	switch (iconFontKind)
+	{
+	case TitleIconFont::Solid:
+		iconFont = fonts.GetSolidFont();
+		break;
+	case TitleIconFont::Brands:
+		iconFont = fonts.GetBrandFont();
+		break;
+	case TitleIconFont::Mdl2:
+	default:
+		iconFont = fonts.GetIconFont();
+		break;
+	}
 	if (iconFont)
 		ImGui::PushFont(iconFont);
 	ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
@@ -473,6 +489,23 @@ void UiCommon::SetItemTooltip(const char* fmt, ...)
 	ImGui::SetTooltipV(fmt, args);
 	va_end(args);
 	ImGui::PopStyleVar(2);
+}
+
+bool UiCommon::IsMouseNavBackClicked()
+{
+	// Don't steal X1/X2 while a popup/menu is open.
+	if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+		return false;
+	// XBUTTON1 (часто «назад» / mouse4) → ImGui button 3
+	return ImGui::IsMouseClicked(3);
+}
+
+bool UiCommon::IsMouseNavForwardClicked()
+{
+	if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+		return false;
+	// XBUTTON2 (часто «вперёд» / mouse5) → ImGui button 4
+	return ImGui::IsMouseClicked(4);
 }
 
 float UiCommon::ExpSmooth(float current, float target, float deltaTime, float speed)
@@ -993,14 +1026,16 @@ void UiCommon::TableAlignFrameY(float contentHeight)
 
 bool UiCommon::TableRowSelectable(const char* label, bool selected, float contentHeight)
 {
-	const float highlightH = contentHeight + ImGui::GetStyle().CellPadding.y * 2.f;
+	// Height is cell content only — table CellPadding is applied by the table itself.
+	// Adding padding here made rows taller than ImGuiListClipper's item height
+	// (empty gap at the bottom + last indices unreachable on huge lists).
 	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.f, 0.f));
 	ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.5f, 0.5f));
 	const bool pressed = ImGui::Selectable(
 		label,
 		selected,
 		ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap,
-		ImVec2(0.f, highlightH));
+		ImVec2(0.f, contentHeight));
 	ImGui::PopStyleVar(2);
 	return pressed;
 }
@@ -1041,6 +1076,7 @@ bool UiCommon::IconToolButton(
 	if (borderAlpha > 0.f)
 		ImGui::PushStyleColor(ImGuiCol_Border, WithAlpha(colors.tileBorder, borderAlpha));
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, borderAlpha > 0.f ? 1.f : 0.f);
+	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UiMetrics::kCardRadius);
 
 	wchar_t wide[] = { static_cast<wchar_t>(iconCode), 0 };
 	char utf8[8] = {};
@@ -1058,7 +1094,7 @@ bool UiCommon::IconToolButton(
 	if (tooltip)
 		SetItemTooltip("%s", tooltip);
 
-	ImGui::PopStyleVar();
+	ImGui::PopStyleVar(2);
 	ImGui::PopStyleColor(borderAlpha > 0.f ? 4 : 3);
 	ImGui::PopID();
 

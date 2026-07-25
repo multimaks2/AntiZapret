@@ -369,7 +369,7 @@ namespace
 					manager->RememberSelectedStrategy(i);
 			}
 
-			UiCommon::SetItemTooltip("ПКМ — подробности");
+			UiCommon::SetItemTooltip("ПКМ — подробности\nMouse4 — назад · Mouse5 — вперёд");
 			if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && outOpenDetailIndex)
 				*outOpenDetailIndex = i;
 
@@ -559,6 +559,16 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 		}
 	}
 
+	if (UiCommon::IsMouseNavForwardClicked()
+		&& m_detailStrategyIndex >= 0
+		&& m_manager
+		&& m_manager->IsStrategyVisible(m_detailStrategyIndex, true))
+	{
+		m_view = View::Detail;
+		DrawDetailView(theme, fonts, width);
+		return;
+	}
+
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, UiMetrics::kRowGap });
 
 	const auto& updateCheck = ZapretUpdateCheck::Instance();
@@ -593,14 +603,15 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 
 	if (UiCommon::PageTitle(
 			fonts,
-			0xE774,
+			0xf3ed,
 			"Антизапрет",
 			nullptr,
 			colors,
 			azLocalVersion.empty() ? nullptr : azLocalVersion.c_str(),
 			ComponentVersionAccent(updateCheck.GetZapretStatus()),
 			updateBtnLabel,
-			showUpdateBtn && !updateApplying))
+			showUpdateBtn && !updateApplying,
+			UiCommon::TitleIconFont::Solid))
 	{
 		m_diagnosticsStatus.clear();
 		ZapretUpdateApply::Instance().RequestApply(m_manager, m_tgProxyManager);
@@ -1138,7 +1149,8 @@ void UiAntiZapretPage::DrawDetailView(ThemeManager& theme, FontManager& fonts, f
 
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.f, UiMetrics::kRowGap));
 
-	if (UiCommon::SecondaryButton("<- Назад", ImVec2(100.f, UiMetrics::kSmallBtnHeight), colors))
+	if (UiCommon::SecondaryButton("<- Назад", ImVec2(100.f, UiMetrics::kSmallBtnHeight), colors)
+		|| UiCommon::IsMouseNavBackClicked())
 	{
 		m_view = View::List;
 		ImGui::PopStyleVar();
@@ -1150,7 +1162,13 @@ void UiAntiZapretPage::DrawDetailView(ThemeManager& theme, FontManager& fonts, f
 	ImGui::PopStyleColor();
 
 	ImGui::Dummy(ImVec2(0.f, 4.f));
-	UiCommon::PageTitle(fonts, 0xE774, label.c_str(), fileName.c_str(), colors);
+	UiCommon::PageTitle(
+		fonts,
+		0xf3ed,
+		label.c_str(),
+		fileName.c_str(),
+		colors,
+		UiCommon::TitleIconFont::Solid);
 
 	const float actionBtnW = 120.f;
 	const float testBtnW = 140.f;

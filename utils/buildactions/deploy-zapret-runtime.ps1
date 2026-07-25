@@ -165,6 +165,12 @@ if (Test-Path -LiteralPath $fontsSrc) {
 	}
 }
 
+# Subscription provider avatar (Capybara card).
+$avatarSrc = Join-Path $Root 'source\AntiZapret\image\capybara_avatar.png'
+if (Test-Path -LiteralPath $avatarSrc) {
+	Copy-Item -LiteralPath $avatarSrc -Destination (Join-Path $TargetRoot 'capybara_avatar.png') -Force
+}
+
 Write-Host "Deployed zapret runtime to $TargetRoot (copied=$copied skipped=$skipped locked=$locked)"
 if ($locked -gt 0) {
 	Write-Host "Some files are in use. Close AntiZapret/winws.exe and rebuild to refresh runtime files."

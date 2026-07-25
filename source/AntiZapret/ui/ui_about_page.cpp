@@ -60,10 +60,11 @@ void UiAboutPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, UiMetrics::kRowGap });
 	UiCommon::PageTitle(
 		fonts,
-		0xE946,
+		0xf05a,
 		"О приложении",
 		"Автор, версия и используемые проекты",
-		colors);
+		colors,
+		UiCommon::TitleIconFont::Solid);
 
 	if (UiCommon::BeginCard("##about_author", width, colors))
 	{

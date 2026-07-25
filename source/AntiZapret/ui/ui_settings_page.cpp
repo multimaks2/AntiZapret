@@ -133,10 +133,11 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, UiMetrics::kRowGap });
 	UiCommon::PageTitle(
 		fonts,
-		0xE713,
+		0xf013,
 		"Настройки",
 		nullptr,
-		colors);
+		colors,
+		UiCommon::TitleIconFont::Solid);
 
 	if (UiCommon::BeginCard("##settings_theme", width, colors))
 	{
@@ -170,20 +171,34 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 			const bool hovered = ImGui::IsItemHovered();
 			const ImVec2 cellMax = { cellMin.x + cellW, cellMin.y + cellH };
 			ImDrawList* dl = ImGui::GetWindowDrawList();
-			dl->AddRectFilled(cellMin, cellMax, ImGui::GetColorU32(colors.tileBg), UiMetrics::kCardRadius);
-			dl->AddRect(
-				cellMin,
-				cellMax,
-				ImGui::GetColorU32(selected ? info.swatch : (hovered ? colors.navHover : colors.tileBorder)),
-				UiMetrics::kCardRadius,
-				0,
-				selected ? 2.f : 1.f);
+			const UiThemeColors preview = ThemeManager::PaletteColors(id);
+			const ImU32 cellFill = (hovered && !selected)
+				? ImGui::GetColorU32(colors.navHover)
+				: ImGui::GetColorU32(colors.tileBg);
+			dl->AddRectFilled(cellMin, cellMax, cellFill, UiMetrics::kCardRadius);
+			if (selected)
+			{
+				dl->AddRect(
+					cellMin,
+					cellMax,
+					ImGui::GetColorU32(preview.navActive),
+					UiMetrics::kCardRadius,
+					0,
+					2.f);
+			}
 
+			// Mini chrome: same bg / navActive the theme actually paints (no outline).
 			const float swatch = 18.f;
 			const ImVec2 swMin = { cellMin.x + 12.f, cellMin.y + (cellH - swatch) * 0.5f };
 			const ImVec2 swMax = { swMin.x + swatch, swMin.y + swatch };
-			dl->AddRectFilled(swMin, swMax, ImGui::GetColorU32(info.swatch), 4.f);
-			dl->AddRect(swMin, swMax, ImGui::GetColorU32(colors.tileBorder), 4.f, 0, 1.f);
+			dl->AddRectFilled(swMin, swMax, ImGui::GetColorU32(preview.bg), 4.f);
+			dl->AddRectFilled(
+				{ swMin.x, swMin.y + swatch * 0.55f },
+				swMax,
+				ImGui::GetColorU32(preview.navActive),
+				4.f,
+				ImDrawFlags_RoundCornersBottom);
+			dl->AddRect(swMin, swMax, ImGui::GetColorU32(preview.tileBorder), 4.f, 0, 1.f);
 
 			const ImVec2 textSize = ImGui::CalcTextSize(info.name);
 			dl->AddText(
@@ -305,7 +320,7 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 			ImGui::SetNextItemWidth(width);
 			if (ImGui::InputTextWithHint(
 					"##discord_download_url",
-					"https://github.com/.../releases/latest",
+					"https://github.com/.../latest/download/AntiZapret-Installer.exe",
 					m_discordDownloadUrl,
 					sizeof m_discordDownloadUrl,
 					ImGuiInputTextFlags_EnterReturnsTrue))

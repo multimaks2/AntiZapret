@@ -17,10 +17,18 @@ namespace VpnNodeProbe
 	};
 
 	// ICMP echo like `ping` in cmd. Resolves host to real IPv4 (DoH). -1 on failure.
-	int IcmpPingMs(const std::string& host, int timeoutMs = 4000);
+	// Optional cancelFlag aborts between attempts / early.
+	int IcmpPingMs(
+		const std::string& host,
+		int timeoutMs = 4000,
+		std::atomic_bool* cancelFlag = nullptr);
 
 	// TCP connect RTT to server:port (v2rayN Tcping). Default timeout 5s. -1 on failure.
-	int TcpPingMs(const std::string& host, int port, int timeoutMs = 5000);
+	int TcpPingMs(
+		const std::string& host,
+		int port,
+		int timeoutMs = 5000,
+		std::atomic_bool* cancelFlag = nullptr);
 
 	// Mass-ping helper: ICMP first, TCP connect fallback if ICMP is blocked/filtered.
 	// Returns RTT ms or -1. Optional kindOut receives PingKind.
@@ -29,7 +37,8 @@ namespace VpnNodeProbe
 		int port,
 		int icmpTimeoutMs = 4000,
 		int tcpTimeoutMs = 5000,
-		PingKind* kindOut = nullptr);
+		PingKind* kindOut = nullptr,
+		std::atomic_bool* cancelFlag = nullptr);
 
 	// Resolve hostname to IPv4 address list (comma-separated). Uses DoH to avoid
 	// Clash/mihomo fake-ip (198.18.0.0/15) from system DNS. Empty on failure.
@@ -55,4 +64,10 @@ namespace VpnNodeProbe
 	bool CopyUtf8ToClipboard(const std::string& text);
 	std::string BuildOutboundJson(const VpnNode& node);
 	std::string NowTimeLabel();
+
+	// Hard-abort in-flight sockets / WinINet / ICMP for the matching probe lane.
+	void BeginPingIoLane();
+	void BeginSpeedIoLane();
+	void AbortPingIo();
+	void AbortSpeedIo();
 }

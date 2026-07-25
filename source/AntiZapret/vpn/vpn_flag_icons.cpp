@@ -7,20 +7,41 @@
 #include <wincodec.h>
 
 #include <cctype>
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <atomic>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
 #pragma comment(lib, "wininet.lib")
 #pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "ole32.lib")
 
 namespace
 {
 	std::mutex g_mutex;
 	std::atomic<bool> g_bulkDownloadStarted { false };
+
+	bool StartsWithIgnoreCase(const std::string& text, const char* prefix)
+	{
+		if (!prefix)
+			return false;
+		const size_t n = std::strlen(prefix);
+		if (text.size() < n)
+			return false;
+		for (size_t i = 0; i < n; ++i)
+		{
+			const unsigned char a = static_cast<unsigned char>(text[i]);
+			const unsigned char b = static_cast<unsigned char>(prefix[i]);
+			if (std::tolower(a) != std::tolower(b))
+				return false;
+		}
+		return true;
+	}
 
 	// ISO 3166-1 alpha-2 (+ XK), same set as flagcdn.com.
 	const char* kCountryCodes[] = {
@@ -165,7 +186,7 @@ namespace
 		return SUCCEEDED(hr);
 	}
 
-	bool LoadPngFile(
+	bool LoadImageFile(
 		ID3D11Device* device,
 		const std::filesystem::path& path,
 		ID3D11ShaderResourceView** outSrv,
@@ -173,6 +194,18 @@ namespace
 		UINT* outHeight)
 	{
 		if (!device || !outSrv)
+			return false;
+
+		std::ifstream input(path, std::ios::binary);
+		if (!input)
+			return false;
+		input.seekg(0, std::ios::end);
+		const std::streamoff fileSize = input.tellg();
+		if (fileSize < 32)
+			return false;
+		input.seekg(0, std::ios::beg);
+		std::vector<uint8_t> fileBytes(static_cast<size_t>(fileSize));
+		if (!input.read(reinterpret_cast<char*>(fileBytes.data()), fileSize))
 			return false;
 
 		IWICImagingFactory* factory = nullptr;
@@ -183,14 +216,38 @@ namespace
 				IID_PPV_ARGS(&factory))))
 			return false;
 
+		HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, fileBytes.size());
+		if (!hMem)
+		{
+			factory->Release();
+			return false;
+		}
+		void* locked = GlobalLock(hMem);
+		if (!locked)
+		{
+			GlobalFree(hMem);
+			factory->Release();
+			return false;
+		}
+		std::memcpy(locked, fileBytes.data(), fileBytes.size());
+		GlobalUnlock(hMem);
+
+		IStream* stream = nullptr;
+		if (FAILED(CreateStreamOnHGlobal(hMem, TRUE, &stream)) || !stream)
+		{
+			GlobalFree(hMem);
+			factory->Release();
+			return false;
+		}
+
 		IWICBitmapDecoder* decoder = nullptr;
-		const HRESULT decodeHr = factory->CreateDecoderFromFilename(
-			path.c_str(),
+		const HRESULT decodeHr = factory->CreateDecoderFromStream(
+			stream,
 			nullptr,
-			GENERIC_READ,
 			WICDecodeMetadataCacheOnLoad,
 			&decoder);
-		if (FAILED(decodeHr))
+		stream->Release();
+		if (FAILED(decodeHr) || !decoder)
 		{
 			factory->Release();
 			return false;
@@ -262,6 +319,246 @@ namespace
 
 		return CreateSrvFromRgba(device, rgba, width, height, outSrv);
 	}
+
+	bool ParseUrlParts(const std::string& url, std::string& origin, std::string& host)
+	{
+		origin.clear();
+		host.clear();
+		const auto schemePos = url.find("://");
+		if (schemePos == std::string::npos)
+			return false;
+		const size_t hostStart = schemePos + 3;
+		size_t hostEnd = url.find_first_of("/?#", hostStart);
+		if (hostEnd == std::string::npos)
+			hostEnd = url.size();
+		if (hostEnd <= hostStart)
+			return false;
+		host = url.substr(hostStart, hostEnd - hostStart);
+		origin = url.substr(0, hostEnd);
+		return !host.empty() && !origin.empty();
+	}
+
+	std::string GuessBrandFromHost(const std::string& host)
+	{
+		std::vector<std::string> parts;
+		std::string cur;
+		for (char ch : host)
+		{
+			if (ch == '.')
+			{
+				if (!cur.empty())
+					parts.push_back(cur);
+				cur.clear();
+			}
+			else
+				cur.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+		}
+		if (!cur.empty())
+			parts.push_back(cur);
+		if (parts.size() < 2)
+			return {};
+
+		auto isSkip = [](const std::string& p) {
+			return p == "www" || p == "sub" || p == "cdn" || p == "api" || p == "panel" || p == "app"
+				|| p == "m" || p == "png" || p == "static" || p == "assets";
+		};
+
+		// sub.capybara.support → capybara
+		for (size_t i = 0; i + 1 < parts.size(); ++i)
+		{
+			if (!isSkip(parts[i]) && parts[i].size() >= 3)
+				return parts[i];
+		}
+		return {};
+	}
+
+	bool HttpGetText(
+		HINTERNET internet,
+		const std::string& url,
+		const char* extraHeaders,
+		std::string& outBody,
+		DWORD timeoutMs = 8000)
+	{
+		outBody.clear();
+		if (!internet || url.empty())
+			return false;
+
+		DWORD timeout = timeoutMs;
+		InternetSetOptionA(internet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+		InternetSetOptionA(internet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+		InternetSetOptionA(internet, INTERNET_OPTION_SEND_TIMEOUT, &timeout, sizeof(timeout));
+
+		HINTERNET request = InternetOpenUrlA(
+			internet,
+			url.c_str(),
+			extraHeaders,
+			extraHeaders ? static_cast<DWORD>(std::strlen(extraHeaders)) : 0,
+			INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_SECURE,
+			0);
+		if (!request)
+			return false;
+
+		char buffer[4096];
+		DWORD read = 0;
+		while (InternetReadFile(request, buffer, sizeof(buffer), &read) && read > 0)
+			outBody.append(buffer, buffer + read);
+		InternetCloseHandle(request);
+		return !outBody.empty();
+	}
+
+	bool HttpGetBinaryOk(HINTERNET internet, const std::string& url, size_t minBytes = 256)
+	{
+		std::string body;
+		if (!HttpGetText(internet, url, "Accept: image/*,*/*\r\n", body, 6000))
+			return false;
+		if (body.size() < minBytes)
+			return false;
+		const unsigned char b0 = static_cast<unsigned char>(body[0]);
+		const unsigned char b1 = static_cast<unsigned char>(body[1]);
+		// PNG / JPEG / GIF / RIFF(webp)
+		if (b0 == 0x89 && b1 == 0x50)
+			return true;
+		if (b0 == 0xFF && b1 == 0xD8)
+			return true;
+		if (b0 == 'G' && b1 == 'I')
+			return true;
+		if (b0 == 'R' && b1 == 'I')
+			return true;
+		if (b0 == '<' && (body.find("<svg") != std::string::npos || body.find("<SVG") != std::string::npos))
+			return true;
+		return false;
+	}
+
+	std::string ExtractJsonStringField(const std::string& json, const char* field)
+	{
+		if (!field || !*field || json.empty())
+			return {};
+		const std::string key = std::string("\"") + field + "\"";
+		size_t pos = 0;
+		while ((pos = json.find(key, pos)) != std::string::npos)
+		{
+			size_t colon = json.find(':', pos + key.size());
+			if (colon == std::string::npos)
+				break;
+			size_t i = colon + 1;
+			while (i < json.size() && (json[i] == ' ' || json[i] == '\t' || json[i] == '\r' || json[i] == '\n'))
+				++i;
+			if (i >= json.size() || json[i] != '"')
+			{
+				pos += key.size();
+				continue;
+			}
+			++i;
+			std::string value;
+			while (i < json.size() && json[i] != '"')
+			{
+				if (json[i] == '\\' && i + 1 < json.size())
+				{
+					value.push_back(json[i + 1]);
+					i += 2;
+					continue;
+				}
+				value.push_back(json[i++]);
+			}
+			if (!value.empty() && (value.find("http://") == 0 || value.find("https://") == 0))
+				return value;
+			pos += key.size();
+		}
+		return {};
+	}
+
+	std::string ResolveSubscriptionPageLogoUrl(const std::string& subscriptionUrl)
+	{
+		std::string origin;
+		std::string host;
+		if (!ParseUrlParts(subscriptionUrl, origin, host))
+			return {};
+
+		HINTERNET internet = InternetOpenA(
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AntiZapret/1.0",
+			INTERNET_OPEN_TYPE_PRECONFIG,
+			nullptr,
+			nullptr,
+			0);
+		if (!internet)
+			return {};
+
+		// Fast path used by Capybara and similar: https://png.{brand}.press/{brand}.png
+		const std::string brand = GuessBrandFromHost(host);
+		if (!brand.empty())
+		{
+			const std::string candidates[] = {
+				"https://png." + brand + ".press/" + brand + ".png",
+				"https://png." + brand + ".press/logo.png",
+				"https://cdn." + brand + ".press/" + brand + ".png",
+			};
+			for (const std::string& candidate : candidates)
+			{
+				if (HttpGetBinaryOk(internet, candidate, 1024))
+				{
+					InternetCloseHandle(internet);
+					return candidate;
+				}
+			}
+		}
+
+		// Remnawave sub-page: HTML sets session cookie, then /assets/app-config.json has branding.logoUrl
+		const char* htmlHeaders =
+			"Accept: text/html,application/xhtml+xml\r\n"
+			"Accept-Language: ru-RU,ru;q=0.9\r\n";
+		std::string html;
+		HttpGetText(internet, subscriptionUrl, htmlHeaders, html, 8000);
+
+		std::string configJson;
+		HttpGetText(
+			internet,
+			origin + "/assets/app-config.json",
+			"Accept: application/json\r\n",
+			configJson,
+			8000);
+
+		std::string logoUrl = ExtractJsonStringField(configJson, "logoUrl");
+		if (!logoUrl.empty() && logoUrl.find("docs.rw") == std::string::npos)
+		{
+			InternetCloseHandle(internet);
+			return logoUrl;
+		}
+
+		// Absolute image URLs occasionally appear in HTML (SSR / custom themes).
+		{
+			size_t pos = 0;
+			while ((pos = html.find("https://", pos)) != std::string::npos)
+			{
+				size_t end = pos;
+				while (end < html.size())
+				{
+					const char ch = html[end];
+					if (ch == '"' || ch == '\'' || ch == ')' || ch == ' ' || ch == '<' || ch == '>')
+						break;
+					++end;
+				}
+				std::string cand = html.substr(pos, end - pos);
+				const std::string lower = [&cand]() {
+					std::string s = cand;
+					for (char& c : s)
+						c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+					return s;
+				}();
+				if ((lower.find(".png") != std::string::npos || lower.find(".jpg") != std::string::npos
+						|| lower.find(".jpeg") != std::string::npos || lower.find(".webp") != std::string::npos)
+					&& lower.find("favicon") == std::string::npos
+					&& lower.find("docs.rw") == std::string::npos)
+				{
+					InternetCloseHandle(internet);
+					return cand;
+				}
+				pos = end;
+			}
+		}
+
+		InternetCloseHandle(internet);
+		return {};
+	}
 }
 
 VpnFlagIcons& VpnFlagIcons::Instance()
@@ -285,6 +582,16 @@ void VpnFlagIcons::Shutdown()
 			entry.second.srv->Release();
 	}
 	m_cache.clear();
+	for (auto& entry : m_fileCache)
+	{
+		if (entry.second.srv)
+			entry.second.srv->Release();
+	}
+	m_fileCache.clear();
+	m_urlInFlight.clear();
+	m_subPageIconUrl.clear();
+	m_subPageInFlight.clear();
+	m_subPageFailed.clear();
 	m_inFlight.clear();
 	m_failed.clear();
 	m_device = nullptr;
@@ -342,7 +649,7 @@ bool VpnFlagIcons::LoadFlagFromDisk(const std::string& countryCode, FlagEntry& o
 	ID3D11ShaderResourceView* srv = nullptr;
 	UINT width = 0;
 	UINT height = 0;
-	if (!LoadPngFile(m_device, path, &srv, &width, &height) || !srv)
+		if (!LoadImageFile(m_device, path, &srv, &width, &height) || !srv)
 		return false;
 
 	outEntry.srv = srv;
@@ -418,4 +725,155 @@ ImVec2 VpnFlagIcons::GetFlagDrawSize(const std::string& countryCode, float maxHe
 
 	const float aspect = static_cast<float>(it->second.width) / static_cast<float>(it->second.height);
 	return ImVec2(maxHeight * aspect, maxHeight);
+}
+
+ImTextureID VpnFlagIcons::GetFileTexture(const std::filesystem::path& path)
+{
+	if (!m_device || path.empty())
+		return 0;
+
+	std::error_code ec;
+	const std::filesystem::path absolute = std::filesystem::weakly_canonical(path, ec);
+	const std::filesystem::path& keyPath = absolute.empty() ? path : absolute;
+	const std::string key = keyPath.string();
+	if (key.empty())
+		return 0;
+
+	{
+		std::lock_guard<std::mutex> lock(g_mutex);
+		const auto it = m_fileCache.find(key);
+		if (it != m_fileCache.end() && it->second.srv)
+			return reinterpret_cast<ImTextureID>(it->second.srv);
+	}
+
+	FlagEntry entry;
+	UINT width = 0;
+	UINT height = 0;
+	if (!LoadImageFile(m_device, absolute.empty() ? path : absolute, &entry.srv, &width, &height) || !entry.srv)
+		return 0;
+	entry.width = static_cast<int>(width);
+	entry.height = static_cast<int>(height);
+
+	std::lock_guard<std::mutex> lock(g_mutex);
+	m_fileCache[key] = entry;
+	return reinterpret_cast<ImTextureID>(entry.srv);
+}
+
+ImTextureID VpnFlagIcons::GetSubscriptionPageIcon(const std::string& subscriptionUrl)
+{
+	if (!m_device || subscriptionUrl.empty())
+		return 0;
+	if (!(StartsWithIgnoreCase(subscriptionUrl, "http://") || StartsWithIgnoreCase(subscriptionUrl, "https://")))
+		return 0;
+
+	std::string iconUrl;
+	{
+		std::lock_guard<std::mutex> lock(g_mutex);
+		if (m_subPageFailed.count(subscriptionUrl) > 0)
+			return 0;
+		const auto it = m_subPageIconUrl.find(subscriptionUrl);
+		if (it != m_subPageIconUrl.end())
+			iconUrl = it->second;
+	}
+
+	if (!iconUrl.empty())
+		return GetUrlTexture(iconUrl);
+
+	{
+		std::lock_guard<std::mutex> lock(g_mutex);
+		if (m_subPageInFlight.count(subscriptionUrl) > 0)
+			return 0;
+		m_subPageInFlight.insert(subscriptionUrl);
+	}
+
+	std::thread([this, subscriptionUrl]()
+	{
+		const std::string resolved = ResolveSubscriptionPageLogoUrl(subscriptionUrl);
+		std::lock_guard<std::mutex> lock(g_mutex);
+		m_subPageInFlight.erase(subscriptionUrl);
+		if (resolved.empty())
+			m_subPageFailed.insert(subscriptionUrl);
+		else
+			m_subPageIconUrl[subscriptionUrl] = resolved;
+	}).detach();
+
+	return 0;
+}
+
+ImTextureID VpnFlagIcons::GetUrlTexture(const std::string& url)
+{
+	if (!m_device || url.empty())
+		return 0;
+	if (!(StartsWithIgnoreCase(url, "http://") || StartsWithIgnoreCase(url, "https://")))
+		return 0;
+
+	const std::filesystem::path cacheDir =
+		std::filesystem::path(ZapretPaths::GetCacheDirectory()) / L"sub_icons";
+	std::error_code ec;
+	std::filesystem::create_directories(cacheDir, ec);
+
+	unsigned long hash = 2166136261u;
+	for (unsigned char ch : url)
+	{
+		hash ^= ch;
+		hash *= 16777619u;
+	}
+	wchar_t fileName[64] = {};
+	swprintf_s(fileName, L"%08lx.img", hash);
+	const std::filesystem::path cachePath = cacheDir / fileName;
+
+	if (std::filesystem::is_regular_file(cachePath, ec))
+	{
+		const ImTextureID existing = GetFileTexture(cachePath);
+		if (existing != 0)
+			return existing;
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(g_mutex);
+		if (m_urlInFlight.count(url) > 0)
+			return 0;
+		m_urlInFlight.insert(url);
+	}
+
+	std::thread([this, url, cachePath]()
+	{
+		bool ok = false;
+		HINTERNET internet = InternetOpenA("AntiZapret/1.0", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
+		if (internet)
+		{
+			HINTERNET request = InternetOpenUrlA(
+				internet,
+				url.c_str(),
+				nullptr,
+				0,
+				INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_SECURE,
+				0);
+			if (request)
+			{
+				std::vector<char> bytes;
+				char buffer[4096];
+				DWORD read = 0;
+				while (InternetReadFile(request, buffer, sizeof(buffer), &read) && read > 0)
+					bytes.insert(bytes.end(), buffer, buffer + read);
+				InternetCloseHandle(request);
+				if (bytes.size() > 64)
+				{
+					std::ofstream output(cachePath, std::ios::binary | std::ios::trunc);
+					if (output)
+					{
+						output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+						ok = output.good();
+					}
+				}
+			}
+			InternetCloseHandle(internet);
+		}
+
+		std::lock_guard<std::mutex> lock(g_mutex);
+		m_urlInFlight.erase(url);
+		(void)ok;
+	}).detach();
+
+	return 0;
 }

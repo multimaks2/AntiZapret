@@ -1108,10 +1108,11 @@ void UiRoutingPage::DrawContent(ThemeManager& theme, FontManager& fonts, float w
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, UiMetrics::kRowGap });
 	UiCommon::PageTitle(
 		fonts,
-		0xE945,
+		0xf4d7,
 		"Маршрутизация",
 		nullptr,
-		colors);
+		colors,
+		UiCommon::TitleIconFont::Solid);
 
 	if (m_applySuccessTimer > 0.f)
 	{

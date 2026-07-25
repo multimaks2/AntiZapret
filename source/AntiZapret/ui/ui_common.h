@@ -20,12 +20,21 @@ namespace UiCommon
 	// Traffic graph / rate cards — always green download + blue upload.
 	ImVec4 FixedDownloadAccent();
 	ImVec4 FixedUploadAccent();
+	// Match sidebar: Solid / Brands = Font Awesome; Mdl2 = Segoe MDL2 (toolbars, subpages).
+	enum class TitleIconFont : uint8_t
+	{
+		Mdl2 = 0,
+		Solid = 1,
+		Brands = 2,
+	};
+
 	void PageTitle(
 		FontManager& fonts,
 		uint32_t iconCode,
 		const char* title,
 		const char* subtitle,
-		const UiThemeColors& colors);
+		const UiThemeColors& colors,
+		TitleIconFont iconFont = TitleIconFont::Mdl2);
 	// Optional version chip next to the title (colored frame by update status).
 	void PageTitle(
 		FontManager& fonts,
@@ -34,7 +43,8 @@ namespace UiCommon
 		const char* subtitle,
 		const UiThemeColors& colors,
 		const char* version,
-		const ImVec4& versionAccent);
+		const ImVec4& versionAccent,
+		TitleIconFont iconFont = TitleIconFont::Mdl2);
 	// Same as above, plus optional update button immediately after the version badge.
 	// Returns true if the update button was clicked.
 	bool PageTitle(
@@ -46,7 +56,8 @@ namespace UiCommon
 		const char* version,
 		const ImVec4& versionAccent,
 		const char* updateButtonLabel,
-		bool updateButtonEnabled);
+		bool updateButtonEnabled,
+		TitleIconFont iconFont = TitleIconFont::Mdl2);
 	void VersionBadge(const char* version, const ImVec4& accent, const UiThemeColors& colors);
 	// When centerInLine is false, badge top aligns to the current cursor (use after SameLine with text).
 	void VersionBadge(const char* version, const ImVec4& accent, const UiThemeColors& colors, bool centerInLine);
@@ -131,8 +142,12 @@ namespace UiCommon
 		ImVec2 size = { 30.f, 30.f },
 		bool enabled = true);
 
-	// Tooltips: 2.5s hover delay + rounded corners (WindowRounding for ImGui tooltip windows).
+	// Tooltips: 2.5s hover delay globally (VPN tab halves this while visible) + rounded corners.
 	void ConfigureTooltips(ImGuiStyle& style);
 	void ShowTooltip(const char* fmt, ...) IM_FMTARGS(1);
 	void SetItemTooltip(const char* fmt, ...) IM_FMTARGS(1);
+
+	// Side mouse buttons (Win32 XBUTTON1/2 → ImGui 3/4): browser-style Back / Forward.
+	bool IsMouseNavBackClicked();
+	bool IsMouseNavForwardClicked();
 }

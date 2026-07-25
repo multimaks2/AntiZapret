@@ -138,6 +138,13 @@ UiAccentColors ThemeManager::GetAccents() const
 	return PaletteFor(m_theme).accents;
 }
 
+UiThemeColors ThemeManager::PaletteColors(UiThemeId id)
+{
+	UiThemeColors colors = PaletteFor(id).colors;
+	colors.classicControls = (id == UiThemeId::Dark || id == UiThemeId::Light);
+	return colors;
+}
+
 void ThemeManager::ApplySystemTheme(HWND hwnd) const
 {
 	if (!hwnd)

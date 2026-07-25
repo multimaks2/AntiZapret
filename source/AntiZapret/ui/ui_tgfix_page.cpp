@@ -61,14 +61,15 @@ void UiTgFixPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 
 	if (UiCommon::PageTitle(
 			fonts,
-			0xE8BD,
+			0xf2c6,
 			"TG WS Proxy",
 			nullptr,
 			colors,
 			tgVersion.empty() ? nullptr : tgVersion.c_str(),
 			ComponentVersionAccent(updateCheck.GetTgProxyStatus()),
 			updateBtnLabel,
-			showUpdateBtn && !updateApplying))
+			showUpdateBtn && !updateApplying,
+			UiCommon::TitleIconFont::Brands))
 	{
 		ZapretUpdateApply::Instance().RequestApplyTg(m_manager);
 	}

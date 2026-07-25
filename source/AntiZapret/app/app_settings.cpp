@@ -76,7 +76,8 @@ void AppSettings::Load()
 	m_confirmAdult = false;
 	m_discordPresenceEnabled = true;
 	m_discordDownloadButtonEnabled = true;
-	m_discordDownloadUrl = "https://github.com/multimaks2/AntiZapret/releases/latest";
+	m_discordDownloadUrl =
+		"https://github.com/multimaks2/AntiZapret/releases/latest/download/AntiZapret-Installer.exe";
 	m_discordImportAntiZapretEnabled = false;
 	m_discordImportVpnEnabled = false;
 	m_discordImportTimedEnabled = true;
@@ -441,7 +442,7 @@ void AppSettings::SetDiscordDownloadUrl(const std::string& value)
 		trimmed = trimmed.substr(start);
 
 	if (trimmed.empty())
-		trimmed = "https://github.com/multimaks2/AntiZapret/releases/latest";
+		trimmed = "https://github.com/multimaks2/AntiZapret/releases/latest/download/AntiZapret-Installer.exe";
 	if (trimmed == m_discordDownloadUrl)
 		return;
 	m_discordDownloadUrl = trimmed;

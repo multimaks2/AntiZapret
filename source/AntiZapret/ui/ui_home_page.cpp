@@ -975,10 +975,11 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, UiMetrics::kRowGap });
 	UiCommon::PageTitle(
 		fonts,
-		0xE80F,
+		0xf015,
 		"Главная",
 		"Быстрое управление и обзор состояния",
-		colors);
+		colors,
+		UiCommon::TitleIconFont::Solid);
 
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, colors.tileBg);
 	ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiMetrics::kCardRadius);

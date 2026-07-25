@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -24,6 +25,109 @@
 
 namespace
 {
+	enum class IoLane : int
+	{
+		Ping = 0,
+		Speed = 1,
+	};
+
+	thread_local IoLane t_ioLane = IoLane::Ping;
+
+	struct LaneIo
+	{
+		std::mutex mu;
+		std::vector<SOCKET> socks;
+		std::vector<HINTERNET> nets;
+		std::vector<HANDLE> icmps;
+	};
+
+	LaneIo g_lanes[2];
+
+	LaneIo& Lane()
+	{
+		return g_lanes[static_cast<int>(t_ioLane)];
+	}
+
+	void RegisterSocket(SOCKET s)
+	{
+		if (s == INVALID_SOCKET)
+			return;
+		std::lock_guard<std::mutex> lock(Lane().mu);
+		Lane().socks.push_back(s);
+	}
+
+	void UnregisterSocket(SOCKET s)
+	{
+		if (s == INVALID_SOCKET)
+			return;
+		std::lock_guard<std::mutex> lock(Lane().mu);
+		auto& v = Lane().socks;
+		v.erase(std::remove(v.begin(), v.end(), s), v.end());
+	}
+
+	void RegisterNet(HINTERNET h)
+	{
+		if (!h)
+			return;
+		std::lock_guard<std::mutex> lock(Lane().mu);
+		Lane().nets.push_back(h);
+	}
+
+	void UnregisterNet(HINTERNET h)
+	{
+		if (!h)
+			return;
+		std::lock_guard<std::mutex> lock(Lane().mu);
+		auto& v = Lane().nets;
+		v.erase(std::remove(v.begin(), v.end(), h), v.end());
+	}
+
+	void RegisterIcmp(HANDLE h)
+	{
+		if (!h || h == INVALID_HANDLE_VALUE)
+			return;
+		std::lock_guard<std::mutex> lock(Lane().mu);
+		Lane().icmps.push_back(h);
+	}
+
+	void UnregisterIcmp(HANDLE h)
+	{
+		if (!h || h == INVALID_HANDLE_VALUE)
+			return;
+		std::lock_guard<std::mutex> lock(Lane().mu);
+		auto& v = Lane().icmps;
+		v.erase(std::remove(v.begin(), v.end(), h), v.end());
+	}
+
+	void AbortLane(IoLane lane)
+	{
+		LaneIo& io = g_lanes[static_cast<int>(lane)];
+		std::vector<SOCKET> socks;
+		std::vector<HINTERNET> nets;
+		std::vector<HANDLE> icmps;
+		{
+			std::lock_guard<std::mutex> lock(io.mu);
+			socks.swap(io.socks);
+			nets.swap(io.nets);
+			icmps.swap(io.icmps);
+		}
+		for (SOCKET s : socks)
+		{
+			if (s != INVALID_SOCKET)
+				closesocket(s);
+		}
+		for (HINTERNET h : nets)
+		{
+			if (h)
+				InternetCloseHandle(h);
+		}
+		for (HANDLE h : icmps)
+		{
+			if (h && h != INVALID_HANDLE_VALUE)
+				IcmpCloseHandle(h);
+		}
+	}
+
 	void EnsureWinsock()
 	{
 		static bool ready = false;
@@ -77,6 +181,7 @@ namespace
 			0);
 		if (!internet)
 			return {};
+		RegisterNet(internet);
 
 		DWORD timeout = static_cast<DWORD>((std::max)(timeoutMs, 1000));
 		InternetSetOptionA(internet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
@@ -93,9 +198,11 @@ namespace
 			0);
 		if (!request)
 		{
+			UnregisterNet(internet);
 			InternetCloseHandle(internet);
 			return {};
 		}
+		RegisterNet(request);
 
 		std::string body;
 		char buffer[4096];
@@ -107,7 +214,9 @@ namespace
 				break;
 		}
 
+		UnregisterNet(request);
 		InternetCloseHandle(request);
+		UnregisterNet(internet);
 		InternetCloseHandle(internet);
 		return body;
 	}
@@ -244,14 +353,16 @@ namespace
 	}
 }
 
-int VpnNodeProbe::IcmpPingMs(const std::string& host, int timeoutMs)
+int VpnNodeProbe::IcmpPingMs(const std::string& host, int timeoutMs, std::atomic_bool* cancelFlag)
 {
 	if (host.empty() || timeoutMs <= 0)
+		return -1;
+	if (cancelFlag && cancelFlag->load())
 		return -1;
 
 	EnsureWinsock();
 	const std::string connectIp = ResolveFirstPublicIpv4(host);
-	if (connectIp.empty())
+	if (connectIp.empty() || (cancelFlag && cancelFlag->load()))
 		return -1;
 
 	IN_ADDR addr = {};
@@ -261,16 +372,23 @@ int VpnNodeProbe::IcmpPingMs(const std::string& host, int timeoutMs)
 	HANDLE icmp = IcmpCreateFile();
 	if (icmp == INVALID_HANDLE_VALUE)
 		return -1;
+	RegisterIcmp(icmp);
 
 	constexpr char kPayload[] = "AntiZapretICMP";
 	constexpr DWORD kReplySlots = 2;
 	const DWORD replySize = sizeof(ICMP_ECHO_REPLY) + sizeof(kPayload) + 16;
 	std::vector<unsigned char> reply(replySize * kReplySlots, 0);
 
+	// Slice long waits so Stop can interrupt between echoes (~250ms chunks).
+	const int sliceMs = (std::min)(timeoutMs, 250);
 	int bestMs = -1;
-	// Like cmd ping: a couple of echoes, take the best successful RTT.
-	for (int attempt = 0; attempt < 2; ++attempt)
+	int spent = 0;
+	for (int attempt = 0; attempt < 2 && spent < timeoutMs; ++attempt)
 	{
+		if (cancelFlag && cancelFlag->load())
+			break;
+		const int thisTimeout = (std::min)(sliceMs, timeoutMs - spent);
+		spent += thisTimeout;
 		const DWORD replies = IcmpSendEcho(
 			icmp,
 			addr.S_un.S_addr,
@@ -279,25 +397,29 @@ int VpnNodeProbe::IcmpPingMs(const std::string& host, int timeoutMs)
 			nullptr,
 			reply.data(),
 			static_cast<DWORD>(reply.size()),
-			static_cast<DWORD>(timeoutMs));
+			static_cast<DWORD>(thisTimeout));
 		if (replies > 0)
 		{
 			const auto* echo = reinterpret_cast<const ICMP_ECHO_REPLY*>(reply.data());
 			if (echo->Status == IP_SUCCESS && echo->RoundTripTime >= 0)
 			{
 				const int rtt = static_cast<int>(echo->RoundTripTime);
-				// RoundTripTime can be 0 for LAN — keep as 1ms for UI "alive".
 				const int ms = rtt <= 0 ? 1 : rtt;
 				if (bestMs < 0 || ms < bestMs)
 					bestMs = ms;
 			}
 		}
 		if (attempt == 0 && bestMs < 0)
-			Sleep(50);
+		{
+			if (cancelFlag && cancelFlag->load())
+				break;
+			Sleep(30);
+		}
 		else if (attempt == 0)
-			break; // first success is enough for list ping
+			break;
 	}
 
+	UnregisterIcmp(icmp);
 	IcmpCloseHandle(icmp);
 	return bestMs;
 }
@@ -307,20 +429,25 @@ int VpnNodeProbe::PingWithFallbackMs(
 	int port,
 	int icmpTimeoutMs,
 	int tcpTimeoutMs,
-	PingKind* kindOut)
+	PingKind* kindOut,
+	std::atomic_bool* cancelFlag)
 {
 	if (kindOut)
 		*kindOut = PingKind::Failed;
+	if (cancelFlag && cancelFlag->load())
+		return -1;
 
-	const int icmpMs = IcmpPingMs(host, icmpTimeoutMs);
+	const int icmpMs = IcmpPingMs(host, icmpTimeoutMs, cancelFlag);
 	if (icmpMs >= 0)
 	{
 		if (kindOut)
 			*kindOut = PingKind::Icmp;
 		return icmpMs;
 	}
+	if (cancelFlag && cancelFlag->load())
+		return -1;
 
-	const int tcpMs = TcpPingMs(host, port, tcpTimeoutMs);
+	const int tcpMs = TcpPingMs(host, port, tcpTimeoutMs, cancelFlag);
 	if (tcpMs >= 0)
 	{
 		if (kindOut)
@@ -331,9 +458,15 @@ int VpnNodeProbe::PingWithFallbackMs(
 	return -1;
 }
 
-int VpnNodeProbe::TcpPingMs(const std::string& host, int port, int timeoutMs)
+int VpnNodeProbe::TcpPingMs(
+	const std::string& host,
+	int port,
+	int timeoutMs,
+	std::atomic_bool* cancelFlag)
 {
 	if (host.empty() || port <= 0 || port > 65535)
+		return -1;
+	if (cancelFlag && cancelFlag->load())
 		return -1;
 
 	EnsureWinsock();
@@ -342,7 +475,7 @@ int VpnNodeProbe::TcpPingMs(const std::string& host, int port, int timeoutMs)
 	// completes locally against Clash (~10–20 ms) — not real RTT from the PC.
 	// Resolve a real public IPv4 (DoH) and TCP-connect to that address directly.
 	const std::string connectIp = ResolveFirstPublicIpv4(host);
-	if (connectIp.empty())
+	if (connectIp.empty() || (cancelFlag && cancelFlag->load()))
 		return -1;
 
 	sockaddr_in addr = {};
@@ -354,6 +487,7 @@ int VpnNodeProbe::TcpPingMs(const std::string& host, int port, int timeoutMs)
 	SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (sock == INVALID_SOCKET)
 		return -1;
+	RegisterSocket(sock);
 
 	SetSocketTimeouts(sock, timeoutMs);
 	u_long nonBlocking = 1;
@@ -369,25 +503,39 @@ int VpnNodeProbe::TcpPingMs(const std::string& host, int port, int timeoutMs)
 	}
 	else if (WSAGetLastError() == WSAEWOULDBLOCK)
 	{
-		fd_set writeSet;
-		FD_ZERO(&writeSet);
-		FD_SET(sock, &writeSet);
-		timeval tv = {};
-		tv.tv_sec = timeoutMs / 1000;
-		tv.tv_usec = (timeoutMs % 1000) * 1000;
-		if (select(0, nullptr, &writeSet, nullptr, &tv) > 0)
+		const int sliceMs = 50;
+		int remaining = timeoutMs;
+		while (remaining > 0)
 		{
-			int soError = 0;
-			int soLen = sizeof(soError);
-			getsockopt(sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&soError), &soLen);
-			if (soError == 0)
+			if (cancelFlag && cancelFlag->load())
+				break;
+			fd_set writeSet;
+			FD_ZERO(&writeSet);
+			FD_SET(sock, &writeSet);
+			const int waitMs = (std::min)(sliceMs, remaining);
+			timeval tv = {};
+			tv.tv_sec = waitMs / 1000;
+			tv.tv_usec = (waitMs % 1000) * 1000;
+			const int sel = select(0, nullptr, &writeSet, nullptr, &tv);
+			remaining -= waitMs;
+			if (sel > 0)
 			{
-				responseMs = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
-					std::chrono::steady_clock::now() - started).count());
+				int soError = 0;
+				int soLen = sizeof(soError);
+				getsockopt(sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&soError), &soLen);
+				if (soError == 0)
+				{
+					responseMs = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+						std::chrono::steady_clock::now() - started).count());
+				}
+				break;
 			}
+			if (sel < 0)
+				break;
 		}
 	}
 
+	UnregisterSocket(sock);
 	closesocket(sock);
 	return responseMs;
 }
@@ -413,6 +561,7 @@ int VpnNodeProbe::HttpRealPingMs(
 		0);
 	if (!internet)
 		return -1;
+	RegisterNet(internet);
 
 	DWORD connectTimeout = 3000; // v2rayN ConnectTimeout = 3s
 	DWORD overallTimeout = static_cast<DWORD>((std::max)(timeoutMs, 1000));
@@ -434,9 +583,11 @@ int VpnNodeProbe::HttpRealPingMs(
 			0);
 		if (request)
 		{
+			RegisterNet(request);
 			char discard[512];
 			DWORD read = 0;
 			InternetReadFile(request, discard, sizeof discard, &read);
+			UnregisterNet(request);
 			InternetCloseHandle(request);
 
 			const int elapsedMs = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -449,6 +600,7 @@ int VpnNodeProbe::HttpRealPingMs(
 			Sleep(100); // v2rayN delay between samples
 	}
 
+	UnregisterNet(internet);
 	InternetCloseHandle(internet);
 	return bestMs;
 }
@@ -476,6 +628,7 @@ float VpnNodeProbe::MeasureDownloadPeakMBps(
 		0);
 	if (!internet)
 		return -1.f;
+	RegisterNet(internet);
 
 	// ConnectTimeout ≈ Clamp(timeout/5, 2, 5) seconds like DownloaderHelper.
 	const int connectSec = (std::max)(2, (std::min)(5, timeoutMs / 5000));
@@ -494,9 +647,11 @@ float VpnNodeProbe::MeasureDownloadPeakMBps(
 		0);
 	if (!request)
 	{
+		UnregisterNet(internet);
 		InternetCloseHandle(internet);
 		return -1.f;
 	}
+	RegisterNet(request);
 
 	const auto started = std::chrono::steady_clock::now();
 	auto sampleStart = started;
@@ -552,7 +707,9 @@ float VpnNodeProbe::MeasureDownloadPeakMBps(
 		}
 	}
 
+	UnregisterNet(request);
 	InternetCloseHandle(request);
+	UnregisterNet(internet);
 	InternetCloseHandle(internet);
 
 	if (cancelFlag && cancelFlag->load())
@@ -638,4 +795,24 @@ std::string VpnNodeProbe::NowTimeLabel()
 	char buf[32];
 	snprintf(buf, sizeof buf, "%02u:%02u:%02u", st.wHour, st.wMinute, st.wSecond);
 	return buf;
+}
+
+void VpnNodeProbe::BeginPingIoLane()
+{
+	t_ioLane = IoLane::Ping;
+}
+
+void VpnNodeProbe::BeginSpeedIoLane()
+{
+	t_ioLane = IoLane::Speed;
+}
+
+void VpnNodeProbe::AbortPingIo()
+{
+	AbortLane(IoLane::Ping);
+}
+
+void VpnNodeProbe::AbortSpeedIo()
+{
+	AbortLane(IoLane::Speed);
 }

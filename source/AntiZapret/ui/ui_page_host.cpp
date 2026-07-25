@@ -222,6 +222,7 @@ void UiPageHost::DrawPage(
 		},
 		wheelMultiplier,
 		nullptr,
-		tab != UiTab::Console);
+		tab != UiTab::Console,
+		tab == UiTab::Vpn);
 	ImGui::PopID();
 }

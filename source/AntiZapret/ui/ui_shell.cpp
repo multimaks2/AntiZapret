@@ -217,10 +217,27 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 	m_trafficMonitor.Update(ImGui::GetIO().DeltaTime);
 	m_processNetMonitor.Update(ImGui::GetIO().DeltaTime);
 	m_appSettings.TickDiscordImportExpiry();
-	std::string discordDetails = "бездействует";
-	if (m_zapretManager.IsRunning())
+	std::string discordDetails = "☕ В AntiZapret";
+	if (m_vpnManager.IsRunning())
 	{
-		const char* gameFilterLabel = "OFF";
+		const std::string serverLabel = m_vpnPage.GetActiveServerPresenceLabel();
+		if (!serverLabel.empty())
+			discordDetails = "🔒 " + serverLabel;
+		else
+			discordDetails = "🔒 VPN";
+	}
+	else if (m_zapretManager.IsRunning())
+	{
+		std::string strategyName;
+		{
+			const int activeIndex = m_zapretManager.GetActiveStrategyIndex();
+			if (activeIndex >= 0)
+				strategyName = m_zapretManager.GetStrategyLabel(activeIndex);
+		}
+		if (strategyName.empty())
+			strategyName = "стратегия";
+
+		const char* gameFilterLabel = nullptr;
 		switch (m_zapretManager.GetActiveGameFilterMode())
 		{
 		case ZapretStrategies::GameFilterMode::Tcp:
@@ -237,27 +254,15 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 			break;
 		}
 
-		std::string strategyName;
-		{
-			const int activeIndex = m_zapretManager.GetActiveStrategyIndex();
-			if (activeIndex >= 0)
-				strategyName = m_zapretManager.GetStrategyLabel(activeIndex);
-		}
-		if (strategyName.empty())
-			strategyName = "стратегия";
-
 		char buf[160] = {};
-		snprintf(buf, sizeof buf, "%s · GameFilter %s", strategyName.c_str(), gameFilterLabel);
+		if (gameFilterLabel)
+			snprintf(buf, sizeof buf, "🛡️ %s · GF: %s", strategyName.c_str(), gameFilterLabel);
+		else
+			snprintf(buf, sizeof buf, "🛡️ %s", strategyName.c_str());
 		discordDetails = buf;
 		constexpr size_t kMaxDiscordDetails = 120;
 		if (discordDetails.size() > kMaxDiscordDetails)
 			discordDetails.resize(kMaxDiscordDetails);
-	}
-	else if (m_vpnManager.IsRunning())
-	{
-		const std::string serverLabel = m_vpnPage.GetActiveServerPresenceLabel();
-		if (!serverLabel.empty())
-			discordDetails = serverLabel;
 	}
 	DiscordPresenceButtons discordButtons;
 	discordButtons.downloadEnabled = m_appSettings.GetDiscordDownloadButtonEnabled();
@@ -282,7 +287,7 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 				if (FitsDiscordButtonUrl(inviteUrl))
 				{
 					discordButtons.importEnabled = true;
-					discordButtons.importLabel = "Импорт Антизапрет";
+					discordButtons.importLabel = "🛡️ Импорт Антизапрет";
 					discordButtons.importUrl = inviteUrl;
 				}
 			}
@@ -296,7 +301,7 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 				if (FitsDiscordButtonUrl(inviteUrl))
 				{
 					discordButtons.importEnabled = true;
-					discordButtons.importLabel = "Импорт VPN";
+					discordButtons.importLabel = "🔒 Импорт VPN";
 					discordButtons.importUrl = inviteUrl;
 				}
 			}
@@ -350,8 +355,12 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 	ImGui::BeginChild("##MainArea", { width - sidebarWidth, height }, ImGuiChildFlags_None);
 
 	ImGui::SetCursorPos({ kPagePad, kPagePad });
-	const float contentWidth = ImGui::GetContentRegionAvail().x - kPagePad;
+	float contentWidth = ImGui::GetContentRegionAvail().x - kPagePad;
 	const float contentHeight = ImGui::GetContentRegionAvail().y - kPagePad;
+	// VPN: extend to MainArea's right edge so the scrollbar sits near the window edge.
+	// Content↔bar gap is handled inside UiSmoothScroll (not an extra page pad).
+	if (m_activeTab == UiTab::Vpn)
+		contentWidth += kPagePad;
 
 	m_pageHost.Draw(
 		m_activeTab,
@@ -780,13 +789,15 @@ void UiShell::TitleBar::DrawButtons(HWND hwnd, WindowManager& window, float widt
 	float x = width - (kButtonSize * 3 + kButtonGap * 2) - 8.f;
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kButtonSize * 0.5f);
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { kButtonGap, 0 });
+	// Color themes enable global FrameBorderSize — traffic lights must stay borderless.
+	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.f);
 	for (int i = 0; i < 3; ++i)
 	{
 		if (DrawButton(kButtons[i], { x, y }, kButtonSize, *hovers[i]))
 			kButtons[i].action(hwnd, window);
 		x += kButtonSize + kButtonGap;
 	}
-	ImGui::PopStyleVar(2);
+	ImGui::PopStyleVar(3);
 }
 
 bool UiShell::TitleBar::DrawButton(const TrafficLightButton& button, ImVec2 position, float size, bool& hovered) const

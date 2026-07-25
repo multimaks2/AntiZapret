@@ -20,6 +20,16 @@ struct VpnStoreSettings
 	std::string lastSubscriptionUrl;
 	// Unix seconds from subscription-userinfo `expire=`; 0 = unknown.
 	long long subscriptionExpireUnix = 0;
+	// From subscription-userinfo upload/download/total (bytes). total<=0 => unlimited.
+	long long subscriptionUploadBytes = 0;
+	long long subscriptionDownloadBytes = 0;
+	long long subscriptionTotalBytes = 0;
+	std::string subscriptionSupportUrl;
+	std::string subscriptionProfileTitle;
+	std::string subscriptionAnnounce;
+	std::string subscriptionProviderId;
+	std::string subscriptionUserId;
+	std::string subscriptionIconUrl;
 };
 
 namespace VpnTransportSettings
