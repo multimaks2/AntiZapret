@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <string>
 
 #include "gfx/theme_manager.h"
@@ -54,14 +55,30 @@ public:
 	bool GetDiscordPresenceEnabled() const { return m_discordPresenceEnabled; }
 	void SetDiscordPresenceEnabled(bool value);
 
-	bool GetDiscordShareButtonEnabled() const { return m_discordShareButtonEnabled; }
-	void SetDiscordShareButtonEnabled(bool value);
-
 	bool GetDiscordDownloadButtonEnabled() const { return m_discordDownloadButtonEnabled; }
 	void SetDiscordDownloadButtonEnabled(bool value);
 
 	const std::string& GetDiscordDownloadUrl() const { return m_discordDownloadUrl; }
 	void SetDiscordDownloadUrl(const std::string& value);
+
+	bool GetDiscordImportAntiZapretEnabled() const { return m_discordImportAntiZapretEnabled; }
+	void SetDiscordImportAntiZapretEnabled(bool value);
+
+	bool GetDiscordImportVpnEnabled() const { return m_discordImportVpnEnabled; }
+	void SetDiscordImportVpnEnabled(bool value);
+
+	bool GetDiscordImportTimedEnabled() const { return m_discordImportTimedEnabled; }
+	void SetDiscordImportTimedEnabled(bool value);
+
+	int GetDiscordImportDurationMinutes() const { return m_discordImportDurationMinutes; }
+	void SetDiscordImportDurationMinutes(int minutes);
+
+	std::int64_t GetDiscordImportExpiresAt() const { return m_discordImportExpiresAt; }
+	void RestartDiscordImportTimer();
+	void ClearDiscordImportTimer();
+	void TickDiscordImportExpiry();
+	int GetDiscordImportRemainingSeconds() const;
+	bool IsDiscordImportButtonAvailable() const;
 
 	bool GetAutoSelectBestStrategy() const;
 	void SetAutoSelectBestStrategy(bool value);
@@ -103,9 +120,13 @@ private:
 	bool m_autostartVpn = false;
 	bool m_confirmAdult = false;
 	bool m_discordPresenceEnabled = true;
-	bool m_discordShareButtonEnabled = true;
 	bool m_discordDownloadButtonEnabled = true;
 	std::string m_discordDownloadUrl = "https://github.com/multimaks2/AntiZapret/releases/latest";
+	bool m_discordImportAntiZapretEnabled = false;
+	bool m_discordImportVpnEnabled = false;
+	bool m_discordImportTimedEnabled = true;
+	int m_discordImportDurationMinutes = 5;
+	std::int64_t m_discordImportExpiresAt = 0;
 	bool m_autoSelectBestStrategy = false;
 	bool m_showExtraStrategies = false;
 	bool m_quickStrategyTest = false;

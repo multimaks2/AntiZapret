@@ -867,13 +867,6 @@ namespace
 		nullptr
 	};
 
-	const char* kSmartStrategyBullets[] = {
-		"Мутирует параметры winws (dpi-desync, repeats, fooling) от шаблона general",
-		"«Подбор умной» перебирает варианты и сохраняет лучший конфиг",
-		"Учитывает Discord, YouTube, Telegram/MTProto и ping",
-		nullptr
-	};
-
 	const StrategyDescription kDescriptions[] = {
 		{
 			"Базовая: multisplit TLS без fake — референс zapret-discord-youtube.",
@@ -1371,14 +1364,6 @@ namespace
 		sizeof(kDescriptions) / sizeof(kDescriptions[0]) == ZapretStrategies::kStrategyCount,
 		"Strategy descriptions must match kStrategyCount");
 
-	const StrategyDescription kSmartDescription = {
-		"Умная стратегия: подбор собственных аргументов winws на базе general.",
-		kSmartStrategyBullets,
-		"В отличие от «Автовыбора лучшей», здесь не выбирается готовый .bat — "
-		"алгоритм меняет dpi-desync, repeats и fooling, тестирует и сохраняет лучший набор. "
-		"Профиль хранится в settings.ini [smart_strategy]."
-	};
-
 	// Runtime-only Flowseal bats (present on disk, not in compiled kStrategies table).
 	struct NamedDescription
 	{
@@ -1432,9 +1417,4 @@ const StrategyDescription* StrategyDescriptions::GetById(const char* strategyId)
 			return &entry.description;
 	}
 	return nullptr;
-}
-
-const StrategyDescription* StrategyDescriptions::GetSmartStrategy()
-{
-	return &kSmartDescription;
 }

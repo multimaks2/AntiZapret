@@ -251,7 +251,6 @@ ZapretManager::~ZapretManager()
 void ZapretManager::LoadStore()
 {
 	m_store.Load();
-	m_smartStrategy.Load();
 	InvalidateStrategyCache();
 }
 
@@ -286,11 +285,6 @@ void ZapretManager::RememberSelectedStrategy(int strategyIndex)
 	SaveStore();
 }
 
-void ZapretManager::RememberSmartStrategySelected()
-{
-	m_store.SetLastStrategy(SmartStrategyEngine::kLabel);
-	SaveStore();
-}
 
 void ZapretManager::InvalidateStrategyCache()
 {
@@ -373,6 +367,23 @@ const std::string& ZapretManager::GetStrategyKey(int strategyIndex) const
 {
 	static const std::string empty;
 	return IsValidStrategyIndex(strategyIndex) ? m_strategies[static_cast<size_t>(strategyIndex)].id : empty;
+}
+
+const std::string& ZapretManager::GetStrategyId(int strategyIndex) const
+{
+	return GetStrategyKey(strategyIndex);
+}
+
+int ZapretManager::FindStrategyIndexById(const std::string& strategyId) const
+{
+	if (strategyId.empty())
+		return -1;
+	for (int i = 0; i < static_cast<int>(m_strategies.size()); ++i)
+	{
+		if (m_strategies[static_cast<size_t>(i)].id == strategyId)
+			return i;
+	}
+	return -1;
 }
 
 int ZapretManager::GetVisibleStrategyCount(bool showExtraStrategies) const
@@ -501,7 +512,8 @@ int ZapretManager::GetPreferredStrategyIndex(bool autoSelectBest) const
 	// Всегда предпочитаем последнюю запущенную/выбранную стратегию.
 	// autoSelectBest влияет на failover (FindFallbackStrategyIndex), а не на «забыть last».
 	const std::string& lastStrategy = m_store.GetLastStrategy();
-	if (!lastStrategy.empty() && lastStrategy != SmartStrategyEngine::kLabel)
+	// Legacy smart-strategy label is ignored after feature removal.
+	if (!lastStrategy.empty() && lastStrategy != "Умная стратегия")
 	{
 		for (size_t i = 0; i < m_strategies.size(); ++i)
 		{
@@ -595,10 +607,7 @@ void ZapretManager::MaybeAutoFailover(bool discordOk, bool youtubeOk)
 {
 	if (!m_appSettings || !m_appSettings->GetAutoSelectBestStrategy())
 		return;
-	if (m_activeSmartStrategy)
-		return;
-	if (m_strategyTestState.load() == StrategyTestState::Running
-		|| m_smartTuneState.load() == SmartStrategyTuneState::Running)
+	if (m_strategyTestState.load() == StrategyTestState::Running)
 		return;
 	if (!IsRunning() || m_activeStrategyIndex < 0)
 		return;
@@ -660,25 +669,7 @@ std::vector<StrategyTargetResultView> ZapretManager::GetStrategyTargetResults(in
 	return entry->targets;
 }
 
-void ZapretManager::SetSmartStrategyEnabled(bool enabled)
-{
-	m_smartStrategy.SetEnabled(enabled);
-	if (enabled)
-	{
-		const SmartStrategyStatus status = GetSmartStrategyStatus(IsTelegramViaMtproto());
-		char msg[384] = {};
-		snprintf(msg, sizeof msg, "[Smart] %s", status.explanation.c_str());
-		AppLog::Instance().Append(LogSource::Zapret, msg);
-	}
-}
 
-SmartStrategyStatus ZapretManager::GetSmartStrategyStatus(bool telegramViaMtproto) const
-{
-	return m_smartStrategy.BuildStatus(
-		m_smartTuneState.load(),
-		m_smartTuneCurrent.load(),
-		m_smartTuneTotal.load());
-}
 
 bool ZapretManager::IsTelegramViaMtproto() const
 {
@@ -687,9 +678,6 @@ bool ZapretManager::IsTelegramViaMtproto() const
 
 std::string ZapretManager::GetActiveStrategyStoreKey() const
 {
-	if (m_activeSmartStrategy)
-		return SmartStrategyEngine::kLabel;
-
 	if (IsValidStrategyIndex(m_activeStrategyIndex))
 		return GetStrategyKey(m_activeStrategyIndex);
 
@@ -824,20 +812,12 @@ void ZapretManager::RecordActiveStrategyResult(bool discord, bool youtube, bool 
 {
 	FlushRuntimeTracking(false);
 
-	std::string strategyKey;
-	if (m_activeSmartStrategy)
-	{
-		strategyKey = SmartStrategyEngine::kLabel;
-	}
-	else
-	{
-		const int strategyIndex = m_pendingConnectivityStrategyIndex >= 0
-			? m_pendingConnectivityStrategyIndex
-			: m_activeStrategyIndex;
-		if (!IsValidStrategyIndex(strategyIndex))
-			return;
-		strategyKey = GetStrategyKey(strategyIndex);
-	}
+	const int strategyIndex = m_pendingConnectivityStrategyIndex >= 0
+		? m_pendingConnectivityStrategyIndex
+		: m_activeStrategyIndex;
+	if (!IsValidStrategyIndex(strategyIndex))
+		return;
+	const std::string strategyKey = GetStrategyKey(strategyIndex);
 
 	StrategyTestEntry entry = LoadStrategyEntryOrDefault(strategyKey);
 	entry.discordOk = discord;
@@ -847,16 +827,6 @@ void ZapretManager::RecordActiveStrategyResult(bool discord, bool youtube, bool 
 	ApplyDualOutageDetection(discord, youtube, entry);
 
 	m_store.SetResult(strategyKey, entry);
-	if (m_activeSmartStrategy)
-	{
-		const float score = SmartStrategyEngine::ScoreFromProbe(
-			discord,
-			youtube,
-			telegram,
-			pingMs,
-			IsTelegramViaMtproto());
-		m_smartStrategy.ConsiderCandidate(m_smartStrategy.GetActiveGenome(), score);
-	}
 
 	SaveStore();
 	m_pendingConnectivityStrategyIndex = -1;
@@ -876,16 +846,6 @@ void ZapretManager::Update(float deltaTime)
 		}
 	}
 
-	if (m_smartTuneState.load() == SmartStrategyTuneState::Completed)
-	{
-		m_smartTuneCompleteTimer -= deltaTime;
-		if (m_smartTuneCompleteTimer <= 0.f)
-		{
-			m_smartTuneState.store(SmartStrategyTuneState::Idle);
-			m_smartTuneCurrent.store(0);
-		}
-	}
-
 	m_statusPollTimer += deltaTime;
 	if (m_statusPollTimer >= 1.f)
 	{
@@ -896,8 +856,7 @@ void ZapretManager::Update(float deltaTime)
 	if (!m_connectivityCheckRunning.load())
 	{
 		const bool trackRuntime = IsRunning()
-			&& m_strategyTestState.load() != StrategyTestState::Running
-			&& m_smartTuneState.load() != SmartStrategyTuneState::Running;
+			&& m_strategyTestState.load() != StrategyTestState::Running;
 		if (trackRuntime)
 			AccumulateRuntime(deltaTime);
 
@@ -906,14 +865,13 @@ void ZapretManager::Update(float deltaTime)
 			&& trackRuntime)
 		{
 			m_connectivityPollTimer = 0.f;
-			RequestConnectivityCheck(m_activeSmartStrategy ? -1 : m_activeStrategyIndex);
+			RequestConnectivityCheck(m_activeStrategyIndex);
 		}
 	}
 
 	if (!IsRunning()
 		&& !m_runtimeTrackingKey.empty()
-		&& m_strategyTestState.load() != StrategyTestState::Running
-		&& m_smartTuneState.load() != SmartStrategyTuneState::Running)
+		&& m_strategyTestState.load() != StrategyTestState::Running)
 	{
 		EndRuntimeTracking();
 	}
@@ -971,11 +929,8 @@ int ZapretManager::GetStrategyTestTotal() const
 
 bool ZapretManager::IsStrategySelectionInProgress() const
 {
-	if (m_strategyTestState.load() == StrategyTestState::Running
-		|| m_strategyTestState.load() == StrategyTestState::Paused)
-		return true;
-
-	return m_smartTuneState.load() == SmartStrategyTuneState::Running;
+	return m_strategyTestState.load() == StrategyTestState::Running
+		|| m_strategyTestState.load() == StrategyTestState::Paused;
 }
 
 void ZapretManager::HandleStrategyTestButton(ZapretStrategies::GameFilterMode gameFilterMode)
@@ -999,8 +954,7 @@ void ZapretManager::HandleStrategyTestButton(ZapretStrategies::GameFilterMode ga
 
 void ZapretManager::BeginStrategyTest(ZapretStrategies::GameFilterMode gameFilterMode, int startIndex, bool clearResults)
 {
-	if (m_strategyTestState.load() == StrategyTestState::Running
-		|| m_smartTuneState.load() == SmartStrategyTuneState::Running)
+	if (m_strategyTestState.load() == StrategyTestState::Running)
 		return;
 
 	m_strategyTestQuickOverride.store(-1);
@@ -1035,8 +989,7 @@ void ZapretManager::RequestSingleStrategyTest(
 	ZapretStrategies::GameFilterMode gameFilterMode,
 	bool quickTest)
 {
-	if (m_strategyTestState.load() == StrategyTestState::Running
-		|| m_smartTuneState.load() == SmartStrategyTuneState::Running)
+	if (m_strategyTestState.load() == StrategyTestState::Running)
 		return;
 	if (!IsValidStrategyIndex(strategyIndex))
 		return;
@@ -1102,7 +1055,7 @@ void ZapretManager::InterruptibleSleepMs(int totalMs)
 {
 	for (int elapsed = 0; elapsed < totalMs; elapsed += 50)
 	{
-		if (m_strategyTestStopRequested.load() || m_smartTuneStopRequested.load())
+		if (m_strategyTestStopRequested.load())
 			return;
 		Sleep(50);
 	}
@@ -1112,7 +1065,7 @@ void ZapretManager::WaitForStoppedInterruptible(int maxWaitMs)
 {
 	for (int elapsed = 0; elapsed < maxWaitMs; elapsed += 100)
 	{
-		if (m_strategyTestStopRequested.load() || m_smartTuneStopRequested.load())
+		if (m_strategyTestStopRequested.load())
 			return;
 		if (!IsWinwsProcessRunning() && !IsZapretServiceRunning())
 			return;
@@ -1328,193 +1281,12 @@ void ZapretManager::RunStrategyTestLoop(int startIndex)
 	RestoreStrategyAfterTest(m_strategyTestRestoreIndex);
 }
 
-const char* ZapretManager::GetSmartStrategyTuneButtonLabel() const
-{
-	switch (m_smartTuneState.load())
-	{
-	case SmartStrategyTuneState::Running:
-		return "Остановить подбор";
-	case SmartStrategyTuneState::Idle:
-	case SmartStrategyTuneState::Completed:
-	default:
-		return "Умная стратегия";
-	}
-}
 
-float ZapretManager::GetSmartStrategyTuneProgress() const
-{
-	const int total = m_smartTuneTotal.load();
-	const int current = m_smartTuneCurrent.load();
-	if (total <= 0)
-		return 0.f;
-	if (m_smartTuneState.load() == SmartStrategyTuneState::Completed)
-		return 1.f;
-	return static_cast<float>(current) / static_cast<float>(total);
-}
 
-int ZapretManager::GetSmartStrategyTuneCurrent() const
-{
-	return m_smartTuneCurrent.load();
-}
 
-int ZapretManager::GetSmartStrategyTuneTotal() const
-{
-	return m_smartTuneTotal.load();
-}
 
-void ZapretManager::HandleSmartStrategyTuneButton(ZapretStrategies::GameFilterMode gameFilterMode)
-{
-	if (m_smartTuneState.load() == SmartStrategyTuneState::Running)
-	{
-		m_smartTuneStopRequested.store(true);
-		return;
-	}
 
-	if (m_smartTuneState.load() == SmartStrategyTuneState::Idle
-		|| m_smartTuneState.load() == SmartStrategyTuneState::Completed)
-	{
-		BeginSmartStrategyTune(gameFilterMode);
-	}
-}
 
-void ZapretManager::BeginSmartStrategyTune(ZapretStrategies::GameFilterMode gameFilterMode)
-{
-	if (m_smartTuneState.load() == SmartStrategyTuneState::Running
-		|| m_strategyTestState.load() == StrategyTestState::Running)
-		return;
-
-	if (!m_smartStrategy.IsEnabled())
-	{
-		AppLog::Instance().Append(LogSource::Zapret, "Сначала добавьте «Умную стратегию» в список.");
-		return;
-	}
-
-	m_smartTuneCompleteTimer = 0.f;
-	m_smartTuneGameFilterMode = gameFilterMode;
-	m_smartTuneStopRequested.store(false);
-	m_smartTuneTotal.store(SmartStrategyEngine::kDefaultTuneIterations);
-	m_smartTuneCurrent.store(0);
-	m_smartTuneState.store(SmartStrategyTuneState::Running);
-	m_smartStrategy.ResetFromTemplate();
-
-	std::thread([this]() { RunSmartStrategyTuneLoop(); }).detach();
-}
-
-void ZapretManager::RunSmartStrategyTuneLoop()
-{
-	m_smartTuneStopRequested.store(false);
-
-	Stop();
-	WaitForStoppedInterruptible(5000);
-
-	const int total = SmartStrategyEngine::kDefaultTuneIterations;
-	std::mt19937 rng(static_cast<unsigned>(GetTickCount64()));
-
-	for (int idx = 0; idx < total; ++idx)
-	{
-		if (m_smartTuneStopRequested.load())
-			break;
-
-		const SmartStrategyGenome genome = m_smartStrategy.CreateMutation(rng);
-
-		{
-			char msg[256] = {};
-			snprintf(
-				msg,
-				sizeof msg,
-				"Подбор умной: %d/%d — %s",
-				idx + 1,
-				total,
-				genome.BuildSummary().c_str());
-			AppLog::Instance().Append(LogSource::Zapret, msg);
-		}
-
-		if (!LaunchProcessGenome(genome, m_smartTuneGameFilterMode))
-		{
-			m_smartTuneCurrent.store(idx + 1);
-			Stop();
-			WaitForStoppedInterruptible(5000);
-			continue;
-		}
-
-		if (m_smartTuneStopRequested.load())
-		{
-			Stop();
-			WaitForStoppedInterruptible(5000);
-			break;
-		}
-
-		InterruptibleSleepMs(2000);
-
-		if (m_smartTuneStopRequested.load())
-		{
-			Stop();
-			WaitForStoppedInterruptible(5000);
-			break;
-		}
-
-		const bool discord = ZapretConnectivity::ProbeDiscord();
-		const bool youtube = ZapretConnectivity::ProbeYouTube();
-		const bool telegram = ProbeTelegramConnectivity();
-		int pingMs = -1;
-		if (!m_smartTuneStopRequested.load())
-			pingMs = ZapretConnectivity::MeasureIcmpPingMs();
-
-		if (m_smartTuneStopRequested.load())
-		{
-			Stop();
-			WaitForStoppedInterruptible(5000);
-			break;
-		}
-
-		const bool mtproto = IsTelegramViaMtproto();
-		const float score = SmartStrategyEngine::ScoreFromProbe(discord, youtube, telegram, pingMs, mtproto);
-		m_discordOnline.store(discord);
-		m_youtubeOnline.store(youtube);
-		m_telegramOnline.store(telegram);
-
-		StrategyTestEntry entry;
-		entry.discordOk = discord;
-		entry.youtubeOk = youtube;
-		entry.telegramOk = telegram;
-		entry.pingMs = pingMs;
-		m_store.SetResult(SmartStrategyEngine::kLabel, entry);
-
-		if (m_smartStrategy.ConsiderCandidate(genome, score))
-		{
-			char msg[384] = {};
-			snprintf(
-				msg,
-				sizeof msg,
-				"[Smart] Новый лучший конфиг: %s (score %.1f)",
-				genome.BuildSummary().c_str(),
-				score);
-			AppLog::Instance().Append(LogSource::Zapret, msg);
-		}
-
-		m_smartTuneCurrent.store(idx + 1);
-		Stop();
-		WaitForStoppedInterruptible(5000);
-	}
-
-	SaveStore();
-	InvalidateStrategyCache();
-
-	const bool wasStopped = m_smartTuneStopRequested.load();
-	if (wasStopped)
-	{
-		m_smartTuneState.store(SmartStrategyTuneState::Idle);
-		AppLog::Instance().Append(LogSource::Zapret, "Подбор умной стратегии остановлен.");
-	}
-	else
-	{
-		m_smartTuneCompleteTimer = 3.f;
-		m_smartTuneState.store(SmartStrategyTuneState::Completed);
-		AppLog::Instance().Append(LogSource::Zapret, "Подбор умной стратегии завершён.");
-	}
-
-	StartSmartStrategy(m_smartTuneGameFilterMode, true);
-}
 
 bool ZapretManager::Start(int strategyIndex, ZapretStrategies::GameFilterMode gameFilterMode, bool saveLastStrategy)
 {
@@ -1531,7 +1303,6 @@ bool ZapretManager::Start(int strategyIndex, ZapretStrategies::GameFilterMode ga
 	if (!LaunchProcess(strategyIndex, gameFilterMode))
 		return false;
 
-	m_activeSmartStrategy = false;
 	m_activeStrategyIndex = strategyIndex;
 	m_activeGameFilterMode = gameFilterMode;
 	BeginRuntimeTracking(GetStrategyKey(strategyIndex));
@@ -1545,46 +1316,9 @@ bool ZapretManager::Start(int strategyIndex, ZapretStrategies::GameFilterMode ga
 	return true;
 }
 
-bool ZapretManager::StartSmartStrategy(ZapretStrategies::GameFilterMode gameFilterMode, bool saveLastStrategy)
-{
-	const SmartStrategyGenome& genome = m_smartStrategy.GetActiveGenome();
-	if (genome.args.empty())
-	{
-		m_lastError = "Умная стратегия не настроена";
-		AppLog::Instance().Append(LogSource::Zapret, m_lastError);
-		return false;
-	}
-
-	const SmartStrategyStatus status = GetSmartStrategyStatus(IsTelegramViaMtproto());
-	char msg[384] = {};
-	snprintf(msg, sizeof msg, "[Smart] %s", status.explanation.c_str());
-	AppLog::Instance().Append(LogSource::Zapret, msg);
-
-	Stop();
-	WaitForStopped(2000);
-
-	if (!LaunchProcessGenome(genome, gameFilterMode))
-		return false;
-
-	m_activeSmartStrategy = true;
-	m_activeStrategyIndex = -1;
-	m_activeGameFilterMode = gameFilterMode;
-	BeginRuntimeTracking(SmartStrategyEngine::kLabel);
-	if (saveLastStrategy)
-	{
-		m_store.SetLastStrategy(SmartStrategyEngine::kLabel);
-		SaveStore();
-	}
-	RefreshRunStatus();
-	m_connectivityPollTimer = 0.f;
-	return true;
-}
 
 bool ZapretManager::Restart()
 {
-	if (m_activeSmartStrategy)
-		return StartSmartStrategy(m_activeGameFilterMode, true);
-
 	if (m_activeStrategyIndex < 0)
 		return Start(0, m_activeGameFilterMode);
 
@@ -1611,7 +1345,6 @@ void ZapretManager::Stop()
 	}
 
 	m_activeStrategyIndex = -1;
-	m_activeSmartStrategy = false;
 	m_runStatus = ZapretRunStatus::Stopped;
 	AppLog::Instance().Append(LogSource::Zapret, "Антизапрет остановлен.");
 }
@@ -1632,20 +1365,6 @@ void ZapretManager::RequestStart(
 	}).detach();
 }
 
-void ZapretManager::RequestStartSmartStrategy(
-	ZapretStrategies::GameFilterMode gameFilterMode,
-	bool saveLastStrategy)
-{
-	m_runStatus = ZapretRunStatus::Starting;
-	std::thread([this, gameFilterMode, saveLastStrategy]()
-	{
-		std::lock_guard<std::mutex> lock(m_opMutex);
-		m_opInFlight.store(true);
-		StartSmartStrategy(gameFilterMode, saveLastStrategy);
-		m_opInFlight.store(false);
-		RefreshRunStatus();
-	}).detach();
-}
 
 void ZapretManager::RequestStop()
 {
@@ -1841,92 +1560,6 @@ bool ZapretManager::LaunchProcess(int strategyIndex, ZapretStrategies::GameFilte
 	return true;
 }
 
-bool ZapretManager::LaunchProcessGenome(
-	const SmartStrategyGenome& genome,
-	ZapretStrategies::GameFilterMode gameFilterMode)
-{
-	m_lastError.clear();
-
-	const std::wstring root = ZapretPaths::GetAntiZapretDirectory();
-	if (!ZapretPaths::IsValidLayout(root))
-	{
-		m_lastError = "Не найдены bin\\winws.exe и папка lists рядом с AntiZapret.exe";
-		AppLog::Instance().Append(LogSource::Zapret, m_lastError);
-		return false;
-	}
-
-	PrepareEnvironment();
-
-	const std::wstring binDir = ZapretPaths::GetBinDirectory();
-	const std::wstring listsDir = ZapretPaths::GetListsDirectory();
-	const std::string argsUtf8 = StrategyArgumentBuilder::BuildCommandLine(
-		genome.args,
-		gameFilterMode,
-		ZapretPaths::WideToUtf8(binDir),
-		ZapretPaths::WideToUtf8(listsDir));
-	if (argsUtf8.empty())
-	{
-		m_lastError = "Не удалось собрать аргументы умной стратегии";
-		AppLog::Instance().Append(LogSource::Zapret, m_lastError);
-		return false;
-	}
-
-	const std::wstring winwsPath = binDir + L"\\winws.exe";
-	const std::wstring argsWide = ZapretPaths::Utf8ToWide(argsUtf8);
-	std::wstring commandLine = L"\"" + winwsPath + L"\" " + argsWide;
-	std::vector<wchar_t> commandBuffer(commandLine.begin(), commandLine.end());
-	commandBuffer.push_back(L'\0');
-
-	STARTUPINFOW si = { sizeof(si) };
-	si.dwFlags = STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	PROCESS_INFORMATION pi = {};
-
-	if (!ProcessJob::CreateInJob(
-		nullptr,
-		commandBuffer.data(),
-		nullptr,
-		nullptr,
-		FALSE,
-		CREATE_NO_WINDOW,
-		nullptr,
-		binDir.c_str(),
-		&si,
-		&pi))
-	{
-		m_lastError = "Не удалось запустить winws.exe (код " + std::to_string(::GetLastError()) + ")";
-		AppLog::Instance().Append(LogSource::Zapret, m_lastError);
-		return false;
-	}
-
-	CloseHandle(pi.hThread);
-
-	{
-		std::lock_guard<std::mutex> lock(m_processMutex);
-		if (m_process)
-			CloseHandle(m_process);
-		m_process = pi.hProcess;
-	}
-
-	Sleep(300);
-	DWORD exitCode = 0;
-	if (GetExitCodeProcess(pi.hProcess, &exitCode) && exitCode != STILL_ACTIVE)
-	{
-		m_lastError = "winws.exe завершился сразу после запуска (код " + std::to_string(exitCode) + ")";
-		AppLog::Instance().Append(LogSource::Zapret, m_lastError);
-		{
-			std::lock_guard<std::mutex> lock(m_processMutex);
-			CloseHandle(m_process);
-			m_process = nullptr;
-		}
-		return false;
-	}
-
-	AppLog::Instance().Append(
-		LogSource::Zapret,
-		std::string("winws.exe запущен: Умная стратегия (") + genome.BuildSummary() + ")");
-	return true;
-}
 
 void ZapretManager::RefreshRunStatus()
 {

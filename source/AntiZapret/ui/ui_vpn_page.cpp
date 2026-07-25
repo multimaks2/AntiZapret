@@ -897,6 +897,14 @@ void UiVpnPage::ApplyImportResult(
 		++addedCount;
 	}
 
+	if (!m_pendingActivateUri.empty())
+	{
+		const int activateIndex = FindNodeIndexByUri(m_pendingActivateUri);
+		if (activateIndex >= 0)
+			SetActiveServer(activateIndex);
+		m_pendingActivateUri.clear();
+	}
+
 	if (m_activeIndex < 0 && !m_nodes.empty())
 		m_activeIndex = 0;
 
@@ -995,9 +1003,15 @@ void UiVpnPage::ImportSubscriptionUrl(const std::string& urlOrText)
 
 	AppLog::Instance().Append(LogSource::VpnRouting, "Protocol import: " + text);
 	if (startsWithHttp(text))
+	{
+		m_pendingActivateUri.clear();
 		StartRefreshSubscriptions(text);
+	}
 	else
-		StartImportFromText(text, "Импорт по протоколу...");
+	{
+		m_pendingActivateUri = text;
+		StartImportFromText(text, "Импорт сервера по протоколу...");
+	}
 }
 
 void UiVpnPage::StartImportFromText(const std::string& text, const char* statusLabel)
@@ -2231,6 +2245,13 @@ std::string UiVpnPage::GetActiveServerLabel() const
 	if (!node.server.empty())
 		return node.server;
 	return "Сервер #" + std::to_string(m_activeIndex + 1);
+}
+
+std::string UiVpnPage::GetActiveServerShareUri() const
+{
+	if (!HasActiveServer())
+		return {};
+	return m_nodes[static_cast<size_t>(m_activeIndex)].originalUri;
 }
 
 void UiVpnPage::SetWorkModeFromTray(int workMode)

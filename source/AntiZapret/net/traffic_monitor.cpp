@@ -6,10 +6,11 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <WinSock2.h>
+#include <WS2tcpip.h>
 #include <Windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
 #include <iphlpapi.h>
+#include <netioapi.h>
 
 #include <algorithm>
 #include <cmath>
@@ -20,11 +21,11 @@
 
 namespace
 {
-	bool IsValidLinkSpeedBits(DWORD bitsPerSec)
+	bool IsValidLinkSpeedBits(ULONG64 bitsPerSec)
 	{
-		if (bitsPerSec == 0 || bitsPerSec == 0xFFFFFFFFu)
+		if (bitsPerSec == 0 || bitsPerSec == 0xFFFFFFFFFFFFFFFFull)
 			return false;
-		constexpr DWORD kMaxPlausible = 100u * 1000u * 1000u * 1000u;
+		constexpr ULONG64 kMaxPlausible = 100ull * 1000ull * 1000ull * 1000ull;
 		return bitsPerSec <= kMaxPlausible;
 	}
 
@@ -64,29 +65,78 @@ namespace
 		return bestIf;
 	}
 
-	// Measure a single interface — summing all adapters double-counts VPN/TUN + NIC.
+	bool IsLoopbackOrTunnel(const MIB_IF_ROW2& row)
+	{
+		if (row.Type == IF_TYPE_SOFTWARE_LOOPBACK)
+			return true;
+		if (row.Type == IF_TYPE_TUNNEL)
+			return true;
+		if (row.InterfaceAndOperStatusFlags.EndPointInterface)
+			return true;
+		return false;
+	}
+
+	// Prefer the default route NIC; fall back to the busiest up non-tunnel adapter.
 	bool QueryPrimaryInterfaceCounters(
 		DWORD& ifIndexOut,
 		std::uint64_t& inOut,
 		std::uint64_t& outOut,
 		float& linkSpeedBitsOut)
 	{
-		const DWORD ifIndex = ResolveDefaultInterfaceIndex();
-		if (ifIndex == 0)
+		const DWORD preferred = ResolveDefaultInterfaceIndex();
+
+		PMIB_IF_TABLE2 table = nullptr;
+		if (GetIfTable2(&table) != NO_ERROR || !table)
 			return false;
 
-		MIB_IFROW row {};
-		row.dwIndex = ifIndex;
-		if (GetIfEntry(&row) != NO_ERROR)
+		DWORD bestIndex = 0;
+		ULONG64 bestIn = 0;
+		ULONG64 bestOut = 0;
+		ULONG64 bestLink = 0;
+		ULONG64 bestScore = 0;
+		bool foundPreferred = false;
+
+		for (ULONG i = 0; i < table->NumEntries; ++i)
+		{
+			const MIB_IF_ROW2& row = table->Table[i];
+			if (row.OperStatus != IfOperStatusUp)
+				continue;
+			if (IsLoopbackOrTunnel(row))
+				continue;
+
+			const DWORD idx = row.InterfaceIndex;
+			const ULONG64 score = row.InOctets + row.OutOctets;
+			const bool isPreferred = (preferred != 0 && idx == preferred);
+
+			if (isPreferred)
+			{
+				foundPreferred = true;
+				bestIndex = idx;
+				bestIn = row.InOctets;
+				bestOut = row.OutOctets;
+				bestLink = row.ReceiveLinkSpeed;
+				break;
+			}
+
+			if (!foundPreferred && score >= bestScore)
+			{
+				bestScore = score;
+				bestIndex = idx;
+				bestIn = row.InOctets;
+				bestOut = row.OutOctets;
+				bestLink = row.ReceiveLinkSpeed;
+			}
+		}
+
+		FreeMibTable(table);
+
+		if (bestIndex == 0)
 			return false;
 
-		if (row.dwOperStatus != IF_OPER_STATUS_OPERATIONAL)
-			return false;
-
-		ifIndexOut = ifIndex;
-		inOut = row.dwInOctets;
-		outOut = row.dwOutOctets;
-		linkSpeedBitsOut = IsValidLinkSpeedBits(row.dwSpeed) ? static_cast<float>(row.dwSpeed) : 0.f;
+		ifIndexOut = bestIndex;
+		inOut = bestIn;
+		outOut = bestOut;
+		linkSpeedBitsOut = IsValidLinkSpeedBits(bestLink) ? static_cast<float>(bestLink) : 0.f;
 		return true;
 	}
 
@@ -134,10 +184,13 @@ void TrafficMonitor::Update(float deltaTime)
 		return;
 
 	m_sampleTimer += deltaTime;
-	while (m_sampleTimer >= kSampleIntervalSec)
+	// One sample per due interval, using the real elapsed time — never burst-sample
+	// with a fake 0.6s divisor (that creates fake spikes + under-reads).
+	if (m_sampleTimer >= kSampleIntervalSec)
 	{
-		m_sampleTimer -= kSampleIntervalSec;
-		Sample();
+		const float elapsed = m_sampleTimer;
+		m_sampleTimer = 0.f;
+		Sample(elapsed);
 
 		if (m_hasBaseline)
 		{
@@ -180,8 +233,11 @@ void TrafficMonitor::UpdateDisplaySmoothing(float deltaTime)
 		m_displayScaleMax = ExpSmooth(m_displayScaleMax, targetScale, deltaTime, 2.2f);
 }
 
-void TrafficMonitor::Sample()
+void TrafficMonitor::Sample(float elapsedSec)
 {
+	if (elapsedSec < 0.05f)
+		elapsedSec = 0.05f;
+
 	DWORD ifIndex = 0;
 	std::uint64_t totalIn = 0;
 	std::uint64_t totalOut = 0;
@@ -212,9 +268,8 @@ void TrafficMonitor::Sample()
 	m_sessionBytesIn += deltaIn;
 	m_sessionBytesOut += deltaOut;
 
-	const float interval = kSampleIntervalSec;
-	m_downloadBps = static_cast<float>(deltaIn) / interval;
-	m_uploadBps = static_cast<float>(deltaOut) / interval;
+	m_downloadBps = static_cast<float>(static_cast<double>(deltaIn) / static_cast<double>(elapsedSec));
+	m_uploadBps = static_cast<float>(static_cast<double>(deltaOut) / static_cast<double>(elapsedSec));
 }
 
 float TrafficMonitor::GetLinkCapacityBytesPerSec() const

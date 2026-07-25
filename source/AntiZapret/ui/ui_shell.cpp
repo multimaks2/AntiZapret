@@ -4,6 +4,7 @@
 #include "app/app_settings.h"
 #include "app/app_version.h"
 #include "app/protocol_handler.h"
+#include "discord/discord_invite_codec.h"
 #include "gfx/font_manager.h"
 #include "gfx/theme_manager.h"
 #include "lua/lua_api.h"
@@ -28,6 +29,30 @@ namespace
 	constexpr float kTitlePadLeft = 12.f;
 	constexpr float kButtonSize = 14.f;
 	constexpr float kButtonGap = 8.f;
+	constexpr char kDiscordInviteOpenBase[] =
+		"https://cdn.jsdelivr.net/gh/multimaks2/AntiZapret@main/docs/open.html";
+	// Discord Rich Presence button URLs are limited to 512 bytes.
+	constexpr size_t kDiscordButtonUrlMax = 512;
+
+	std::string BuildDiscordVpnInviteHttpsLink(const std::string& shareUri)
+	{
+		// Active server share-URI (vless/vmess/...), compressed when needed to fit Discord.
+		return DiscordInviteCodec::BuildVpnServerInviteHttps(
+			kDiscordInviteOpenBase,
+			shareUri,
+			kDiscordButtonUrlMax);
+	}
+
+	std::string BuildDiscordStrategyInviteHttpsLink(const std::string& strategyId)
+	{
+		return std::string(kDiscordInviteOpenBase) + "?t=az&id=" + ProtocolHandler::UrlEncode(strategyId)
+			+ "&start=1";
+	}
+
+	bool FitsDiscordButtonUrl(const std::string& url)
+	{
+		return !url.empty() && url.size() <= kDiscordButtonUrlMax;
+	}
 
 	std::wstring Utf8ToWideLocal(const std::string& text)
 	{
@@ -119,7 +144,8 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 			&m_vpnManager,
 			&m_vpnPage,
 			&m_appSettings,
-			&m_trafficMonitor);
+			&m_trafficMonitor,
+			&m_processNetMonitor);
 		m_pageHost.SetAppSettings(&m_appSettings);
 		m_settingsPage.SetAppSettings(&m_appSettings);
 		m_settingsPage.SetThemeManager(&theme);
@@ -189,6 +215,8 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 	m_vpnManager.Update(ImGui::GetIO().DeltaTime);
 	m_vpnPage.UpdateRuntime();
 	m_trafficMonitor.Update(ImGui::GetIO().DeltaTime);
+	m_processNetMonitor.Update(ImGui::GetIO().DeltaTime);
+	m_appSettings.TickDiscordImportExpiry();
 	std::string discordDetails = "бездействует";
 	if (m_zapretManager.IsRunning())
 	{
@@ -231,6 +259,50 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		if (!serverLabel.empty())
 			discordDetails = serverLabel;
 	}
+	DiscordPresenceButtons discordButtons;
+	discordButtons.downloadEnabled = m_appSettings.GetDiscordDownloadButtonEnabled();
+	discordButtons.downloadUrl = m_appSettings.GetDiscordDownloadUrl();
+
+	const bool importWindowOpen = m_appSettings.IsDiscordImportButtonAvailable();
+	if (importWindowOpen)
+	{
+		const bool wantAz = m_appSettings.GetDiscordImportAntiZapretEnabled() && m_activeTab == UiTab::AntiZapret;
+		const bool wantVpn = m_appSettings.GetDiscordImportVpnEnabled() && m_activeTab == UiTab::Vpn;
+		if (wantAz)
+		{
+			std::string strategyId;
+			if (m_zapretManager.IsRunning() && m_zapretManager.GetActiveStrategyIndex() >= 0)
+				strategyId = m_zapretManager.GetStrategyId(m_zapretManager.GetActiveStrategyIndex());
+			else
+				strategyId = m_zapretManager.GetStore().GetLastStrategy();
+
+			if (!strategyId.empty())
+			{
+				const std::string inviteUrl = BuildDiscordStrategyInviteHttpsLink(strategyId);
+				if (FitsDiscordButtonUrl(inviteUrl))
+				{
+					discordButtons.importEnabled = true;
+					discordButtons.importLabel = "Импорт Антизапрет";
+					discordButtons.importUrl = inviteUrl;
+				}
+			}
+		}
+		else if (wantVpn)
+		{
+			const std::string shareUri = m_vpnPage.GetActiveServerShareUri();
+			if (!shareUri.empty())
+			{
+				const std::string inviteUrl = BuildDiscordVpnInviteHttpsLink(shareUri);
+				if (FitsDiscordButtonUrl(inviteUrl))
+				{
+					discordButtons.importEnabled = true;
+					discordButtons.importLabel = "Импорт VPN";
+					discordButtons.importUrl = inviteUrl;
+				}
+			}
+		}
+	}
+
 	m_discordPresence.Update(
 		m_activeTab,
 		m_zapretManager.IsRunning(),
@@ -238,9 +310,7 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		m_vpnManager.IsRunning(),
 		discordDetails,
 		m_appSettings.GetDiscordPresenceEnabled(),
-		m_appSettings.GetDiscordShareButtonEnabled(),
-		m_appSettings.GetDiscordDownloadButtonEnabled(),
-		m_appSettings.GetDiscordDownloadUrl(),
+		discordButtons,
 		ImGui::GetIO().DeltaTime);
 
 	const UiThemeColors colors = theme.GetColors();
@@ -340,6 +410,40 @@ void UiShell::ProcessProtocolCommands()
 			continue;
 		}
 
+		if (cmd.action == "strategy")
+		{
+			m_activeTab = UiTab::AntiZapret;
+			std::string strategyId = cmd.strategyId;
+			if (strategyId.empty())
+			{
+				for (const auto& p : cmd.params)
+				{
+					if (p.first == "id" || p.first == "strategy")
+					{
+						strategyId = p.second;
+						break;
+					}
+				}
+			}
+			if (strategyId.empty())
+			{
+				AppLog::Instance().Append(LogSource::VpnRouting, "Protocol strategy: empty id");
+				continue;
+			}
+
+			const int index = m_zapretManager.FindStrategyIndexById(strategyId);
+			if (index < 0)
+			{
+				AppLog::Instance().Append(LogSource::VpnRouting, "Protocol strategy: unknown id " + strategyId);
+				continue;
+			}
+			m_zapretManager.RememberSelectedStrategy(index);
+			if (cmd.startStrategy)
+				m_zapretManager.RequestStart(index, ZapretStrategies::GameFilterMode::Disabled);
+			AppLog::Instance().Append(LogSource::VpnRouting, "Protocol strategy: " + strategyId);
+			continue;
+		}
+
 		if (cmd.action == "open")
 		{
 			setTab(cmd.openTab);
@@ -388,6 +492,25 @@ void UiShell::ProcessProtocolCommands()
 				{
 					m_vpnPage.SetVpnEnabled(false);
 					m_vpnPage.UpdateRuntime();
+				}
+			}
+			else if (cmd.target == "zapret" || cmd.target == "antizapret")
+			{
+				m_activeTab = UiTab::AntiZapret;
+				if (cmd.controlAction == "strategy" || cmd.controlAction == "apply" || cmd.controlAction == "start")
+				{
+					std::string strategyId = cmd.strategyId;
+					for (const auto& p : cmd.params)
+					{
+						if ((p.first == "id" || p.first == "strategy") && strategyId.empty())
+							strategyId = p.second;
+					}
+					if (!strategyId.empty())
+					{
+						const int index = m_zapretManager.FindStrategyIndexById(strategyId);
+						if (index >= 0)
+							m_zapretManager.RequestStart(index, ZapretStrategies::GameFilterMode::Disabled);
+					}
 				}
 			}
 			else if (cmd.target == "app" && (cmd.controlAction == "open" || cmd.controlAction == "focus"))

@@ -8,6 +8,7 @@ class VpnManager;
 class UiVpnPage;
 class AppSettings;
 class TrafficMonitor;
+class ProcessNetMonitor;
 
 class UiHomePage
 {
@@ -18,7 +19,8 @@ public:
 		VpnManager* vpn,
 		UiVpnPage* vpnPage,
 		AppSettings* settings,
-		TrafficMonitor* traffic);
+		TrafficMonitor* traffic,
+		ProcessNetMonitor* processNet = nullptr);
 
 	void DrawContent(ThemeManager& theme, FontManager& fonts, float width);
 
@@ -29,6 +31,7 @@ private:
 	UiVpnPage* m_vpnPage = nullptr;
 	AppSettings* m_settings = nullptr;
 	TrafficMonitor* m_traffic = nullptr;
+	ProcessNetMonitor* m_processNet = nullptr;
 	bool m_preferencesLoaded = false;
 	int m_selectedStrategy = 0;
 	bool m_autoSelect = false;

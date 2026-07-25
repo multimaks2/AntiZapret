@@ -7,18 +7,21 @@
 // Browser / second-instance deep links:
 //   antizapret://add/<subscription-url>
 //   antizapret://import?url=<urlencoded-url>
+//   antizapret://strategy?id=<strategy-id>&start=1
 //   antizapret://open?tab=vpn|home|antizapret|tg|routing|console|settings|about
-//   antizapret://v1/control/<target>/<action>?key=value   (queued for future handlers)
+//   antizapret://v1/control/<target>/<action>?key=value
 struct ProtocolCommand
 {
 	std::string raw;
 	std::string version;   // "" or "v1"
-	std::string action;    // import | open | control | unknown
+	std::string action;    // import | open | control | strategy | unknown
 	std::string target;    // vpn | zapret | ...
 	std::string controlAction;
 	std::string importUrl;
+	std::string strategyId;
 	std::string openTab;   // vpn, home, ...
 	std::vector<std::pair<std::string, std::string>> params;
+	bool startStrategy = true;
 	bool valid = false;
 };
 
@@ -47,4 +50,5 @@ namespace ProtocolHandler
 	bool HandleCopyData(const COPYDATASTRUCT* cds);
 	std::string WideToUtf8(const std::wstring& wide);
 	std::wstring Utf8ToWide(const std::string& utf8);
+	std::string UrlEncode(const std::string& value);
 }

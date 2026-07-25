@@ -8,6 +8,7 @@
 #include "gfx/font_manager.h"
 #include "gfx/theme_manager.h"
 #include "net/traffic_monitor.h"
+#include "net/process_net_monitor.h"
 #include "tgproxy/tg_ws_proxy_manager.h"
 #include "ui/ui_common.h"
 #include "ui/ui_vpn_page.h"
@@ -493,7 +494,9 @@ namespace
 		float width,
 		float height,
 		bool bitsMode,
-		const UiThemeColors& colors)
+		const UiThemeColors& colors,
+		float fillAlphaDown = 0.28f,
+		float fillAlphaUp = 0.22f)
 	{
 		const ImVec2 origin = ImGui::GetCursorScreenPos();
 		const ImVec2 rectMax = { origin.x + width, origin.y + height };
@@ -575,14 +578,14 @@ namespace
 			downSmooth,
 			graphBottom,
 			ImGui::GetColorU32(downAccent),
-			ImGui::GetColorU32(UiCommon::WithAlpha(downAccent, 0.28f)));
+			ImGui::GetColorU32(UiCommon::WithAlpha(downAccent, fillAlphaDown)));
 		DrawSeriesArea(
 			drawList,
 			upControl,
 			upSmooth,
 			graphBottom,
 			ImGui::GetColorU32(upAccent),
-			ImGui::GetColorU32(UiCommon::WithAlpha(upAccent, 0.22f)));
+			ImGui::GetColorU32(UiCommon::WithAlpha(upAccent, fillAlphaUp)));
 
 		if (!downSmooth.empty())
 			drawList->AddCircleFilled(downSmooth.back(), 3.2f, ImGui::GetColorU32(downAccent), 12);
@@ -927,7 +930,8 @@ void UiHomePage::SetManagers(
 	VpnManager* vpn,
 	UiVpnPage* vpnPage,
 	AppSettings* settings,
-	TrafficMonitor* traffic)
+	TrafficMonitor* traffic,
+	ProcessNetMonitor* processNet)
 {
 	m_zapret = zapret;
 	m_tgProxy = tgProxy;
@@ -935,6 +939,7 @@ void UiHomePage::SetManagers(
 	m_vpnPage = vpnPage;
 	m_settings = settings;
 	m_traffic = traffic;
+	m_processNet = processNet;
 }
 
 void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float width)
@@ -1159,7 +1164,11 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 		bool displayBits = bitsMode;
 		{
 			const ImVec2 headerStart = ImGui::GetCursorPos();
+#ifdef _DEBUG
+			UiCommon::SectionHeader("Мониторинг сети · DEBUG", colors);
+#else
 			UiCommon::SectionHeader("Мониторинг сети", colors);
+#endif
 			ImGui::SameLine(0.f, 0.f);
 			ImGui::SetCursorPosY(headerStart.y);
 			if (DrawSpeedUnitToggle(bitsMode, colors) && m_settings)
@@ -1175,7 +1184,125 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 		const std::uint64_t bytesIn = m_traffic ? m_traffic->GetSessionBytesIn() : 0;
 		const std::uint64_t bytesOut = m_traffic ? m_traffic->GetSessionBytesOut() : 0;
 		const float scaleMax = m_traffic ? (std::max)(m_traffic->GetDisplayScaleMax(), 1.f) : 1.f;
+		(void)scaleMax;
 
+#ifdef _DEBUG
+		const float peakDown = m_traffic ? m_traffic->GetPeakDownloadBps() : 0.f;
+		const float peakUp = m_traffic ? m_traffic->GetPeakUploadBps() : 0.f;
+		const ImVec4 downAccent = UiCommon::FixedDownloadAccent();
+		const ImVec4 upAccent = UiCommon::FixedUploadAccent();
+
+		{
+			ImFont* font = ImGui::GetFont();
+			const float bigSize = ImGui::GetFontSize() * 1.55f;
+			const std::string downText = FormatSpeed(downBps, displayBits);
+			const std::string upText = FormatSpeed(upBps, displayBits);
+			const std::string peakDownLabel = std::string("↓ пик ") + FormatSpeed(peakDown, displayBits);
+			const std::string peakUpLabel = std::string("↑ пик ") + FormatSpeed(peakUp, displayBits);
+			const ImVec2 downSz = font->CalcTextSizeA(bigSize, 1e9f, 0.f, downText.c_str());
+			const ImVec2 upSz = font->CalcTextSizeA(bigSize, 1e9f, 0.f, upText.c_str());
+			(void)upSz;
+			const float colW = ImGui::GetContentRegionAvail().x * 0.5f;
+
+			ImDrawList* dl = ImGui::GetWindowDrawList();
+			const ImVec2 origin = ImGui::GetCursorScreenPos();
+			dl->AddText(font, bigSize, origin, ImGui::GetColorU32(downAccent), downText.c_str());
+			dl->AddText(
+				font,
+				ImGui::GetFontSize() * 0.85f,
+				{ origin.x, origin.y + downSz.y + 2.f },
+				ImGui::GetColorU32(UiCommon::WithAlpha(colors.textMuted, 0.95f)),
+				peakDownLabel.c_str());
+
+			dl->AddText(
+				font,
+				bigSize,
+				{ origin.x + colW, origin.y },
+				ImGui::GetColorU32(upAccent),
+				upText.c_str());
+			dl->AddText(
+				font,
+				ImGui::GetFontSize() * 0.85f,
+				{ origin.x + colW, origin.y + downSz.y + 2.f },
+				ImGui::GetColorU32(UiCommon::WithAlpha(colors.textMuted, 0.95f)),
+				peakUpLabel.c_str());
+
+			ImGui::Dummy({ ImGui::GetContentRegionAvail().x, downSz.y + ImGui::GetFontSize() + 10.f });
+		}
+
+		{
+			char sessionLine[128] = {};
+			snprintf(
+				sessionLine,
+				sizeof sessionLine,
+				"Сессия  ↓ %s   ↑ %s",
+				FormatBytes(bytesIn).c_str(),
+				FormatBytes(bytesOut).c_str());
+			UiCommon::CaptionText(sessionLine, colors, ImGui::GetContentRegionAvail().x);
+		}
+		ImGui::Dummy({ 0.f, 8.f });
+
+		if (m_traffic)
+			DrawSpeedGraph(*m_traffic, ImGui::GetContentRegionAvail().x, 260.f, displayBits, colors, 0.42f, 0.34f);
+
+		ImGui::Dummy({ 0.f, 10.f });
+		UiCommon::SectionHeader("Процессы с сетью", colors);
+		ImGui::Dummy({ 0.f, 4.f });
+		UiCommon::CaptionText(
+			"Топ по TCP-скорости (EStats). UDP учитывается только как число сокетов.",
+			colors,
+			ImGui::GetContentRegionAvail().x);
+		ImGui::Dummy({ 0.f, 6.f });
+
+		const std::vector<ProcessNetEntry>& procs =
+			m_processNet ? m_processNet->GetTopProcesses() : std::vector<ProcessNetEntry>{};
+		if (procs.empty())
+		{
+			UiCommon::CaptionText("Пока нет данных — подождите ~1 с…", colors, ImGui::GetContentRegionAvail().x);
+		}
+		else if (ImGui::BeginTable(
+					 "##debug_proc_net",
+					 4,
+					 ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV))
+		{
+			ImGui::TableSetupColumn("Процесс", ImGuiTableColumnFlags_WidthStretch, 2.4f);
+			ImGui::TableSetupColumn("↓", ImGuiTableColumnFlags_WidthStretch, 1.f);
+			ImGui::TableSetupColumn("↑", ImGuiTableColumnFlags_WidthStretch, 1.f);
+			ImGui::TableSetupColumn("Σ", ImGuiTableColumnFlags_WidthStretch, 1.f);
+			ImGui::TableHeadersRow();
+
+			float maxTotal = 1.f;
+			for (const ProcessNetEntry& e : procs)
+				maxTotal = (std::max)(maxTotal, e.downloadBps + e.uploadBps);
+
+			for (const ProcessNetEntry& e : procs)
+			{
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
+				char nameLine[160] = {};
+				snprintf(nameLine, sizeof nameLine, "%s  ·  %u", e.name.c_str(), e.pid);
+				ImGui::TextUnformatted(nameLine);
+				const float total = e.downloadBps + e.uploadBps;
+				const float barFrac = (std::clamp)(total / maxTotal, 0.f, 1.f);
+				const ImVec2 p0 = ImGui::GetItemRectMin();
+				const ImVec2 p1 = ImGui::GetItemRectMax();
+				const float barH = 3.f;
+				ImGui::GetWindowDrawList()->AddRectFilled(
+					{ p0.x, p1.y + 1.f },
+					{ p0.x + (p1.x - p0.x) * barFrac, p1.y + 1.f + barH },
+					ImGui::GetColorU32(UiCommon::WithAlpha(downAccent, 0.55f)),
+					1.5f);
+
+				ImGui::TableNextColumn();
+				ImGui::TextColored(downAccent, "%s", FormatSpeed(e.downloadBps, displayBits).c_str());
+				ImGui::TableNextColumn();
+				ImGui::TextColored(upAccent, "%s", FormatSpeed(e.uploadBps, displayBits).c_str());
+				ImGui::TableNextColumn();
+				ImGui::TextUnformatted(FormatSpeed(total, displayBits).c_str());
+			}
+			ImGui::EndTable();
+		}
+#else
 		m_cardSampleTimer += ImGui::GetIO().DeltaTime;
 		constexpr float kCardSampleIntervalSec = 0.75f;
 		if (!m_cardSampleReady || m_cardSampleTimer >= kCardSampleIntervalSec)
@@ -1200,6 +1327,7 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 
 		if (m_traffic)
 			DrawSpeedGraph(*m_traffic, ImGui::GetContentRegionAvail().x, 196.f, displayBits, colors);
+#endif
 	}
 	UiCommon::EndCard();
 

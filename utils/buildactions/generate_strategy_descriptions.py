@@ -363,15 +363,6 @@ def render_cpp(strategies: list[dict]) -> str:
             "\t\t}"
         )
 
-    smart_bullets = [
-        "\tconst char* kSmartStrategyBullets[] = {",
-        '\t\t"Мутирует параметры winws (dpi-desync, repeats, fooling) от шаблона general",',
-        '\t\t"«Подбор умной» перебирает варианты и сохраняет лучший конфиг",',
-        '\t\t"Учитывает Discord, YouTube, Telegram/MTProto и ping",',
-        "\t\tnullptr",
-        "\t};",
-    ]
-
     lines = [
         '#include "zapret/strategy_descriptions.h"',
         "",
@@ -381,8 +372,6 @@ def render_cpp(strategies: list[dict]) -> str:
         "{",
         *bullet_blocks,
         "",
-        *smart_bullets,
-        "",
         "\tconst StrategyDescription kDescriptions[] = {",
         ",\n".join(description_entries),
         "\t};",
@@ -390,14 +379,6 @@ def render_cpp(strategies: list[dict]) -> str:
         "\tstatic_assert(",
         "\t\tsizeof(kDescriptions) / sizeof(kDescriptions[0]) == ZapretStrategies::kStrategyCount,",
         '\t\t"Strategy descriptions must match kStrategyCount");',
-        "",
-        "\tconst StrategyDescription kSmartDescription = {",
-        '\t\t"Умная стратегия: подбор собственных аргументов winws на базе general.",',
-        "\t\tkSmartStrategyBullets,",
-        '\t\t"В отличие от «Автовыбора лучшей», здесь не выбирается готовый .bat — "',
-        '\t\t"алгоритм меняет dpi-desync, repeats и fooling, тестирует и сохраняет лучший набор. "',
-        '\t\t"Профиль хранится в smart_strategy.ini."',
-        "\t};",
         "}",
         "",
         "const StrategyDescription* StrategyDescriptions::GetByIndex(int strategyIndex)",
@@ -405,11 +386,6 @@ def render_cpp(strategies: list[dict]) -> str:
         "\tif (strategyIndex < 0 || strategyIndex >= static_cast<int>(ZapretStrategies::kStrategyCount))",
         "\t\treturn nullptr;",
         "\treturn &kDescriptions[static_cast<size_t>(strategyIndex)];",
-        "}",
-        "",
-        "const StrategyDescription* StrategyDescriptions::GetSmartStrategy()",
-        "{",
-        "\treturn &kSmartDescription;",
         "}",
         "",
     ]

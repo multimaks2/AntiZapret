@@ -4,6 +4,15 @@
 
 #include <string>
 
+struct DiscordPresenceButtons
+{
+	bool downloadEnabled = false;
+	std::string downloadUrl;
+	bool importEnabled = false;
+	std::string importLabel;
+	std::string importUrl; // must be http(s) for Discord buttons
+};
+
 // Application-side Rich Presence controller (not a Discord SDK type).
 class AppRichPresence
 {
@@ -19,9 +28,7 @@ public:
 		bool vpnRunning,
 		const std::string& detailsText,
 		bool enabled,
-		bool shareButtonEnabled,
-		bool downloadButtonEnabled,
-		const std::string& downloadUrl,
+		const DiscordPresenceButtons& buttons,
 		float deltaTime);
 
 private:
@@ -31,9 +38,7 @@ private:
 		bool tg,
 		bool vpn,
 		const std::string& detailsText,
-		bool shareButton,
-		bool downloadButton,
-		const std::string& downloadUrl) const;
+		const DiscordPresenceButtons& buttons) const;
 
 	static const char* TabImageKey(UiTab tab);
 	static const char* TabLabel(UiTab tab);
@@ -45,12 +50,12 @@ private:
 	bool m_lastTg;
 	bool m_lastVpn;
 	bool m_lastEnabled;
-	bool m_lastShareButton;
-	bool m_lastDownloadButton;
+	DiscordPresenceButtons m_lastButtons;
 	std::string m_lastDetails;
-	std::string m_lastDownloadUrl;
 	// Kept alive for Discord_UpdatePresence string pointers.
+	mutable std::string m_pushImportUrl;
 	mutable std::string m_pushDownloadUrl;
+	mutable std::string m_pushImportLabel;
 	float m_callbackAge;
 	float m_refreshAge;
 	long long m_sessionStartedAt;

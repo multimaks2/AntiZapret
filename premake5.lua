@@ -61,11 +61,21 @@ project "AntiZapret"
 		discordRpc .. "/include",
 		discordRpc .. "/src",
 		rapidjson,
+		"vendor/miniz",
 	}
 
 	defines {
 		"DISCORD_WINDOWS",
 	}
+
+	filter "files:vendor/miniz/miniz.c"
+		defines {
+			"MINIZ_NO_STDIO",
+			"MINIZ_NO_ARCHIVE_APIS",
+			"MINIZ_NO_ARCHIVE_WRITING_APIS",
+			"MINIZ_NO_TIME",
+		}
+	filter {}
 
 	linkoptions { "/MANIFESTUAC:level='requireAdministrator'" }
 
@@ -93,6 +103,8 @@ project "AntiZapret"
 		"source/AntiZapret/app/protocol_handler.cpp",
 		"source/AntiZapret/net/traffic_monitor.h",
 		"source/AntiZapret/net/traffic_monitor.cpp",
+		"source/AntiZapret/net/process_net_monitor.h",
+		"source/AntiZapret/net/process_net_monitor.cpp",
 		"source/AntiZapret/ui/ui_types.h",
 		"source/AntiZapret/ui/ui_layout.h",
 		"source/AntiZapret/zapret/zapret_types.h",
@@ -157,8 +169,6 @@ project "AntiZapret"
 		"source/AntiZapret/zapret/zapret_update_apply.cpp",
 		"source/AntiZapret/zapret/zapret_store.h",
 		"source/AntiZapret/zapret/zapret_store.cpp",
-		"source/AntiZapret/zapret/smart_strategy_engine.h",
-		"source/AntiZapret/zapret/smart_strategy_engine.cpp",
 		"source/AntiZapret/tgproxy/tg_ws_proxy_manager.h",
 		"source/AntiZapret/tgproxy/tg_ws_proxy_manager.cpp",
 		"source/AntiZapret/vpn/vpn_node.h",
@@ -200,6 +210,10 @@ project "AntiZapret"
 		"source/AntiZapret/vpn/vpn_transport_settings.cpp",
 		"source/AntiZapret/discord/discord_presence.h",
 		"source/AntiZapret/discord/discord_presence.cpp",
+		"source/AntiZapret/discord/discord_invite_codec.h",
+		"source/AntiZapret/discord/discord_invite_codec.cpp",
+		"vendor/miniz/miniz.c",
+		"vendor/miniz/miniz.h",
 		discordRpc .. "/src/discord_rpc.cpp",
 		discordRpc .. "/src/rpc_connection.cpp",
 		discordRpc .. "/src/serialization.cpp",

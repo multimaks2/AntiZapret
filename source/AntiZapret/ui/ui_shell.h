@@ -18,6 +18,7 @@
 #include "app/app_settings.h"
 #include "discord/discord_presence.h"
 #include "net/traffic_monitor.h"
+#include "net/process_net_monitor.h"
 #include "tgproxy/tg_ws_proxy_manager.h"
 #include "zapret/zapret_manager.h"
 #include "vpn/vpn_manager.h"
@@ -91,6 +92,7 @@ private:
 	TgWsProxyManager m_tgWsProxyManager;
 	VpnManager m_vpnManager;
 	TrafficMonitor m_trafficMonitor;
+	ProcessNetMonitor m_processNetMonitor;
 	AppSettings m_appSettings;
 	AppRichPresence m_discordPresence;
 	bool m_zapretPageInitialized = false;

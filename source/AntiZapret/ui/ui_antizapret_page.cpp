@@ -1154,8 +1154,7 @@ void UiAntiZapretPage::DrawDetailView(ThemeManager& theme, FontManager& fonts, f
 
 	const float actionBtnW = 120.f;
 	const float testBtnW = 140.f;
-	const bool testBusy = m_manager->GetStrategyTestState() == StrategyTestState::Running
-		|| m_manager->GetSmartStrategyTuneState() == SmartStrategyTuneState::Running;
+	const bool testBusy = m_manager->GetStrategyTestState() == StrategyTestState::Running;
 	if (UiCommon::AccentButton(
 			"Запустить",
 			ImVec2(actionBtnW, UiMetrics::kSmallBtnHeight),

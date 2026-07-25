@@ -95,7 +95,7 @@ if (Test-Path $vpnSrc) {
 }
 
 # Explicitly never ship user data
-foreach ($blocked in @("settings.ini", "cache", "result.ini", "smart_strategy.ini", "ai_strategy.ini")) {
+foreach ($blocked in @("settings.ini", "cache", "result.ini", "ai_strategy.ini")) {
 	$p = Join-Path $stage $blocked
 	if (Test-Path $p) {
 		Remove-Item $p -Recurse -Force
@@ -109,7 +109,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($zip)
 try {
 	$bad = @($archive.Entries | Where-Object {
-		$_.FullName -match '(^|[/\\])(settings\.ini|cache([/\\]|$)|config\.yaml|cache\.db|nodes\.txt|state\.ini|result\.ini|smart_strategy\.ini)'
+		$_.FullName -match '(^|[/\\])(settings\.ini|cache([/\\]|$)|config\.yaml|cache\.db|nodes\.txt|state\.ini|result\.ini)'
 	})
 	if ($bad.Count -gt 0) {
 		$bad | ForEach-Object { Write-Host "BAD: $($_.FullName)" }

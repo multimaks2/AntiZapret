@@ -8,6 +8,7 @@
 
 #include <cctype>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -74,9 +75,13 @@ void AppSettings::Load()
 	m_autostartVpn = false;
 	m_confirmAdult = false;
 	m_discordPresenceEnabled = true;
-	m_discordShareButtonEnabled = true;
 	m_discordDownloadButtonEnabled = true;
 	m_discordDownloadUrl = "https://github.com/multimaks2/AntiZapret/releases/latest";
+	m_discordImportAntiZapretEnabled = false;
+	m_discordImportVpnEnabled = false;
+	m_discordImportTimedEnabled = true;
+	m_discordImportDurationMinutes = 5;
+	m_discordImportExpiresAt = 0;
 	m_autoSelectBestStrategy = false;
 	m_showExtraStrategies = false;
 	m_networkSpeedBits = false;
@@ -150,11 +155,28 @@ void AppSettings::Load()
 			else if (key == "discord_presence")
 				m_discordPresenceEnabled = ParseBool(value);
 			else if (key == "discord_share_button")
-				m_discordShareButtonEnabled = ParseBool(value);
+			{
+				// Legacy: old single "Import" toggle → AntiZapret import.
+				m_discordImportAntiZapretEnabled = ParseBool(value);
+			}
 			else if (key == "discord_download_button")
 				m_discordDownloadButtonEnabled = ParseBool(value);
 			else if (key == "discord_download_url" && !value.empty())
 				m_discordDownloadUrl = value;
+			else if (key == "discord_import_az")
+				m_discordImportAntiZapretEnabled = ParseBool(value);
+			else if (key == "discord_import_vpn")
+				m_discordImportVpnEnabled = ParseBool(value);
+			else if (key == "discord_import_timed")
+				m_discordImportTimedEnabled = ParseBool(value);
+			else if (key == "discord_import_minutes")
+			{
+				const int minutes = std::atoi(value.c_str());
+				if (minutes > 0)
+					m_discordImportDurationMinutes = minutes > 180 ? 180 : minutes;
+			}
+			else if (key == "discord_import_expires_at")
+				m_discordImportExpiresAt = static_cast<std::int64_t>(std::atoll(value.c_str()));
 			else if (key == "network_speed_bits")
 				m_networkSpeedBits = ParseBool(value);
 			continue;
@@ -217,9 +239,13 @@ void AppSettings::Save()
 	ui["autostart_vpn"] = m_autostartVpn ? "1" : "0";
 	ui["confirm_adult"] = m_confirmAdult ? "1" : "0";
 	ui["discord_presence"] = m_discordPresenceEnabled ? "1" : "0";
-	ui["discord_share_button"] = m_discordShareButtonEnabled ? "1" : "0";
 	ui["discord_download_button"] = m_discordDownloadButtonEnabled ? "1" : "0";
 	ui["discord_download_url"] = m_discordDownloadUrl;
+	ui["discord_import_az"] = m_discordImportAntiZapretEnabled ? "1" : "0";
+	ui["discord_import_vpn"] = m_discordImportVpnEnabled ? "1" : "0";
+	ui["discord_import_timed"] = m_discordImportTimedEnabled ? "1" : "0";
+	ui["discord_import_minutes"] = std::to_string(m_discordImportDurationMinutes);
+	ui["discord_import_expires_at"] = std::to_string(static_cast<long long>(m_discordImportExpiresAt));
 	ui["network_speed_bits"] = m_networkSpeedBits ? "1" : "0";
 
 	SettingsDocument::KeyMap vpn;
@@ -397,12 +423,6 @@ void AppSettings::SetDiscordPresenceEnabled(bool value)
 	Save();
 }
 
-void AppSettings::SetDiscordShareButtonEnabled(bool value)
-{
-	m_discordShareButtonEnabled = value;
-	Save();
-}
-
 void AppSettings::SetDiscordDownloadButtonEnabled(bool value)
 {
 	m_discordDownloadButtonEnabled = value;
@@ -426,6 +446,117 @@ void AppSettings::SetDiscordDownloadUrl(const std::string& value)
 		return;
 	m_discordDownloadUrl = trimmed;
 	Save();
+}
+
+void AppSettings::RestartDiscordImportTimer()
+{
+	if (!m_discordImportTimedEnabled)
+	{
+		m_discordImportExpiresAt = 0;
+		Save();
+		return;
+	}
+	const int minutes = m_discordImportDurationMinutes > 0 ? m_discordImportDurationMinutes : 5;
+	m_discordImportExpiresAt = static_cast<std::int64_t>(std::time(nullptr)) + static_cast<std::int64_t>(minutes) * 60;
+	Save();
+}
+
+void AppSettings::ClearDiscordImportTimer()
+{
+	if (m_discordImportExpiresAt == 0)
+		return;
+	m_discordImportExpiresAt = 0;
+	Save();
+}
+
+void AppSettings::TickDiscordImportExpiry()
+{
+	if (!m_discordImportTimedEnabled || m_discordImportExpiresAt <= 0)
+		return;
+	if (static_cast<std::int64_t>(std::time(nullptr)) < m_discordImportExpiresAt)
+		return;
+	m_discordImportAntiZapretEnabled = false;
+	m_discordImportVpnEnabled = false;
+	m_discordImportExpiresAt = 0;
+	Save();
+}
+
+int AppSettings::GetDiscordImportRemainingSeconds() const
+{
+	if (!m_discordImportTimedEnabled || m_discordImportExpiresAt <= 0)
+		return -1;
+	const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+	if (now >= m_discordImportExpiresAt)
+		return 0;
+	return static_cast<int>(m_discordImportExpiresAt - now);
+}
+
+bool AppSettings::IsDiscordImportButtonAvailable() const
+{
+	if (!m_discordImportAntiZapretEnabled && !m_discordImportVpnEnabled)
+		return false;
+	if (!m_discordImportTimedEnabled)
+		return true;
+	if (m_discordImportExpiresAt <= 0)
+		return false;
+	return static_cast<std::int64_t>(std::time(nullptr)) < m_discordImportExpiresAt;
+}
+
+void AppSettings::SetDiscordImportAntiZapretEnabled(bool value)
+{
+	if (m_discordImportAntiZapretEnabled == value)
+		return;
+	m_discordImportAntiZapretEnabled = value;
+	if (value && m_discordImportTimedEnabled)
+		RestartDiscordImportTimer();
+	else if (!m_discordImportAntiZapretEnabled && !m_discordImportVpnEnabled)
+		ClearDiscordImportTimer();
+	else
+		Save();
+}
+
+void AppSettings::SetDiscordImportVpnEnabled(bool value)
+{
+	if (m_discordImportVpnEnabled == value)
+		return;
+	m_discordImportVpnEnabled = value;
+	if (value && m_discordImportTimedEnabled)
+		RestartDiscordImportTimer();
+	else if (!m_discordImportAntiZapretEnabled && !m_discordImportVpnEnabled)
+		ClearDiscordImportTimer();
+	else
+		Save();
+}
+
+void AppSettings::SetDiscordImportTimedEnabled(bool value)
+{
+	if (m_discordImportTimedEnabled == value)
+		return;
+	m_discordImportTimedEnabled = value;
+	if (value && (m_discordImportAntiZapretEnabled || m_discordImportVpnEnabled))
+		RestartDiscordImportTimer();
+	else if (!value)
+	{
+		m_discordImportExpiresAt = 0;
+		Save();
+	}
+	else
+		Save();
+}
+
+void AppSettings::SetDiscordImportDurationMinutes(int minutes)
+{
+	if (minutes < 1)
+		minutes = 1;
+	if (minutes > 180)
+		minutes = 180;
+	if (m_discordImportDurationMinutes == minutes)
+		return;
+	m_discordImportDurationMinutes = minutes;
+	if (m_discordImportTimedEnabled && (m_discordImportAntiZapretEnabled || m_discordImportVpnEnabled))
+		RestartDiscordImportTimer();
+	else
+		Save();
 }
 
 bool AppSettings::GetAutoSelectBestStrategy() const

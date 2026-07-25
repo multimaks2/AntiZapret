@@ -244,7 +244,6 @@ void EnsureDataLayout()
 	}
 
 	MergeVpnSettingsIntoAppSettings(settingsPath, oldVpnCache / L"settings.ini");
-	AppendFileSectionIfAbsent(settingsPath, "smart_strategy", appDir / L"smart_strategy.ini");
 	MergeZapretResultsIntoAppSettings(settingsPath, appDir / L"result.ini");
 
 	{

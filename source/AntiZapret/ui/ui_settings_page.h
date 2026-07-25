@@ -22,9 +22,12 @@ private:
 	float m_autostartVpnMix = 0.f;
 	float m_confirmAdultMix = 0.f;
 	float m_discordPresenceMix = 1.f;
-	float m_discordShareButtonMix = 1.f;
 	float m_discordDownloadButtonMix = 1.f;
+	float m_discordImportAzMix = 0.f;
+	float m_discordImportVpnMix = 0.f;
+	float m_discordImportTimedMix = 1.f;
 	char m_discordDownloadUrl[512] = {};
+	char m_discordImportMinutes[16] = "5";
 	char m_customHwid[96] = {};
 	bool m_loadedFromSettings = false;
 	VpnManager* m_vpnManager = nullptr;

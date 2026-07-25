@@ -26,7 +26,6 @@ namespace
 		"ui",
 		"scroll",
 		"vpn",
-		"smart_strategy",
 		"zapret_results",
 	};
 }

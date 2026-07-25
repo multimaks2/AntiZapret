@@ -34,6 +34,8 @@ public:
 	std::string GetActiveServerLabel() const;
 	// Discord Rich Presence details: "Country · Name" or empty if no active server.
 	std::string GetActiveServerPresenceLabel() const;
+	// Share-URI (vless/vmess/...) of the active/default server for Discord import.
+	std::string GetActiveServerShareUri() const;
 	// Deep-link / protocol import: subscription URL or share-URI text.
 	void ImportSubscriptionUrl(const std::string& urlOrText);
 
@@ -138,6 +140,8 @@ private:
 		bool ready = false;
 	};
 	PendingImportResult m_pendingImport;
+	// After protocol share-URI import, select this server as active.
+	std::string m_pendingActivateUri;
 
 	struct PendingGeoResult
 	{

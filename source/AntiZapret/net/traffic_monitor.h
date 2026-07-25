@@ -33,7 +33,7 @@ public:
 	float GetUploadSampleAt(size_t chronologicalIndex) const;
 
 private:
-	void Sample();
+	void Sample(float elapsedSec);
 	void UpdateDisplaySmoothing(float deltaTime);
 	static float NiceScaleMax(float valueBps);
 

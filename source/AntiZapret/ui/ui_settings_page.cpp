@@ -9,6 +9,11 @@
 #include "vpn/vpn_store.h"
 #include "imgui.h"
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+
 namespace
 {
 	struct ScrollPageSetting
@@ -49,13 +54,20 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		m_autostartVpnMix = m_appSettings->GetAutostartVpn() ? 1.f : 0.f;
 		m_confirmAdultMix = m_appSettings->GetConfirmAdult() ? 1.f : 0.f;
 		m_discordPresenceMix = m_appSettings->GetDiscordPresenceEnabled() ? 1.f : 0.f;
-		m_discordShareButtonMix = m_appSettings->GetDiscordShareButtonEnabled() ? 1.f : 0.f;
 		m_discordDownloadButtonMix = m_appSettings->GetDiscordDownloadButtonEnabled() ? 1.f : 0.f;
+		m_discordImportAzMix = m_appSettings->GetDiscordImportAntiZapretEnabled() ? 1.f : 0.f;
+		m_discordImportVpnMix = m_appSettings->GetDiscordImportVpnEnabled() ? 1.f : 0.f;
+		m_discordImportTimedMix = m_appSettings->GetDiscordImportTimedEnabled() ? 1.f : 0.f;
 		strncpy_s(
 			m_discordDownloadUrl,
 			sizeof m_discordDownloadUrl,
 			m_appSettings->GetDiscordDownloadUrl().c_str(),
 			_TRUNCATE);
+		snprintf(
+			m_discordImportMinutes,
+			sizeof m_discordImportMinutes,
+			"%d",
+			m_appSettings->GetDiscordImportDurationMinutes());
 		const std::string storedHwid = m_appSettings->GetCustomHwid();
 		const std::string systemHwid = VpnImport::GetSystemHwid();
 		strncpy_s(
@@ -97,14 +109,24 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		m_appSettings && m_appSettings->GetDiscordPresenceEnabled(),
 		deltaTime,
 		kToggleAnimSpeed);
-	m_discordShareButtonMix = UiCommon::AnimateMix(
-		m_discordShareButtonMix,
-		m_appSettings && m_appSettings->GetDiscordShareButtonEnabled(),
-		deltaTime,
-		kToggleAnimSpeed);
 	m_discordDownloadButtonMix = UiCommon::AnimateMix(
 		m_discordDownloadButtonMix,
 		m_appSettings && m_appSettings->GetDiscordDownloadButtonEnabled(),
+		deltaTime,
+		kToggleAnimSpeed);
+	m_discordImportAzMix = UiCommon::AnimateMix(
+		m_discordImportAzMix,
+		m_appSettings && m_appSettings->GetDiscordImportAntiZapretEnabled(),
+		deltaTime,
+		kToggleAnimSpeed);
+	m_discordImportVpnMix = UiCommon::AnimateMix(
+		m_discordImportVpnMix,
+		m_appSettings && m_appSettings->GetDiscordImportVpnEnabled(),
+		deltaTime,
+		kToggleAnimSpeed);
+	m_discordImportTimedMix = UiCommon::AnimateMix(
+		m_discordImportTimedMix,
+		m_appSettings && m_appSettings->GetDiscordImportTimedEnabled(),
 		deltaTime,
 		kToggleAnimSpeed);
 
@@ -255,42 +277,127 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		}
 	}
 
-	if (UiCommon::SettingRow("Discord активность", width, colors, m_discordPresenceMix))
+	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
+	UiCommon::SectionHeader("Discord активность", colors);
+	ImGui::Dummy({ 0.f, 4.f });
+	UiCommon::CaptionText(
+		"Видимость в Discord, кнопки скачивания и временный импорт стратегии/VPN для друзей.",
+		colors,
+		width);
+	ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+
+	if (UiCommon::SettingRow("Показывать активность в Discord", width, colors, m_discordPresenceMix))
 	{
 		if (m_appSettings)
 			m_appSettings->SetDiscordPresenceEnabled(!m_appSettings->GetDiscordPresenceEnabled());
 	}
 
-	if (UiCommon::SettingRow("Кнопка «Импорт» в Discord", width, colors, m_discordShareButtonMix))
+	if (m_appSettings && m_appSettings->GetDiscordPresenceEnabled())
 	{
-		if (m_appSettings)
-			m_appSettings->SetDiscordShareButtonEnabled(!m_appSettings->GetDiscordShareButtonEnabled());
-	}
-
-	if (UiCommon::SettingRow("Кнопка «Скачать» в Discord", width, colors, m_discordDownloadButtonMix))
-	{
-		if (m_appSettings)
+		if (UiCommon::SettingRow("Кнопка «Скачать»", width, colors, m_discordDownloadButtonMix))
 			m_appSettings->SetDiscordDownloadButtonEnabled(!m_appSettings->GetDiscordDownloadButtonEnabled());
-	}
 
-	if (m_appSettings && m_appSettings->GetDiscordDownloadButtonEnabled())
-	{
-		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
-		UiCommon::CaptionText("Ссылка кнопки «Скачать AntiZapret»:", colors, width);
-		UiCommon::PushInputStyle(colors);
-		ImGui::SetNextItemWidth(width);
-		if (ImGui::InputTextWithHint(
-				"##discord_download_url",
-				"https://github.com/.../releases/latest",
-				m_discordDownloadUrl,
-				sizeof m_discordDownloadUrl,
-				ImGuiInputTextFlags_EnterReturnsTrue))
+		if (m_appSettings->GetDiscordDownloadButtonEnabled())
 		{
-			m_appSettings->SetDiscordDownloadUrl(m_discordDownloadUrl);
+			ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+			UiCommon::CaptionText("Ссылка кнопки «Скачать AntiZapret»:", colors, width);
+			UiCommon::PushInputStyle(colors);
+			ImGui::SetNextItemWidth(width);
+			if (ImGui::InputTextWithHint(
+					"##discord_download_url",
+					"https://github.com/.../releases/latest",
+					m_discordDownloadUrl,
+					sizeof m_discordDownloadUrl,
+					ImGuiInputTextFlags_EnterReturnsTrue))
+			{
+				m_appSettings->SetDiscordDownloadUrl(m_discordDownloadUrl);
+			}
+			if (ImGui::IsItemDeactivatedAfterEdit())
+				m_appSettings->SetDiscordDownloadUrl(m_discordDownloadUrl);
+			UiCommon::PopInputStyle();
 		}
-		if (ImGui::IsItemDeactivatedAfterEdit())
-			m_appSettings->SetDiscordDownloadUrl(m_discordDownloadUrl);
-		UiCommon::PopInputStyle();
+
+		ImGui::Dummy({ 0.f, UiMetrics::kSectionGap * 0.75f });
+		UiCommon::CaptionText("Импорт", colors, width);
+		ImGui::Dummy({ 0.f, 4.f });
+		UiCommon::CaptionText(
+			"Кнопка в Discord появляется на вкладке Антизапрет или VPN, если включён соответствующий импорт. "
+			"Друг получит вашу текущую стратегию или конфиг активного VPN-сервера (share-ссылку).",
+			colors,
+			width);
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+
+		char azLabel[96] = "Импорт Антизапрет";
+		char vpnLabel[96] = "Импорт VPN";
+		const int remainSec = m_appSettings->GetDiscordImportRemainingSeconds();
+		if (m_appSettings->GetDiscordImportTimedEnabled() && remainSec >= 0
+			&& (m_appSettings->GetDiscordImportAntiZapretEnabled() || m_appSettings->GetDiscordImportVpnEnabled()))
+		{
+			const int mm = remainSec / 60;
+			const int ss = remainSec % 60;
+			snprintf(azLabel, sizeof azLabel, "Импорт Антизапрет  ·  %d:%02d", mm, ss);
+			snprintf(vpnLabel, sizeof vpnLabel, "Импорт VPN  ·  %d:%02d", mm, ss);
+		}
+
+		if (UiCommon::SettingRow(azLabel, width, colors, m_discordImportAzMix))
+			m_appSettings->SetDiscordImportAntiZapretEnabled(!m_appSettings->GetDiscordImportAntiZapretEnabled());
+		if (UiCommon::SettingRow(vpnLabel, width, colors, m_discordImportVpnMix))
+			m_appSettings->SetDiscordImportVpnEnabled(!m_appSettings->GetDiscordImportVpnEnabled());
+
+		if (UiCommon::SettingRow("Импорт на короткий промежуток времени", width, colors, m_discordImportTimedMix))
+			m_appSettings->SetDiscordImportTimedEnabled(!m_appSettings->GetDiscordImportTimedEnabled());
+
+		if (m_appSettings->GetDiscordImportTimedEnabled())
+		{
+			ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+			UiCommon::CaptionText("Длительность (минуты):", colors, width);
+			UiCommon::PushInputStyle(colors);
+			ImGui::SetNextItemWidth(120.f);
+			if (ImGui::InputText(
+					"##discord_import_minutes",
+					m_discordImportMinutes,
+					sizeof m_discordImportMinutes,
+					ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue))
+			{
+				const int minutes = std::atoi(m_discordImportMinutes);
+				if (minutes > 0)
+					m_appSettings->SetDiscordImportDurationMinutes(minutes);
+			}
+			if (ImGui::IsItemDeactivatedAfterEdit())
+			{
+				const int minutes = std::atoi(m_discordImportMinutes);
+				if (minutes > 0)
+					m_appSettings->SetDiscordImportDurationMinutes(minutes);
+				snprintf(
+					m_discordImportMinutes,
+					sizeof m_discordImportMinutes,
+					"%d",
+					m_appSettings->GetDiscordImportDurationMinutes());
+			}
+			UiCommon::PopInputStyle();
+
+			if (remainSec >= 0
+				&& (m_appSettings->GetDiscordImportAntiZapretEnabled() || m_appSettings->GetDiscordImportVpnEnabled()))
+			{
+				ImGui::Dummy({ 0.f, 4.f });
+				char countdown[96] = {};
+				snprintf(
+					countdown,
+					sizeof countdown,
+					"До отключения импорта: %d:%02d",
+					remainSec / 60,
+					remainSec % 60);
+				UiCommon::CaptionText(countdown, colors, width);
+			}
+			else
+			{
+				ImGui::Dummy({ 0.f, 4.f });
+				UiCommon::CaptionText(
+					"Таймер запустится, когда включите импорт Антизапрет или VPN.",
+					colors,
+					width);
+			}
+		}
 	}
 
 	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });

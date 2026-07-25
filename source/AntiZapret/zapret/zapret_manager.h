@@ -1,7 +1,6 @@
 #pragma once
 
 #include "zapret/strategies.hpp"
-#include "zapret/smart_strategy_engine.h"
 #include "zapret/zapret_store.h"
 #include "zapret/zapret_strategy_probe.h"
 #include "zapret/zapret_types.h"
@@ -31,9 +30,7 @@ public:
 	void SetAppSettings(AppSettings* settings) { m_appSettings = settings; }
 
 	bool Start(int strategyIndex, ZapretStrategies::GameFilterMode gameFilterMode, bool saveLastStrategy = true);
-	bool StartSmartStrategy(ZapretStrategies::GameFilterMode gameFilterMode, bool saveLastStrategy = true);
 	void RequestStart(int strategyIndex, ZapretStrategies::GameFilterMode gameFilterMode, bool saveLastStrategy = true);
-	void RequestStartSmartStrategy(ZapretStrategies::GameFilterMode gameFilterMode, bool saveLastStrategy = true);
 	bool Restart();
 	void Stop();
 	void RequestStop();
@@ -43,10 +40,6 @@ public:
 	bool IsOperationInFlight() const { return m_opInFlight.load(); }
 	bool IsRunning() const;
 	int GetActiveStrategyIndex() const { return m_activeStrategyIndex; }
-	bool IsActiveSmartStrategy() const { return m_activeSmartStrategy; }
-	bool IsSmartStrategyEnabled() const { return m_smartStrategy.IsEnabled(); }
-	void SetSmartStrategyEnabled(bool enabled);
-	SmartStrategyStatus GetSmartStrategyStatus(bool telegramViaMtproto) const;
 	ZapretStrategies::GameFilterMode GetActiveGameFilterMode() const { return m_activeGameFilterMode; }
 
 	const std::string& GetErrorMessage() const { return m_lastError; }
@@ -54,7 +47,6 @@ public:
 	void LoadStore();
 	void SaveStore();
 	void RememberSelectedStrategy(int strategyIndex);
-	void RememberSmartStrategySelected();
 	void ReloadRuntimeStrategies();
 	int GetPreferredStrategyIndex(bool autoSelectBest) const;
 	int GetCachedBestStrategyIndex() const;
@@ -67,6 +59,8 @@ public:
 	bool IsBatchStrategy(int strategyIndex) const;
 	const std::string& GetStrategyLabel(int strategyIndex) const;
 	const std::string& GetStrategyFileName(int strategyIndex) const;
+	const std::string& GetStrategyId(int strategyIndex) const;
+	int FindStrategyIndexById(const std::string& strategyId) const;
 
 	void RequestConnectivityCheck(int strategyIndex = -1);
 	bool IsCheckingConnectivity() const { return m_connectivityCheckRunning.load(); }
@@ -92,16 +86,8 @@ public:
 	int GetStrategyTestActiveIndex() const { return m_strategyTestActiveIndex.load(); }
 	bool IsStrategySelectionInProgress() const;
 
-	void HandleSmartStrategyTuneButton(ZapretStrategies::GameFilterMode gameFilterMode);
-	SmartStrategyTuneState GetSmartStrategyTuneState() const { return m_smartTuneState.load(); }
-	const char* GetSmartStrategyTuneButtonLabel() const;
-	float GetSmartStrategyTuneProgress() const;
-	int GetSmartStrategyTuneCurrent() const;
-	int GetSmartStrategyTuneTotal() const;
-
 private:
 	bool LaunchProcess(int strategyIndex, ZapretStrategies::GameFilterMode gameFilterMode);
-	bool LaunchProcessGenome(const SmartStrategyGenome& genome, ZapretStrategies::GameFilterMode gameFilterMode);
 	void PrepareEnvironment();
 	void WaitForStopped(int maxWaitMs);
 	void WaitForStoppedInterruptible(int maxWaitMs);
@@ -114,8 +100,6 @@ private:
 	void PauseStrategyTest();
 	void ResumeStrategyTest();
 	void RunStrategyTestLoop(int startIndex);
-	void BeginSmartStrategyTune(ZapretStrategies::GameFilterMode gameFilterMode);
-	void RunSmartStrategyTuneLoop();
 	void InterruptibleSleepMs(int totalMs);
 	void RestoreStrategyAfterTest(int strategyIndex);
 	void InvalidateStrategyCache();
@@ -147,7 +131,6 @@ private:
 	mutable std::mutex m_processMutex;
 
 	int m_activeStrategyIndex = -1;
-	bool m_activeSmartStrategy = false;
 	ZapretStrategies::GameFilterMode m_activeGameFilterMode = ZapretStrategies::GameFilterMode::Disabled;
 	ZapretRunStatus m_runStatus = ZapretRunStatus::Stopped;
 	std::string m_lastError;
@@ -179,15 +162,7 @@ private:
 	int m_strategyTestRestoreIndex = -1;
 	ZapretStrategies::GameFilterMode m_strategyTestGameFilterMode = ZapretStrategies::GameFilterMode::Disabled;
 
-	std::atomic<SmartStrategyTuneState> m_smartTuneState { SmartStrategyTuneState::Idle };
-	std::atomic<bool> m_smartTuneStopRequested { false };
-	std::atomic<int> m_smartTuneCurrent { 0 };
-	std::atomic<int> m_smartTuneTotal { 0 };
-	float m_smartTuneCompleteTimer = 0.f;
-	ZapretStrategies::GameFilterMode m_smartTuneGameFilterMode = ZapretStrategies::GameFilterMode::Disabled;
-
 	ZapretStore m_store;
-	SmartStrategyEngine m_smartStrategy;
 	struct RuntimeStrategy
 	{
 		std::string id;

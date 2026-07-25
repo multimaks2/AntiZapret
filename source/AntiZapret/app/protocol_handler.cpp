@@ -97,6 +97,10 @@ namespace
 				cmd.importUrl = val;
 			if (key == "tab" && cmd.openTab.empty())
 				cmd.openTab = ToLower(val);
+			if ((key == "id" || key == "strategy") && cmd.strategyId.empty())
+				cmd.strategyId = val;
+			if (key == "start")
+				cmd.startStrategy = !(val == "0" || val == "false" || val == "no");
 			start = amp + 1;
 		}
 	}
@@ -302,6 +306,14 @@ namespace ProtocolHandler
 			cmd.valid = !cmd.importUrl.empty();
 			return cmd;
 		}
+		if (pathLower == "strategy" || pathLower.rfind("strategy/", 0) == 0)
+		{
+			cmd.action = "strategy";
+			if (pathLower.rfind("strategy/", 0) == 0 && cmd.strategyId.empty())
+				cmd.strategyId = UrlDecode(path.substr(9), false);
+			cmd.valid = !cmd.strategyId.empty();
+			return cmd;
+		}
 		if (pathLower == "open" || pathLower.rfind("open/", 0) == 0)
 		{
 			cmd.action = "open";
@@ -398,5 +410,27 @@ namespace ProtocolHandler
 		Enqueue(cmd);
 		AppLog::Instance().Append(LogSource::VpnRouting, "Protocol: received via WM_COPYDATA: " + uri);
 		return true;
+	}
+
+	std::string UrlEncode(const std::string& value)
+	{
+		static const char* hex = "0123456789ABCDEF";
+		std::string out;
+		out.reserve(value.size() * 3);
+		for (unsigned char ch : value)
+		{
+			if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
+				|| ch == '-' || ch == '_' || ch == '.' || ch == '~')
+			{
+				out.push_back(static_cast<char>(ch));
+			}
+			else
+			{
+				out.push_back('%');
+				out.push_back(hex[(ch >> 4) & 0xF]);
+				out.push_back(hex[ch & 0xF]);
+			}
+		}
+		return out;
 	}
 }

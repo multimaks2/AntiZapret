@@ -14,10 +14,3 @@ enum class StrategyTestState
 	Paused,
 	Completed
 };
-
-enum class SmartStrategyTuneState
-{
-	Idle,
-	Running,
-	Completed
-};

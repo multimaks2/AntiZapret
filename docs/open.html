@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AntiZapret — открытие</title>
+  <style>
+    body { font-family: Segoe UI, sans-serif; background: #101010; color: #e8e8e8; display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; }
+    .box { max-width: 420px; padding: 28px; border-radius: 12px; background: #1a1a1a; border: 1px solid #2e2e2e; text-align: center; }
+    a { color: #4ea1ff; }
+    .muted { color: #888; font-size: 14px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1 style="margin-top:0;font-size:20px;">AntiZapret</h1>
+    <p id="status">Открываю приложение…</p>
+    <p><a id="open" href="#">Открыть вручную</a></p>
+    <p class="muted">Если ничего не произошло — установите AntiZapret и разрешите открытие ссылок <code>antizapret://</code>.</p>
+  </div>
+  <script>
+    (function () {
+      function base64UrlToBytes(s) {
+        s = (s || "").replace(/-/g, "+").replace(/_/g, "/");
+        while (s.length % 4) s += "=";
+        const bin = atob(s);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+
+      async function inflateZlib(bytes) {
+        if (typeof DecompressionStream === "undefined")
+          throw new Error("DecompressionStream unavailable");
+        const ds = new DecompressionStream("deflate");
+        const stream = new Blob([bytes]).stream().pipeThrough(ds);
+        const buf = await new Response(stream).arrayBuffer();
+        return new TextDecoder("utf-8").decode(buf);
+      }
+
+      async function resolveTarget() {
+        const params = new URLSearchParams(location.search);
+        const type = (params.get("t") || params.get("type") || "").toLowerCase();
+
+        // VPN server share-URI (config), not subscription:
+        //   ?t=vpn&u=<urlencoded share>
+        //   ?t=vpn&b=<base64url(share)>
+        //   ?t=vpn&z=<base64url(zlib(share))>
+        if (type === "vpn" || type === "import") {
+          if (params.get("z")) {
+            const share = await inflateZlib(base64UrlToBytes(params.get("z")));
+            return "antizapret://import?url=" + encodeURIComponent(share);
+          }
+          if (params.get("b")) {
+            const bytes = base64UrlToBytes(params.get("b"));
+            const share = new TextDecoder("utf-8").decode(bytes);
+            return "antizapret://import?url=" + encodeURIComponent(share);
+          }
+          const share = params.get("u") || params.get("url") || "";
+          if (share)
+            return "antizapret://import?url=" + encodeURIComponent(share);
+          return "";
+        }
+
+        if (type === "az" || type === "strategy" || type === "antizapret") {
+          const id = params.get("id") || params.get("strategy") || "";
+          const start = params.get("start") || "1";
+          if (!id) return "";
+          return "antizapret://strategy?id=" + encodeURIComponent(id) + "&start=" + encodeURIComponent(start);
+        }
+
+        let target = params.get("u") || params.get("uri") || "";
+        if (!target && location.hash.length > 1)
+          target = decodeURIComponent(location.hash.slice(1));
+        return target;
+      }
+
+      const link = document.getElementById("open");
+      const status = document.getElementById("status");
+      resolveTarget().then(function (target) {
+        if (!target || target.indexOf("antizapret:") !== 0) {
+          status.textContent = "Некорректная ссылка приглашения.";
+          link.style.display = "none";
+          return;
+        }
+        link.href = target;
+        status.textContent = "Переход в AntiZapret…";
+        window.location.href = target;
+      }).catch(function () {
+        status.textContent = "Не удалось разобрать ссылку приглашения.";
+        link.style.display = "none";
+      });
+    })();
+  </script>
+</body>
+</html>
