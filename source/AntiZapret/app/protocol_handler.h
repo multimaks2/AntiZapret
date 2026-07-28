@@ -38,6 +38,8 @@ namespace ProtocolHandler
 	bool ForwardToExistingInstanceAndShouldExit();
 
 	bool CommandLineHasAutostartFlag(const std::wstring& cmdLine);
+	// True when argv contains an antizapret:// deep link (Discord import, browser open.html, …).
+	bool CommandLineHasProtocolUri(const std::wstring& cmdLine);
 	void SetStartupFromAutostart(bool value);
 	bool IsStartupFromAutostart();
 

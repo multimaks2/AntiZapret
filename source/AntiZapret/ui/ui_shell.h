@@ -45,6 +45,8 @@ public:
 	TrayMenuState GetTrayMenuState();
 	void HandleTrayCommand(TrayCommand command, int param = 0);
 	void UpdateBackground(float deltaTime);
+	// Apply queued antizapret:// commands even when the UI is not drawing (tray / occluded).
+	void PumpProtocolCommands();
 	void ShutdownDiscord();
 
 	static float TitleBarHeight();
@@ -88,6 +90,7 @@ private:
 	UiAboutPage m_aboutPage;
 	UiTab m_activeTab = UiTab::Home;
 	UiTab m_previousTab = UiTab::Home;
+	bool m_showVoidSpace = false;
 	ZapretManager m_zapretManager;
 	TgWsProxyManager m_tgWsProxyManager;
 	VpnManager m_vpnManager;

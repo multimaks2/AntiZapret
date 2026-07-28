@@ -29,7 +29,8 @@ public:
 		FontManager& fonts,
 		float height,
 		const UiSidebarVersionInfo& antiZapretVersion = {},
-		const UiSidebarVersionInfo& tgWsProxyVersion = {});
+		const UiSidebarVersionInfo& tgWsProxyVersion = {},
+		bool* outOpenVoidSpace = nullptr);
 	float Width() const { return m_width; }
 
 private:
@@ -93,4 +94,8 @@ private:
 	UiTab m_pagePrev = UiTab::Home;
 	float m_pageElapsed = 0.f;
 	bool m_pageAnimActive = false;
+
+	// Easter egg: 5 RMB on collapse toggle → empty space.
+	int m_voidRmbClicks = 0;
+	static constexpr int kVoidRmbClicksRequired = 5;
 };

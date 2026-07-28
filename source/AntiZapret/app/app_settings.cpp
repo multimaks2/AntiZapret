@@ -249,9 +249,6 @@ void AppSettings::Save()
 	ui["discord_import_expires_at"] = std::to_string(static_cast<long long>(m_discordImportExpiresAt));
 	ui["network_speed_bits"] = m_networkSpeedBits ? "1" : "0";
 
-	SettingsDocument::KeyMap vpn;
-	vpn["custom_hwid"] = m_customHwid;
-
 	SettingsDocument::KeyMap scroll;
 	scroll["home"] = std::to_string(m_pageScrollMultipliers[0]);
 	scroll["antizapret"] = std::to_string(m_pageScrollMultipliers[1]);
@@ -265,6 +262,9 @@ void AppSettings::Save()
 	std::lock_guard<std::mutex> lock(SettingsDocument::Mutex());
 	SettingsDocument::Doc doc;
 	SettingsDocument::Load(doc);
+	// Merge into [vpn] — subscription card meta and other VpnStore keys live here too.
+	SettingsDocument::KeyMap vpn = SettingsDocument::GetSection(doc, "vpn");
+	vpn["custom_hwid"] = m_customHwid;
 	SettingsDocument::SetSection(doc, "tg_proxy", tgProxy);
 	SettingsDocument::SetSection(doc, "antizapret", antizapret);
 	SettingsDocument::SetSection(doc, "ui", ui);

@@ -287,7 +287,7 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 				if (FitsDiscordButtonUrl(inviteUrl))
 				{
 					discordButtons.importEnabled = true;
-					discordButtons.importLabel = "🛡️ Импорт Антизапрет";
+					discordButtons.importLabel = "📥 Антизапрет";
 					discordButtons.importUrl = inviteUrl;
 				}
 			}
@@ -301,7 +301,7 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 				if (FitsDiscordButtonUrl(inviteUrl))
 				{
 					discordButtons.importEnabled = true;
-					discordButtons.importLabel = "🔒 Импорт VPN";
+					discordButtons.importLabel = "📥 VPN";
 					discordButtons.importUrl = inviteUrl;
 				}
 			}
@@ -347,7 +347,59 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 	};
 
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, 0.f });
-	const float sidebarWidth = m_sidebar.Draw(m_activeTab, theme, fonts, height, azVersion, tgVersion);
+
+	if (m_showVoidSpace)
+	{
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, colors.bg);
+		ImGui::BeginChild("##VoidSpace", { width, height }, ImGuiChildFlags_None);
+
+		ImGui::SetCursorPos({ kPagePad, kPagePad });
+		// Red ✕ — square hitbox, glyph centered by hand (ImGui Button misaligns this glyph).
+		constexpr char kRedCrossUtf8[] = "\xE2\x9C\x95";
+		const ImVec4 crossRed = { 0.96f, 0.26f, 0.21f, 1.f };
+		const ImVec2 glyphSize = ImGui::CalcTextSize(kRedCrossUtf8);
+		const float side = (glyphSize.x > glyphSize.y ? glyphSize.x : glyphSize.y) + 10.f;
+		const ImVec2 btnSize = { side, side };
+		const bool backClicked = ImGui::InvisibleButton("##void_back", btnSize);
+		const ImVec2 rMin = ImGui::GetItemRectMin();
+		const ImVec2 rMax = ImGui::GetItemRectMax();
+		ImDrawList* dl = ImGui::GetWindowDrawList();
+		const float rounding = 6.f;
+		if (ImGui::IsItemHovered())
+			dl->AddRectFilled(rMin, rMax, ImGui::GetColorU32(UiCommon::WithAlpha(crossRed, 0.14f)), rounding);
+		dl->AddRect(
+			rMin,
+			rMax,
+			ImGui::GetColorU32(UiCommon::WithAlpha(colors.textMuted, 0.45f)),
+			rounding,
+			0,
+			1.f);
+		// ✕ glyph metrics sit optically left of the box; nudge right for visual center.
+		const ImVec2 textPos = {
+			rMin.x + (side - glyphSize.x) * 0.5f + 1.25f,
+			rMin.y + (side - glyphSize.y) * 0.5f
+		};
+		dl->AddText(textPos, ImGui::GetColorU32(crossRed), kRedCrossUtf8);
+		if (backClicked || UiCommon::IsMouseNavBackClicked())
+			m_showVoidSpace = false;
+
+		ImGui::EndChild();
+		ImGui::PopStyleColor();
+		ImGui::PopStyleVar();
+		return;
+	}
+
+	bool openVoidSpace = false;
+	const float sidebarWidth = m_sidebar.Draw(
+		m_activeTab,
+		theme,
+		fonts,
+		height,
+		azVersion,
+		tgVersion,
+		&openVoidSpace);
+	if (openVoidSpace)
+		m_showVoidSpace = true;
 
 	ImGui::SameLine(0.f, 0.f);
 
@@ -659,12 +711,18 @@ void UiShell::HandleTrayCommand(TrayCommand command, int param)
 
 void UiShell::UpdateBackground(float deltaTime)
 {
+	PumpProtocolCommands();
 	if (!m_zapretPageInitialized)
 		return;
 	m_tgWsProxyManager.Update(deltaTime);
 	m_zapretManager.Update(deltaTime);
 	m_vpnManager.Update(deltaTime);
 	m_vpnPage.UpdateRuntime();
+}
+
+void UiShell::PumpProtocolCommands()
+{
+	ProcessProtocolCommands();
 }
 
 float UiShell::TitleBarHeight()

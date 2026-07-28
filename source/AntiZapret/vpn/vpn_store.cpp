@@ -137,7 +137,11 @@ void VpnStore::LoadSettings(VpnStoreSettings& settings) const
 
 void VpnStore::SaveSettings(const VpnStoreSettings& settings) const
 {
-	SettingsDocument::KeyMap keys;
+	std::lock_guard<std::mutex> lock(SettingsDocument::Mutex());
+	SettingsDocument::Doc doc;
+	SettingsDocument::Load(doc);
+	// Merge — keep AppSettings keys (e.g. custom_hwid) that share [vpn].
+	SettingsDocument::KeyMap keys = SettingsDocument::GetSection(doc, "vpn");
 	keys["active_uri"] = settings.activeUri;
 	keys["work_mode"] = std::to_string(settings.workMode);
 	keys["transport_mode"] = std::to_string(settings.transportMode);
@@ -167,7 +171,8 @@ void VpnStore::SaveSettings(const VpnStoreSettings& settings) const
 	keys["subscription_provider_id"] = sanitizeLine(settings.subscriptionProviderId);
 	keys["subscription_user_id"] = sanitizeLine(settings.subscriptionUserId);
 	keys["subscription_icon_url"] = sanitizeLine(settings.subscriptionIconUrl);
-	SettingsDocument::UpsertSection("vpn", keys);
+	SettingsDocument::SetSection(doc, "vpn", keys);
+	SettingsDocument::Save(doc);
 }
 
 void VpnStore::Load(std::vector<VpnNode>& nodes, VpnStoreSettings* settings)

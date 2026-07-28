@@ -92,8 +92,21 @@ float UiSidebar::Draw(
 	FontManager& fonts,
 	float height,
 	const UiSidebarVersionInfo& antiZapretVersion,
-	const UiSidebarVersionInfo& tgWsProxyVersion)
+	const UiSidebarVersionInfo& tgWsProxyVersion,
+	bool* outOpenVoidSpace)
 {
+	if (outOpenVoidSpace)
+		*outOpenVoidSpace = false;
+
+	// Any non-RMB mouse button clears the void easter-egg counter.
+	for (int button = 0; button < ImGuiMouseButton_COUNT; ++button)
+	{
+		if (button == ImGuiMouseButton_Right)
+			continue;
+		if (ImGui::IsMouseClicked(button))
+			m_voidRmbClicks = 0;
+	}
+
 	m_page = activeTab;
 	const UiThemeColors colors = theme.GetColors();
 	const UiAccentColors accents = theme.GetAccents();
@@ -146,6 +159,17 @@ float UiSidebar::Draw(
 		m_to = m_collapsed ? kCollapsedWidth : kExpandedWidth;
 		m_elapsed = 0.f;
 		m_animActive = true;
+	}
+
+	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+	{
+		++m_voidRmbClicks;
+		if (m_voidRmbClicks >= kVoidRmbClicksRequired)
+		{
+			m_voidRmbClicks = 0;
+			if (outOpenVoidSpace)
+				*outOpenVoidSpace = true;
+		}
 	}
 
 	const bool toggleHovered = ImGui::IsItemHovered();

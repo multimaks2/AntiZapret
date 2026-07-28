@@ -733,9 +733,22 @@ LRESULT WindowManager::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 		if ((wParam & 0xfff0) == SC_KEYMENU)
 			return 0;
 		break;
-	case WM_CLOSE:
-		if (m_forceQuit)
+	case WM_QUERYENDSESSION:
+		// Allow Windows logoff / reboot / shutdown without blocking.
+		return TRUE;
+	case WM_ENDSESSION:
+		if (wParam)
 		{
+			// Session is ending — exit immediately (do not hide to tray).
+			m_forceQuit = true;
+			RemoveTrayIcon();
+			DestroyWindow(hwnd);
+		}
+		return 0;
+	case WM_CLOSE:
+		if (m_forceQuit || GetSystemMetrics(SM_SHUTTINGDOWN))
+		{
+			m_forceQuit = true;
 			RemoveTrayIcon();
 			DestroyWindow(hwnd);
 			return 0;

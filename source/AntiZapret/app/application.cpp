@@ -42,15 +42,21 @@ public:
 int RunApplication()
 {
 	// Entry: AntiZapret.exe → AntiZapret-Updater → AntiZapret.exe --updated
-	if (AppUpdateGate::HandOffToUpdaterAndShouldExit())
-		return 0;
+	// Deep links must skip the updater — otherwise Discord/browser imports wait on GitHub
+	// check (or get dropped if the updater UI is closed).
+	const std::wstring cmdLineEarly = GetCommandLineW() ? GetCommandLineW() : L"";
+	if (!ProtocolHandler::CommandLineHasProtocolUri(cmdLineEarly))
+	{
+		if (AppUpdateGate::HandOffToUpdaterAndShouldExit())
+			return 0;
+	}
 
 	if (ProtocolHandler::ForwardToExistingInstanceAndShouldExit())
 		return 0;
 
 	ProtocolHandler::RegisterUrlProtocol();
 
-	const std::wstring cmdLine = GetCommandLineW() ? GetCommandLineW() : L"";
+	const std::wstring cmdLine = cmdLineEarly;
 	ProtocolHandler::SetStartupFromAutostart(ProtocolHandler::CommandLineHasAutostartFlag(cmdLine));
 
 	if (const ProtocolCommand startup = ProtocolHandler::ParseCommandLine(cmdLine); startup.valid)

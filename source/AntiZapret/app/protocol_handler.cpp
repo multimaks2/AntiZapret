@@ -189,6 +189,30 @@ namespace ProtocolHandler
 		return found;
 	}
 
+	bool CommandLineHasProtocolUri(const std::wstring& cmdLine)
+	{
+		int argc = 0;
+		LPWSTR* argv = CommandLineToArgvW(cmdLine.c_str(), &argc);
+		if (!argv)
+			return false;
+		bool found = false;
+		for (int i = 1; i < argc; ++i)
+		{
+			const std::string arg = WideToUtf8(argv[i]);
+			std::string lower = arg;
+			std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+				return static_cast<char>(std::tolower(c));
+			});
+			if (lower.rfind("antizapret:", 0) == 0)
+			{
+				found = true;
+				break;
+			}
+		}
+		LocalFree(argv);
+		return found;
+	}
+
 	void SetStartupFromAutostart(bool value)
 	{
 		g_startupFromAutostart = value;
