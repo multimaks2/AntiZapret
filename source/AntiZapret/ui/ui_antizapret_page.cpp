@@ -359,7 +359,7 @@ namespace
 			if (UiCommon::StrategyButton(
 				i,
 				labelBuffer,
-				selected || isTesting || highlightBest,
+				selected || isActive || isTesting || highlightBest,
 				{ colWidth, UiMetrics::kBtnHeight },
 				colors,
 				accent))
@@ -479,6 +479,22 @@ void UiAntiZapretPage::ClampSelectedStrategy()
 
 	const int fallback = m_manager->GetVisibleStrategyAt(0, m_showExtraStrategies);
 	m_selectedStrategy = fallback >= 0 ? fallback : 0;
+}
+
+void UiAntiZapretPage::SelectStrategy(int strategyIndex)
+{
+	if (!m_manager || strategyIndex < 0)
+		return;
+	m_selectedStrategy = strategyIndex;
+	// Protocol / tray may start an "extra" strategy while extras are hidden — show it.
+	if (!m_manager->IsStrategyVisible(m_selectedStrategy, m_showExtraStrategies)
+		&& m_manager->IsStrategyVisible(m_selectedStrategy, true))
+	{
+		m_showExtraStrategies = true;
+		if (m_appSettings)
+			m_appSettings->SetShowExtraStrategies(true);
+	}
+	ClampSelectedStrategy();
 }
 
 void UiAntiZapretPage::ApplyAutoSelectStrategyChange(bool running, int activeStrategy)

@@ -499,6 +499,7 @@ void UiShell::ProcessProtocolCommands()
 				AppLog::Instance().Append(LogSource::VpnRouting, "Protocol strategy: unknown id " + strategyId);
 				continue;
 			}
+			m_antiZapretPage.SelectStrategy(index);
 			m_zapretManager.RememberSelectedStrategy(index);
 			if (cmd.startStrategy)
 				m_zapretManager.RequestStart(index, ZapretStrategies::GameFilterMode::Disabled);
@@ -571,7 +572,11 @@ void UiShell::ProcessProtocolCommands()
 					{
 						const int index = m_zapretManager.FindStrategyIndexById(strategyId);
 						if (index >= 0)
+						{
+							m_antiZapretPage.SelectStrategy(index);
+							m_zapretManager.RememberSelectedStrategy(index);
 							m_zapretManager.RequestStart(index, ZapretStrategies::GameFilterMode::Disabled);
+						}
 					}
 				}
 			}
@@ -677,7 +682,11 @@ void UiShell::HandleTrayCommand(TrayCommand command, int param)
 		break;
 	case TrayCommand::AzStartStrategy:
 		if (param >= 0)
+		{
+			m_antiZapretPage.SelectStrategy(param);
+			m_zapretManager.RememberSelectedStrategy(param);
 			m_zapretManager.RequestStart(param, ZapretStrategies::GameFilterMode::Disabled);
+		}
 		break;
 	case TrayCommand::TgToggle:
 		m_tgWsProxyManager.HandlePrimaryAction(m_appSettings.GetOpenTelegramOnProxyStart());

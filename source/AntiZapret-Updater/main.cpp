@@ -158,34 +158,57 @@ namespace
 		if (local == remote)
 			return false;
 
-		auto nextPart = [](const std::string& s, size_t& pos) -> int {
-			if (pos >= s.size())
-				return 0;
-			int value = 0;
-			while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9')
+		// Parse "1.3.8a" → numeric [1,3,8] + letter suffix ('a'=1, none=0, 'b'=2, …).
+		auto parse = [](const std::string& s, int parts[8], int& partCount, int& letterRank) {
+			partCount = 0;
+			letterRank = 0;
+			size_t pos = 0;
+			while (pos < s.size() && partCount < 8)
 			{
-				value = value * 10 + (s[pos] - '0');
-				++pos;
+				if (s[pos] < '0' || s[pos] > '9')
+					break;
+				int value = 0;
+				while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9')
+				{
+					value = value * 10 + (s[pos] - '0');
+					++pos;
+				}
+				parts[partCount++] = value;
+				if (pos < s.size() && s[pos] == '.')
+					++pos;
+				else
+					break;
 			}
-			if (pos < s.size() && s[pos] == '.')
-				++pos;
-			return value;
+			while (partCount < 8)
+				parts[partCount++] = 0;
+			// Optional single letter suffix after numbers: 1.3.8a / 1.3.8b
+			if (pos < s.size())
+			{
+				unsigned char ch = static_cast<unsigned char>(s[pos]);
+				if (ch >= 'A' && ch <= 'Z')
+					ch = static_cast<unsigned char>(ch - 'A' + 'a');
+				if (ch >= 'a' && ch <= 'z')
+					letterRank = static_cast<int>(ch - 'a' + 1);
+			}
 		};
 
-		size_t li = 0;
-		size_t ri = 0;
+		int localParts[8] = {};
+		int remoteParts[8] = {};
+		int localCount = 0;
+		int remoteCount = 0;
+		int localLetter = 0;
+		int remoteLetter = 0;
+		parse(local, localParts, localCount, localLetter);
+		parse(remote, remoteParts, remoteCount, remoteLetter);
+
 		for (int i = 0; i < 8; ++i)
 		{
-			const int lv = nextPart(local, li);
-			const int rv = nextPart(remote, ri);
-			if (rv > lv)
+			if (remoteParts[i] > localParts[i])
 				return true;
-			if (rv < lv)
+			if (remoteParts[i] < localParts[i])
 				return false;
-			if (li >= local.size() && ri >= remote.size())
-				break;
 		}
-		return false;
+		return remoteLetter > localLetter;
 	}
 
 	std::string HttpGetText(const char* url, DWORD timeoutMs = 20000)

@@ -23,6 +23,7 @@ public:
 	void SetTgProxyManager(TgWsProxyManager* manager) { m_tgProxyManager = manager; }
 	void SetAppSettings(AppSettings* settings) { m_appSettings = settings; }
 	void SetStartupAutostartBypass(bool value) { m_startupAutostartBypass = value; }
+	void SelectStrategy(int strategyIndex);
 	void DrawContent(ThemeManager& theme, FontManager& fonts, float width);
 
 private:
