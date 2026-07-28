@@ -29,8 +29,9 @@ namespace
 	constexpr float kTitlePadLeft = 12.f;
 	constexpr float kButtonSize = 14.f;
 	constexpr float kButtonGap = 8.f;
+	// Must be hosted with Content-Type: text/html (jsDelivr serves .html as text/plain).
 	constexpr char kDiscordInviteOpenBase[] =
-		"https://cdn.jsdelivr.net/gh/multimaks2/AntiZapret@main/docs/open.html";
+		"https://multimaks2.github.io/AntiZapret/open.html";
 	// Discord Rich Presence button URLs are limited to 512 bytes.
 	constexpr size_t kDiscordButtonUrlMax = 512;
 

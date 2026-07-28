@@ -7,16 +7,25 @@
   <style>
     body { font-family: Segoe UI, sans-serif; background: #101010; color: #e8e8e8; display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; }
     .box { max-width: 420px; padding: 28px; border-radius: 12px; background: #1a1a1a; border: 1px solid #2e2e2e; text-align: center; }
+    a.btn {
+      display: inline-block; margin-top: 8px; padding: 12px 20px; border-radius: 8px;
+      background: #2b6cb0; color: #fff !important; text-decoration: none; font-weight: 600;
+    }
+    a.btn:hover { background: #3182ce; }
     a { color: #4ea1ff; }
     .muted { color: #888; font-size: 14px; margin-top: 12px; }
+    code { font-size: 12px; }
   </style>
 </head>
 <body>
   <div class="box">
     <h1 style="margin-top:0;font-size:20px;">AntiZapret</h1>
-    <p id="status">Открываю приложение…</p>
-    <p><a id="open" href="#">Открыть вручную</a></p>
-    <p class="muted">Если ничего не произошло — установите AntiZapret и разрешите открытие ссылок <code>antizapret://</code>.</p>
+    <p id="status">Готовлю ссылку…</p>
+    <p><a class="btn" id="open" href="#">Открыть в AntiZapret</a></p>
+    <p class="muted">
+      Firefox и некоторые браузеры блокируют автозапуск приложений —
+      нажмите кнопку выше и разрешите открытие <code>antizapret://</code>.
+    </p>
   </div>
   <script>
     (function () {
@@ -75,6 +84,21 @@
         return target;
       }
 
+      function tryLaunch(target) {
+        // Prefer real user-clickable <a href> (required by Firefox for custom protocols).
+        // Also attempt an automatic navigation for Chromium; it may be blocked — button remains.
+        try {
+          const iframe = document.createElement("iframe");
+          iframe.style.display = "none";
+          iframe.src = target;
+          document.body.appendChild(iframe);
+          setTimeout(function () {
+            try { document.body.removeChild(iframe); } catch (e) {}
+          }, 2000);
+        } catch (e) {}
+        try { window.location.href = target; } catch (e) {}
+      }
+
       const link = document.getElementById("open");
       const status = document.getElementById("status");
       resolveTarget().then(function (target) {
@@ -84,8 +108,8 @@
           return;
         }
         link.href = target;
-        status.textContent = "Переход в AntiZapret…";
-        window.location.href = target;
+        status.textContent = "Нажмите кнопку, чтобы открыть AntiZapret.";
+        tryLaunch(target);
       }).catch(function () {
         status.textContent = "Не удалось разобрать ссылку приглашения.";
         link.style.display = "none";
