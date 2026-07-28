@@ -622,6 +622,7 @@ void UiRoutingPage::EnsureServiceRoutesLoaded()
 	{
 		if (m_serviceMix.size() != m_serviceRoutes.size())
 			m_serviceMix.resize(m_serviceRoutes.size(), 1.f);
+		SyncDiscordRouteFromFixDiscord();
 		return;
 	}
 
@@ -635,6 +636,39 @@ void UiRoutingPage::EnsureServiceRoutesLoaded()
 	m_serviceMix.assign(m_serviceRoutes.size(), 1.f);
 	m_serviceRoutesLoaded = true;
 	m_serviceRoutesLoading = false;
+	SyncDiscordRouteFromFixDiscord();
+}
+
+void UiRoutingPage::SyncDiscordRouteFromFixDiscord()
+{
+	if (!m_serviceRoutesLoaded)
+		return;
+
+	VpnStoreSettings settings;
+	m_store.LoadSettings(settings);
+	if (!VpnServiceRoutes::ApplyFixDiscordToRoutes(m_serviceRoutes, settings.fixDiscord))
+		return;
+	VpnServiceRoutes::Save(m_serviceRoutes);
+}
+
+void UiRoutingPage::WriteFixDiscordFromDiscordRoute()
+{
+	bool fixDiscord = false;
+	for (const ServiceRouteEntry& entry : m_serviceRoutes)
+	{
+		if (entry.id != "discord")
+			continue;
+		fixDiscord = VpnServiceRoutes::IsFixDiscordEffective(entry);
+		break;
+	}
+
+	VpnStoreSettings settings;
+	m_store.LoadSettings(settings);
+	if (settings.fixDiscord == fixDiscord)
+		return;
+	settings.fixDiscord = fixDiscord;
+	++settings.routingRevision;
+	m_store.SaveSettings(settings);
 }
 
 void UiRoutingPage::EnsureDomainRulesLoaded()
@@ -755,10 +789,14 @@ void UiRoutingPage::DrawServiceRoutes(FontManager& fonts, float width, const UiT
 		if (change == ServiceRowChange::Mode)
 		{
 			service.mode = UiToServiceMode(uiMode);
+			if (service.id == "discord")
+				WriteFixDiscordFromDiscordRoute();
 			ApplyRouting();
 		}
 		else if (change == ServiceRowChange::Toggle)
 		{
+			if (service.id == "discord")
+				WriteFixDiscordFromDiscordRoute();
 			ScheduleApply();
 		}
 	};

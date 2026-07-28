@@ -75,6 +75,7 @@ private:
 	void DrawListView(ThemeManager& theme, FontManager& fonts, float width);
 	void DrawDetailView(ThemeManager& theme, FontManager& fonts, float width);
 	void SyncVpnRuntime();
+	void SyncDiscordRouteWithFixDiscord();
 	void SetActiveServer(int nodeIndex);
 	VpnStoreSettings BuildStoreSettings() const;
 	int FindNodeIndexByUri(const std::string& uri) const;

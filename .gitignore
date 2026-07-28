@@ -37,3 +37,9 @@ Desktop.ini
 
 # Local debug junk
 init_debug.log
+
+# Local release helper (do not publish)
+release.bat
+release.ps1
+RELEASE_NOTES.md
+.release-notes-*.md

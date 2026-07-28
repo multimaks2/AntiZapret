@@ -84,4 +84,9 @@ namespace VpnServiceRoutes
 	void BuildDefaultRoutes(std::vector<ServiceRouteEntry>& outRoutes);
 	bool Load(std::vector<ServiceRouteEntry>& outRoutes);
 	void Save(const std::vector<ServiceRouteEntry>& routes);
+
+	// Keep Discord catalogue row aligned with VPN "Fix Discord" checkbox.
+	bool IsFixDiscordEffective(const ServiceRouteEntry& entry);
+	bool ApplyFixDiscordToEntry(ServiceRouteEntry& entry, bool fixDiscord);
+	bool ApplyFixDiscordToRoutes(std::vector<ServiceRouteEntry>& routes, bool fixDiscord);
 }

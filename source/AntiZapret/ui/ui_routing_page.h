@@ -59,6 +59,8 @@ private:
 
 	void EnsureLoaded();
 	void EnsureServiceRoutesLoaded();
+	void SyncDiscordRouteFromFixDiscord();
+	void WriteFixDiscordFromDiscordRoute();
 	void EnsureDomainRulesLoaded();
 	bool MatchesServiceSearch(const ServiceRouteEntry& service) const;
 	bool MatchesTextSearch(const char* text) const;

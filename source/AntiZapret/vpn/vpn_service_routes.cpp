@@ -643,3 +643,51 @@ void VpnServiceRoutes::Save(const std::vector<ServiceRouteEntry>& routes)
 		output << "enabled=" << (entry.enabled ? 1 : 0) << "\r\n";
 	}
 }
+
+bool VpnServiceRoutes::IsFixDiscordEffective(const ServiceRouteEntry& entry)
+{
+	if (entry.id != "discord" || !entry.enabled)
+		return false;
+	return entry.mode == ServiceRouteMode::VpnTunnel
+		|| entry.mode == ServiceRouteMode::VpnProxy;
+}
+
+bool VpnServiceRoutes::ApplyFixDiscordToEntry(ServiceRouteEntry& entry, bool fixDiscord)
+{
+	if (entry.id != "discord")
+		return false;
+
+	bool changed = false;
+	if (fixDiscord)
+	{
+		if (!entry.enabled)
+		{
+			entry.enabled = true;
+			changed = true;
+		}
+		if (entry.mode != ServiceRouteMode::VpnTunnel
+			&& entry.mode != ServiceRouteMode::VpnProxy)
+		{
+			entry.mode = ServiceRouteMode::VpnTunnel;
+			changed = true;
+		}
+	}
+	else if (entry.mode == ServiceRouteMode::VpnTunnel
+		|| entry.mode == ServiceRouteMode::VpnProxy)
+	{
+		entry.mode = ServiceRouteMode::Antizapret;
+		changed = true;
+	}
+	return changed;
+}
+
+bool VpnServiceRoutes::ApplyFixDiscordToRoutes(std::vector<ServiceRouteEntry>& routes, bool fixDiscord)
+{
+	bool changed = false;
+	for (ServiceRouteEntry& entry : routes)
+	{
+		if (ApplyFixDiscordToEntry(entry, fixDiscord))
+			changed = true;
+	}
+	return changed;
+}

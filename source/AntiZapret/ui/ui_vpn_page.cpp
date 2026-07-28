@@ -14,6 +14,7 @@
 #include "vpn/vpn_module_update_check.h"
 #include "vpn/vpn_node_probe.h"
 #include "vpn/vpn_routing.h"
+#include "vpn/vpn_service_routes.h"
 #include "zapret/zapret_paths.h"
 #include "zapret/zapret_update_check.h"
 #include "imgui.h"
@@ -1171,6 +1172,8 @@ void UiVpnPage::EnsureStoreLoaded()
 
 	if (normalized)
 		SaveStore();
+
+	SyncDiscordRouteWithFixDiscord();
 }
 
 VpnStoreSettings UiVpnPage::BuildStoreSettings() const
@@ -1246,6 +1249,16 @@ void UiVpnPage::SaveStore()
 		return;
 	const VpnStoreSettings settings = BuildStoreSettings();
 	m_store.Save(m_nodes, &settings);
+}
+
+void UiVpnPage::SyncDiscordRouteWithFixDiscord()
+{
+	std::vector<ServiceRouteEntry> routes;
+	if (!VpnServiceRoutes::Load(routes))
+		return;
+	if (!VpnServiceRoutes::ApplyFixDiscordToRoutes(routes, m_fixDiscord))
+		return;
+	VpnServiceRoutes::Save(routes);
 }
 
 void UiVpnPage::ApplyPendingGeoLookups()
@@ -2969,6 +2982,14 @@ void UiVpnPage::UpdateRuntime()
 	ApplyPendingImportIfAny();
 	ApplyPendingGeoLookups();
 	ApplyPendingProbeResults();
+
+	// Routing tab may change Discord mode → Fix Discord flag in store.
+	{
+		VpnStoreSettings live;
+		m_store.LoadSettings(live);
+		m_fixDiscord = live.fixDiscord;
+	}
+
 	SyncVpnRuntime();
 }
 
@@ -3228,7 +3249,10 @@ void UiVpnPage::DrawListView(ThemeManager& theme, FontManager& fonts, float widt
 
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.f, UiMetrics::kRowGap));
 	if (DrawServersPageHeader(fonts, width, m_vpnEnabled, m_vpnMix, m_fixDiscord, colors))
+	{
 		SaveStore();
+		SyncDiscordRouteWithFixDiscord();
+	}
 
 	DrawVpnModulesUpdateRow(m_manager, colors, accents);
 
