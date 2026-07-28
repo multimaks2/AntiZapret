@@ -36,6 +36,58 @@ namespace DiscordInviteCodec
 		return Base64UrlEncode(text.data(), text.size());
 	}
 
+	bool Base64UrlDecode(const std::string& text, std::string& outBytes)
+	{
+		outBytes.clear();
+		if (text.empty())
+			return false;
+
+		auto decodeChar = [](char c) -> int {
+			if (c >= 'A' && c <= 'Z')
+				return c - 'A';
+			if (c >= 'a' && c <= 'z')
+				return c - 'a' + 26;
+			if (c >= '0' && c <= '9')
+				return c - '0' + 52;
+			if (c == '-' || c == '+')
+				return 62;
+			if (c == '_' || c == '/')
+				return 63;
+			return -1;
+		};
+
+		std::string clean;
+		clean.reserve(text.size());
+		for (char ch : text)
+		{
+			if (ch == '=' || ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t')
+				continue;
+			if (decodeChar(ch) < 0)
+				return false;
+			clean.push_back(ch);
+		}
+		if (clean.empty())
+			return false;
+
+		outBytes.reserve((clean.size() * 3) / 4);
+		for (size_t i = 0; i < clean.size(); )
+		{
+			const int c0 = decodeChar(clean[i++]);
+			const int c1 = (i < clean.size()) ? decodeChar(clean[i++]) : 0;
+			const int c2 = (i < clean.size()) ? decodeChar(clean[i++]) : -1;
+			const int c3 = (i < clean.size()) ? decodeChar(clean[i++]) : -1;
+			if (c0 < 0 || c1 < 0)
+				return false;
+
+			outBytes.push_back(static_cast<char>((c0 << 2) | (c1 >> 4)));
+			if (c2 >= 0)
+				outBytes.push_back(static_cast<char>(((c1 & 15) << 4) | (c2 >> 2)));
+			if (c3 >= 0)
+				outBytes.push_back(static_cast<char>(((c2 & 3) << 6) | c3));
+		}
+		return true;
+	}
+
 	std::string ZlibCompress(const std::string& text)
 	{
 		if (text.empty())
@@ -52,6 +104,34 @@ namespace DiscordInviteCodec
 		if (rc != MZ_OK || destLen == 0)
 			return {};
 		return std::string(reinterpret_cast<const char*>(dest.data()), static_cast<size_t>(destLen));
+	}
+
+	bool ZlibDecompress(const std::string& compressed, std::string& outText)
+	{
+		outText.clear();
+		if (compressed.empty())
+			return false;
+
+		mz_ulong destLen = static_cast<mz_ulong>(compressed.size() * 8 + 64);
+		for (int attempt = 0; attempt < 6; ++attempt)
+		{
+			std::vector<unsigned char> dest(static_cast<size_t>(destLen));
+			mz_ulong len = destLen;
+			const int rc = mz_uncompress(
+				dest.data(),
+				&len,
+				reinterpret_cast<const unsigned char*>(compressed.data()),
+				static_cast<mz_ulong>(compressed.size()));
+			if (rc == MZ_OK)
+			{
+				outText.assign(reinterpret_cast<const char*>(dest.data()), static_cast<size_t>(len));
+				return true;
+			}
+			if (rc != MZ_BUF_ERROR)
+				return false;
+			destLen *= 2;
+		}
+		return false;
 	}
 
 	std::string BuildVpnServerInviteHttps(

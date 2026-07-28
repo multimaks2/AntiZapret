@@ -29,24 +29,6 @@
   </div>
   <script>
     (function () {
-      function base64UrlToBytes(s) {
-        s = (s || "").replace(/-/g, "+").replace(/_/g, "/");
-        while (s.length % 4) s += "=";
-        const bin = atob(s);
-        const out = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-        return out;
-      }
-
-      async function inflateZlib(bytes) {
-        if (typeof DecompressionStream === "undefined")
-          throw new Error("DecompressionStream unavailable");
-        const ds = new DecompressionStream("deflate");
-        const stream = new Blob([bytes]).stream().pipeThrough(ds);
-        const buf = await new Response(stream).arrayBuffer();
-        return new TextDecoder("utf-8").decode(buf);
-      }
-
       async function resolveTarget() {
         const params = new URLSearchParams(location.search);
         const type = (params.get("t") || params.get("type") || "").toLowerCase();
@@ -56,15 +38,12 @@
         //   ?t=vpn&b=<base64url(share)>
         //   ?t=vpn&z=<base64url(zlib(share))>
         if (type === "vpn" || type === "import") {
-          if (params.get("z")) {
-            const share = await inflateZlib(base64UrlToBytes(params.get("z")));
-            return "antizapret://import?url=" + encodeURIComponent(share);
-          }
-          if (params.get("b")) {
-            const bytes = base64UrlToBytes(params.get("b"));
-            const share = new TextDecoder("utf-8").decode(bytes);
-            return "antizapret://import?url=" + encodeURIComponent(share);
-          }
+          // Pass compact payloads through as-is. Expanding to url=<vless://...?a=1&b=2>
+          // breaks when Windows/browsers decode %26 back to '&' before the app parses query.
+          if (params.get("z"))
+            return "antizapret://import?z=" + params.get("z");
+          if (params.get("b"))
+            return "antizapret://import?b=" + params.get("b");
           const share = params.get("u") || params.get("url") || "";
           if (share)
             return "antizapret://import?url=" + encodeURIComponent(share);

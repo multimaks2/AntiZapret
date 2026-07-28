@@ -7,6 +7,8 @@
 // Browser / second-instance deep links:
 //   antizapret://add/<subscription-url>
 //   antizapret://import?url=<urlencoded-url>
+//   antizapret://import?z=<base64url(zlib(share-uri))>   (preferred for Discord)
+//   antizapret://import?b=<base64url(share-uri)>
 //   antizapret://strategy?id=<strategy-id>&start=1
 //   antizapret://open?tab=vpn|home|antizapret|tg|routing|console|settings|about
 //   antizapret://v1/control/<target>/<action>?key=value

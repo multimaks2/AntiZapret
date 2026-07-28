@@ -1,6 +1,7 @@
 #include "app/protocol_handler.h"
 
 #include "app/app_log.h"
+#include "discord/discord_invite_codec.h"
 #include "window/window_manager.h"
 
 #include <shellapi.h>
@@ -78,6 +79,42 @@ namespace
 		return out;
 	}
 
+	void ResolveCompressedImportPayload(ProtocolCommand& cmd)
+	{
+		if (!cmd.importUrl.empty())
+			return;
+
+		std::string zPayload;
+		std::string bPayload;
+		for (const auto& p : cmd.params)
+		{
+			if (p.first == "z" && zPayload.empty())
+				zPayload = p.second;
+			else if ((p.first == "b" || p.first == "payload") && bPayload.empty())
+				bPayload = p.second;
+		}
+
+		if (!zPayload.empty())
+		{
+			std::string compressed;
+			std::string plain;
+			if (DiscordInviteCodec::Base64UrlDecode(zPayload, compressed)
+				&& DiscordInviteCodec::ZlibDecompress(compressed, plain)
+				&& !plain.empty())
+			{
+				cmd.importUrl = std::move(plain);
+				return;
+			}
+		}
+
+		if (!bPayload.empty())
+		{
+			std::string plain;
+			if (DiscordInviteCodec::Base64UrlDecode(bPayload, plain) && !plain.empty())
+				cmd.importUrl = std::move(plain);
+		}
+	}
+
 	void ParseQuery(const std::string& query, ProtocolCommand& cmd)
 	{
 		size_t start = 0;
@@ -93,7 +130,7 @@ namespace
 			key = UrlDecode(key);
 			val = UrlDecode(val);
 			cmd.params.emplace_back(key, val);
-			if (key == "url" && cmd.importUrl.empty())
+			if ((key == "url" || key == "u") && cmd.importUrl.empty())
 				cmd.importUrl = val;
 			if (key == "tab" && cmd.openTab.empty())
 				cmd.openTab = ToLower(val);
@@ -103,6 +140,7 @@ namespace
 				cmd.startStrategy = !(val == "0" || val == "false" || val == "no");
 			start = amp + 1;
 		}
+		ResolveCompressedImportPayload(cmd);
 	}
 
 	bool WriteRegString(HKEY root, const wchar_t* subKey, const wchar_t* valueName, const wchar_t* data)

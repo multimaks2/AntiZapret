@@ -2966,6 +2966,8 @@ void UiVpnPage::ExportRuntimeConfig(int nodeIndex)
 void UiVpnPage::UpdateRuntime()
 {
 	EnsureStoreLoaded();
+	ApplyPendingImportIfAny();
+	ApplyPendingGeoLookups();
 	ApplyPendingProbeResults();
 	SyncVpnRuntime();
 }
