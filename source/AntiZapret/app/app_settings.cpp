@@ -61,6 +61,15 @@ float AppSettings::ClampScrollMultiplier(float value)
 	return value;
 }
 
+float AppSettings::ClampFontScale(float value)
+{
+	if (value < kMinFontScale)
+		return kMinFontScale;
+	if (value > kMaxFontScale)
+		return kMaxFontScale;
+	return value;
+}
+
 void AppSettings::Load()
 {
 	m_tgProxyHost = "127.0.0.1";
@@ -85,7 +94,10 @@ void AppSettings::Load()
 	m_discordImportExpiresAt = 0;
 	m_autoSelectBestStrategy = false;
 	m_showExtraStrategies = false;
+	m_quickStrategyTest = false;
 	m_networkSpeedBits = false;
+	m_fontScale = kDefaultFontScale;
+	m_customHwid.clear();
 	ResetScrollMultipliers(m_pageScrollMultipliers);
 
 	std::ifstream input(SettingsPath(), std::ios::binary);
@@ -180,6 +192,8 @@ void AppSettings::Load()
 				m_discordImportExpiresAt = static_cast<std::int64_t>(std::atoll(value.c_str()));
 			else if (key == "network_speed_bits")
 				m_networkSpeedBits = ParseBool(value);
+			else if (key == "font_scale")
+				m_fontScale = ClampFontScale(ParseFloat(value, kDefaultFontScale));
 			continue;
 		}
 
@@ -248,6 +262,7 @@ void AppSettings::Save()
 	ui["discord_import_minutes"] = std::to_string(m_discordImportDurationMinutes);
 	ui["discord_import_expires_at"] = std::to_string(static_cast<long long>(m_discordImportExpiresAt));
 	ui["network_speed_bits"] = m_networkSpeedBits ? "1" : "0";
+	ui["font_scale"] = std::to_string(m_fontScale);
 
 	SettingsDocument::KeyMap scroll;
 	scroll["home"] = std::to_string(m_pageScrollMultipliers[0]);
@@ -407,6 +422,16 @@ void AppSettings::SetNetworkSpeedBits(bool value)
 	if (m_networkSpeedBits == value)
 		return;
 	m_networkSpeedBits = value;
+	Save();
+}
+
+void AppSettings::SetFontScale(float value)
+{
+	m_fontScale = ClampFontScale(value);
+}
+
+void AppSettings::SaveFontScale()
+{
 	Save();
 }
 

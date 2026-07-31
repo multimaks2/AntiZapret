@@ -14,6 +14,10 @@ public:
 	static constexpr float kMinScrollMultiplier = 0.5f;
 	static constexpr float kMaxScrollMultiplier = 10.f;
 
+	static constexpr float kDefaultFontScale = 1.f;
+	static constexpr float kMinFontScale = 0.75f;
+	static constexpr float kMaxFontScale = 1.75f;
+
 	void Load();
 	void Save();
 
@@ -93,6 +97,11 @@ public:
 	bool GetNetworkSpeedBits() const { return m_networkSpeedBits; }
 	void SetNetworkSpeedBits(bool value);
 
+	// UI font scale coefficient (ImGui FontScaleMain). 1.0 = default.
+	float GetFontScale() const { return m_fontScale; }
+	void SetFontScale(float value);
+	void SaveFontScale();
+
 	// Optional override for VPN subscription x-hwid header. Empty = auto (MachineGuid).
 	const std::string& GetCustomHwid() const { return m_customHwid; }
 	void SetCustomHwid(const std::string& value);
@@ -105,6 +114,7 @@ public:
 private:
 	std::string GenerateSecretHex32() const;
 	static float ClampScrollMultiplier(float value);
+	static float ClampFontScale(float value);
 	void ApplyWindowsAutostart(bool enabled) const;
 
 	std::string m_tgProxyHost = "127.0.0.1";
@@ -132,6 +142,7 @@ private:
 	bool m_showExtraStrategies = false;
 	bool m_quickStrategyTest = false;
 	bool m_networkSpeedBits = false;
+	float m_fontScale = kDefaultFontScale;
 	std::string m_customHwid;
 	std::array<float, kPageScrollCount> m_pageScrollMultipliers {};
 };

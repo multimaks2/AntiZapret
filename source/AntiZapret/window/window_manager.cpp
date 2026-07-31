@@ -221,7 +221,7 @@ bool WindowManager::Create(float dpiScale, int minWidth, int minHeight)
 		WS_EX_APPWINDOW,
 		kWindowClassName,
 		L"AntiZapret",
-		WS_POPUP,
+		WS_POPUP | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
 		100, 100,
 		int(800 * dpiScale),
 		int(600 * dpiScale),
@@ -309,14 +309,58 @@ void WindowManager::ShowMainWindow()
 {
 	if (!m_hwnd)
 		return;
-	ShowWindow(m_hwnd, SW_RESTORE);
-	ShowWindow(m_hwnd, SW_SHOW);
+
+	if (IsIconic(m_hwnd))
+		ShowWindow(m_hwnd, SW_RESTORE);
+	else
+		ShowWindow(m_hwnd, SW_SHOW);
+
+	BringWindowToTop(m_hwnd);
+
+	const HWND foreground = GetForegroundWindow();
+	const DWORD thisThread = GetCurrentThreadId();
+	const DWORD fgThread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+	if (fgThread != 0 && fgThread != thisThread)
+		AttachThreadInput(fgThread, thisThread, TRUE);
+
 	SetForegroundWindow(m_hwnd);
+	SetActiveWindow(m_hwnd);
+
+	if (fgThread != 0 && fgThread != thisThread)
+		AttachThreadInput(fgThread, thisThread, FALSE);
+
 	m_hiddenToTray = false;
 }
 
 void WindowManager::RestoreFromTray()
 {
+	ShowMainWindow();
+}
+
+void WindowManager::ToggleOrShowMainWindow()
+{
+	if (!m_hwnd)
+		return;
+
+	// Hidden / minimized / in tray → show (like first taskbar click).
+	if (m_hiddenToTray || !IsWindowVisible(m_hwnd) || IsIconic(m_hwnd))
+	{
+		ShowMainWindow();
+		return;
+	}
+
+	// Already open: if focused now, or just lost focus to Start/taskbar, minimize.
+	const HWND foreground = GetForegroundWindow();
+	const ULONGLONG now = GetTickCount64();
+	const bool recentlyActive =
+		m_lastDeactivateTick != 0 && (now - m_lastDeactivateTick) <= 3000ull;
+	if (foreground == m_hwnd || m_active || recentlyActive)
+	{
+		ShowWindow(m_hwnd, SW_MINIMIZE);
+		m_minimized = true;
+		return;
+	}
+
 	ShowMainWindow();
 }
 
@@ -695,6 +739,10 @@ LRESULT WindowManager::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 	{
 	case WM_ACTIVATE:
 		m_active = LOWORD(wParam) != WA_INACTIVE;
+		if (!m_active)
+			m_lastDeactivateTick = GetTickCount64();
+		else
+			m_lastDeactivateTick = 0;
 		return 0;
 	case WM_GETMINMAXINFO:
 	{
@@ -732,6 +780,12 @@ LRESULT WindowManager::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 	case WM_SYSCOMMAND:
 		if ((wParam & 0xfff0) == SC_KEYMENU)
 			return 0;
+		if ((wParam & 0xfff0) == SC_MINIMIZE)
+		{
+			ShowWindow(hwnd, SW_MINIMIZE);
+			m_minimized = true;
+			return 0;
+		}
 		break;
 	case WM_QUERYENDSESSION:
 		// Allow Windows logoff / reboot / shutdown without blocking.
@@ -793,7 +847,10 @@ LRESULT WindowManager::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 		}
 		return 0;
 	case kRestoreFromTrayMessage:
-		RestoreFromTray();
+		if (wParam != 0)
+			ToggleOrShowMainWindow();
+		else
+			RestoreFromTray();
 		return 0;
 	case WM_DESTROY:
 		RemoveTrayIcon();

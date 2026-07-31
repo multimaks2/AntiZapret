@@ -73,6 +73,8 @@ public:
 
 	void HideToTray();
 	void RestoreFromTray();
+	// Windows-style: show if hidden/minimized; minimize if already front/recently active.
+	void ToggleOrShowMainWindow();
 	void RequestQuit();
 
 	void ToggleMaximize();
@@ -179,6 +181,7 @@ private:
 	bool m_occluded = false;
 	bool m_inSizeMove = false;
 	bool m_maximized = false;
+	ULONGLONG m_lastDeactivateTick = 0;
 	RECT m_restoreRect = {};
 	LARGE_INTEGER m_qpcFrequency = {};
 	WindowAnimation m_animation;

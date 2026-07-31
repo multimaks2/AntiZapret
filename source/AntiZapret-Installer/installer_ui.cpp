@@ -336,26 +336,54 @@ namespace
 		ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + PageInnerWidth());
 	}
 
-	bool BottomRightCheckbox(const char* label, bool* value, float dpiScale)
+	bool BottomRightCheckboxStack(const char* const* labels, bool* const* values, int count, float dpiScale)
 	{
+		if (count <= 0)
+			return false;
+
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, { 3.f * dpiScale, 2.f * dpiScale });
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, { 6.f * dpiScale, 4.f * dpiScale });
 		ImGui::SetWindowFontScale(0.92f);
 
 		const float box = ImGui::GetFrameHeight();
-		const ImVec2 labelSize = ImGui::CalcTextSize(label);
-		const float totalW = box + ImGui::GetStyle().ItemInnerSpacing.x + labelSize.x;
-		const float totalH = (std::max)(box, labelSize.y) + 2.f * dpiScale;
+		const float rowGap = 4.f * dpiScale;
+		float maxW = 0.f;
+		float totalH = 0.f;
+		for (int i = 0; i < count; ++i)
+		{
+			const ImVec2 labelSize = ImGui::CalcTextSize(labels[i]);
+			const float rowW = box + ImGui::GetStyle().ItemInnerSpacing.x + labelSize.x;
+			const float rowH = (std::max)(box, labelSize.y);
+			if (rowW > maxW)
+				maxW = rowW;
+			totalH += rowH;
+			if (i + 1 < count)
+				totalH += rowGap;
+		}
+
 		const float availY = ImGui::GetContentRegionAvail().y;
 		if (availY > totalH + 1.f)
 			ImGui::Dummy({ 0.f, availY - totalH - 1.f });
 
-		ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - totalW);
-		const bool changed = ImGui::Checkbox(label, value);
+		bool anyChanged = false;
+		for (int i = 0; i < count; ++i)
+		{
+			ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - maxW);
+			anyChanged = ImGui::Checkbox(labels[i], values[i]) || anyChanged;
+			if (i + 1 < count)
+				ImGui::Dummy({ 0.f, rowGap * 0.25f });
+		}
 
 		ImGui::SetWindowFontScale(1.f);
 		ImGui::PopStyleVar(2);
-		return changed;
+		return anyChanged;
+	}
+
+	bool BottomRightCheckbox(const char* label, bool* value, float dpiScale)
+	{
+		const char* labels[1] = { label };
+		bool* values[1] = { value };
+		return BottomRightCheckboxStack(labels, values, 1, dpiScale);
 	}
 
 	const char* ReleaseLinkUrl(const InstallerUiState& state)
@@ -613,7 +641,15 @@ namespace
 			ImGui::PopStyleColor();
 		}
 
-		BottomRightCheckbox("Создать ярлык на рабочем столе", &state.createDesktopShortcut, dpiScale);
+		const char* pathLabels[] = {
+			"Сброс сетевых адаптеров",
+			"Создать ярлык на рабочем столе",
+		};
+		bool* pathValues[] = {
+			&state.resetNetworkAdapters,
+			&state.createDesktopShortcut,
+		};
+		BottomRightCheckboxStack(pathLabels, pathValues, 2, dpiScale);
 	}
 
 	void SyncInstallCache(UiFrame& frame, InstallerUiState& state)

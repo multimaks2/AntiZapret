@@ -712,6 +712,53 @@ namespace
 		return true;
 	}
 
+	bool RunHiddenCommand(const std::wstring& commandLine, DWORD timeoutMs = 60000)
+	{
+		STARTUPINFOW si = { sizeof(si) };
+		si.dwFlags = STARTF_USESHOWWINDOW;
+		si.wShowWindow = SW_HIDE;
+		PROCESS_INFORMATION pi = {};
+		std::wstring mutableCmd = commandLine;
+		std::vector<wchar_t> buf(mutableCmd.begin(), mutableCmd.end());
+		buf.push_back(L'\0');
+		if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+			return false;
+		const DWORD wait = WaitForSingleObject(pi.hProcess, timeoutMs);
+		DWORD exitCode = 1;
+		if (wait == WAIT_OBJECT_0)
+			GetExitCodeProcess(pi.hProcess, &exitCode);
+		else
+			TerminateProcess(pi.hProcess, 1);
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
+		return wait == WAIT_OBJECT_0 && exitCode == 0;
+	}
+
+	// Disable leftover VPN/virtual NICs that often conflict with AntiZapret VPN (no reboot).
+	void ResetConflictingNetworkAdapters(InstallerUiState& ui)
+	{
+		Log(ui, "Сброс сетевых адаптеров: отключаю конфликтующие виртуальные NIC...");
+		SetStatus(ui, "Сброс сетевых адаптеров...", 0.96f);
+
+		// Keep this a short PowerShell one-liner — no winsock/ip reset (those ask for reboot).
+		const std::wstring cmd =
+			L"powershell -NoProfile -ExecutionPolicy Bypass -Command \""
+			L"$ErrorActionPreference='SilentlyContinue';"
+			L"Get-NetAdapter | Where-Object {"
+			L" $_.InterfaceDescription -match "
+			L"'TAP|Wintun|WinTUN|WireGuard|OpenVPN|SoftEther|Hamachi|ZeroTier|Tailscale|Outline|Amnezia|cloudflare.?WARP'"
+			L"} | ForEach-Object {"
+			L" Disable-NetAdapter -Name $_.Name -Confirm:$false -ErrorAction SilentlyContinue"
+			L"};"
+			L"ipconfig /flushdns | Out-Null"
+			L"\"";
+
+		if (!RunHiddenCommand(cmd, 90000))
+			Log(ui, "Предупреждение: сброс сетевых адаптеров завершился с ошибкой (можно пропустить)");
+		else
+			Log(ui, "Сброс сетевых адаптеров выполнен");
+	}
+
 	bool ExtractZip(const fs::path& zipPath, const fs::path& destDir, InstallerUiState& ui)
 	{
 		std::error_code ec;
@@ -925,6 +972,7 @@ void RunInstallWorker(InstallerUiState& state)
 	std::string zipUrl;
 	std::string version;
 	bool wantShortcut = true;
+	bool wantResetAdapters = true;
 	{
 		std::lock_guard<std::mutex> lock(state.mutex);
 		installPath = state.installPath;
@@ -932,6 +980,7 @@ void RunInstallWorker(InstallerUiState& state)
 		zipUrl = state.releaseZipUrl;
 		version = state.releaseVersion;
 		wantShortcut = state.createDesktopShortcut;
+		wantResetAdapters = state.resetNetworkAdapters;
 		state.logs.clear();
 		state.error.clear();
 		state.installFailed = false;
@@ -1076,6 +1125,11 @@ void RunInstallWorker(InstallerUiState& state)
 	{
 		Log(state, "Создание ярлыка пропущено (снята галочка)");
 	}
+
+	if (wantResetAdapters)
+		ResetConflictingNetworkAdapters(state);
+	else
+		Log(state, "Сброс сетевых адаптеров пропущен (снята галочка)");
 
 	Log(state, "Удаляю временные файлы...");
 	fs::remove_all(stage, ec);

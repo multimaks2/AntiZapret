@@ -211,6 +211,51 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 	UiCommon::EndCard();
 	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 
+	if (UiCommon::BeginCard("##settings_font_scale", width, colors))
+	{
+		const float innerWidth = ImGui::GetContentRegionAvail().x;
+		UiCommon::SectionHeader("Масштаб шрифта", colors);
+		ImGui::Dummy({ 0.f, 4.f });
+		UiCommon::CaptionText(
+			"Коэффициент увеличения текста интерфейса. По умолчанию 1.0.",
+			colors,
+			innerWidth);
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
+
+		if (m_appSettings)
+		{
+			float scale = m_appSettings->GetFontScale();
+			const float labelWidth = 148.f;
+			const float sliderWidth = innerWidth - labelWidth - UiMetrics::kGridGap;
+
+			ImGui::AlignTextToFramePadding();
+			ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
+			ImGui::TextUnformatted("Коэфф увеличения");
+			ImGui::PopStyleColor();
+			ImGui::SameLine(labelWidth);
+
+			UiCommon::PushSliderStyle(colors);
+			ImGui::SetNextItemWidth(sliderWidth);
+			const bool changed = ImGui::SliderFloat(
+				"##font_scale",
+				&scale,
+				AppSettings::kMinFontScale,
+				AppSettings::kMaxFontScale,
+				"%.2f x");
+			UiCommon::PopSliderStyle();
+
+			if (changed)
+			{
+				m_appSettings->SetFontScale(scale);
+				ImGui::GetStyle().FontScaleMain = m_appSettings->GetFontScale();
+			}
+			if (ImGui::IsItemDeactivatedAfterEdit())
+				m_appSettings->SaveFontScale();
+		}
+	}
+	UiCommon::EndCard();
+	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
+
 	if (UiCommon::BeginCard("##settings_hwid", width, colors))
 	{
 		const float innerWidth = ImGui::GetContentRegionAvail().x;

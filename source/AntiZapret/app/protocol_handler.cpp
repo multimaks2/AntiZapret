@@ -18,24 +18,32 @@ namespace
 	HANDLE g_mutex = nullptr;
 	bool g_startupFromAutostart = false;
 
-	void BringExistingWindowToFront()
+	void BringExistingWindowToFront(bool toggleIfVisible)
 	{
-		HWND existing = FindWindowW(ProtocolHandler::kWindowClassName, nullptr);
+		HWND existing = nullptr;
+		for (int i = 0; i < 50 && !existing; ++i)
+		{
+			existing = FindWindowW(ProtocolHandler::kWindowClassName, nullptr);
+			if (!existing)
+				Sleep(20);
+		}
 		if (!existing)
 			return;
 
-		// Hidden in tray — ask the running instance to restore the window.
-		if (!IsWindowVisible(existing))
-		{
-			PostMessageW(existing, WindowManager::kRestoreFromTrayMessage, 0, 0);
-			return;
-		}
+		// Second instance briefly owns foreground (Start menu launch) — allow the
+		// already-running process to steal it back when it handles restore.
+		DWORD existingPid = 0;
+		GetWindowThreadProcessId(existing, &existingPid);
+		if (existingPid != 0)
+			AllowSetForegroundWindow(existingPid);
 
-		if (IsIconic(existing))
-			ShowWindow(existing, SW_RESTORE);
-		else
-			ShowWindow(existing, SW_SHOW);
-		SetForegroundWindow(existing);
+		// wParam=1 → Windows-like toggle (minimize if already open/front).
+		// wParam=0 → always show (deep links / protocol).
+		PostMessageW(
+			existing,
+			WindowManager::kRestoreFromTrayMessage,
+			toggleIfVisible ? 1 : 0,
+			0);
 	}
 
 	std::string ToLower(std::string s)
@@ -274,7 +282,7 @@ namespace ProtocolHandler
 		const ProtocolCommand parsed = ParseCommandLine(cmd);
 		if (!parsed.valid || parsed.raw.empty())
 		{
-			BringExistingWindowToFront();
+			BringExistingWindowToFront(true);
 			CloseHandle(g_mutex);
 			g_mutex = nullptr;
 			return true;
@@ -295,7 +303,7 @@ namespace ProtocolHandler
 			cds.cbData = static_cast<DWORD>(payload.size() + 1);
 			cds.lpData = const_cast<char*>(payload.c_str());
 			SendMessageW(existing, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
-			BringExistingWindowToFront();
+			BringExistingWindowToFront(false);
 		}
 
 		CloseHandle(g_mutex);

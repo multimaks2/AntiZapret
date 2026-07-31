@@ -159,6 +159,8 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		m_zapretPageInitialized = true;
 	}
 
+	ImGui::GetStyle().FontScaleMain = m_appSettings.GetFontScale();
+
 	if (!m_startupActionsDone)
 	{
 		m_zapretManager.LoadStore();
