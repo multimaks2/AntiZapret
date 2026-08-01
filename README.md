@@ -49,7 +49,7 @@
 
 ## 📥 Скачать
 
-Последний релиз: **[v1.3.6](https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.6)** 🎉
+Последний релиз: **[v1.3.9](https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.9)** 🎉
 
 **Рекомендуется:** скачать и запустить установщик  
 ➡️ **[AntiZapret-Installer.exe](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.6/AntiZapret-Installer.exe)**  
