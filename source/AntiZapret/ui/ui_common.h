@@ -89,7 +89,16 @@ namespace UiCommon
 	void PopSliderStyle();
 	bool InputText(const char* id, char* buffer, int bufferSize, const UiThemeColors& colors, ImVec2 size = { 0.f, 34.f });
 	bool StyledCheckbox(const char* label, bool* value, const UiThemeColors& colors);
-	bool SettingRow(const char* label, float width, const UiThemeColors& colors, float mix);
+	bool SettingRow(
+		const char* label,
+		float width,
+		const UiThemeColors& colors,
+		float mix,
+		bool embedded = false,
+		bool sepTop = true,
+		bool sepBottom = true);
+	// Hairline under a setting block (toggle + caption / fields).
+	void SettingBlockFooterSep(float width, const UiThemeColors& colors);
 	bool StrategyButton(
 		int widgetId,
 		const char* label,

@@ -29,6 +29,7 @@ public:
 		const std::string& detailsText,
 		bool enabled,
 		const DiscordPresenceButtons& buttons,
+		long long startTimestamp,
 		float deltaTime);
 
 private:

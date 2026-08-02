@@ -104,6 +104,7 @@ void AppRichPresence::Update(
 	const std::string& detailsText,
 	bool enabled,
 	const DiscordPresenceButtons& buttons,
+	long long startTimestamp,
 	float deltaTime)
 {
 	if (!enabled)
@@ -138,8 +139,13 @@ void AppRichPresence::Update(
 
 	m_refreshAge += deltaTime;
 
+	const bool startChanged = startTimestamp != m_sessionStartedAt;
+	if (startTimestamp > 0)
+		m_sessionStartedAt = startTimestamp;
+
 	const bool changed = !m_hasPresence
 		|| !m_lastEnabled
+		|| startChanged
 		|| activeTab != m_lastTab
 		|| zapretRunning != m_lastZapret
 		|| tgRunning != m_lastTg

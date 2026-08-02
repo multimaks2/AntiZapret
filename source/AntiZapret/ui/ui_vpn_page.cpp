@@ -370,7 +370,28 @@ namespace
 				if (it->second.empty())
 					tip = "IP: не удалось определить";
 				else
-					tip = "IP: " + it->second;
+				{
+					tip = "IP:";
+					size_t start = 0;
+					const std::string& joined = it->second;
+					while (start < joined.size())
+					{
+						size_t end = joined.find(',', start);
+						if (end == std::string::npos)
+							end = joined.size();
+						std::string part = joined.substr(start, end - start);
+						while (!part.empty() && (part.front() == ' ' || part.front() == '\t'))
+							part.erase(part.begin());
+						while (!part.empty() && (part.back() == ' ' || part.back() == '\t'))
+							part.pop_back();
+						if (!part.empty())
+						{
+							tip += '\n';
+							tip += part;
+						}
+						start = end + 1;
+					}
+				}
 			}
 			else
 			{
@@ -378,8 +399,8 @@ namespace
 			}
 		}
 
-	if (tip.empty())
-		tip = inFlight ? "IP: резолв…" : "IP: …";
+		if (tip.empty())
+			tip = inFlight ? "IP: резолв…" : "IP: …";
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
 			UiCommon::ShowTooltip("%s", tip.c_str());
 	}

@@ -22,6 +22,7 @@ private:
 	float m_autostartVpnMix = 0.f;
 	float m_confirmAdultMix = 0.f;
 	float m_discordPresenceMix = 1.f;
+	float m_discordTotalUptimeMix = 0.f;
 	float m_discordDownloadButtonMix = 1.f;
 	float m_discordImportAzMix = 0.f;
 	float m_discordImportVpnMix = 0.f;

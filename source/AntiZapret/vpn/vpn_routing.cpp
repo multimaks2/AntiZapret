@@ -242,20 +242,47 @@ void VpnRouting::AppendRules(
 		if (fixDiscord)
 			VpnDiscordVoiceRules::AppendDomainAndVoiceRules(yaml, "PROXY");
 
+		// Pass 1: PROCESS-NAME first so app→VPN always wins over later DOMAIN DIRECT
+		// (e.g. Edge→VPN must beat 2ip→Direct). find-process-mode: always helps attribution.
 		for (const ServiceRouteEntry& service : custom->services)
 		{
 			if (!service.enabled || service.mode == ServiceRouteMode::None)
 				continue;
 			if (VpnServiceRoutes::IsAdultSection(service.section) && !custom->includeAdultServices)
 				continue;
-			// Already forced via Fix Discord — skip duplicate discord catalogue rules.
+			if (fixDiscord && service.id == "discord")
+				continue;
+
+			const char* action = ServiceModeAction(service.mode);
+			std::vector<std::string> fallbackDomains;
+			std::vector<std::string> processes;
+			VpnServiceRoutes::CollectRouteTargets(service, fallbackDomains, processes);
+			for (const std::string& processName : processes)
+			{
+				yaml += "  - PROCESS-NAME,";
+				yaml += processName;
+				yaml += ",";
+				yaml += action;
+				yaml += "\n";
+			}
+		}
+
+		// Pass 2: domains / geosite / voice (no duplicate PROCESS-NAME).
+		for (const ServiceRouteEntry& service : custom->services)
+		{
+			if (!service.enabled || service.mode == ServiceRouteMode::None)
+				continue;
+			if (VpnServiceRoutes::IsAdultSection(service.section) && !custom->includeAdultServices)
+				continue;
 			if (fixDiscord && service.id == "discord")
 				continue;
 
 			const std::string geositeName = VpnServiceRoutes::GeositeNameForService(service.id);
 			const char* action = ServiceModeAction(service.mode);
 			std::vector<std::string> fallbackDomains;
-			VpnServiceRoutes::CollectFallbackDomains(service.id, fallbackDomains);
+			std::vector<std::string> processes;
+			VpnServiceRoutes::CollectRouteTargets(service, fallbackDomains, processes);
+			(void)processes;
 
 			if (!fallbackDomains.empty())
 			{

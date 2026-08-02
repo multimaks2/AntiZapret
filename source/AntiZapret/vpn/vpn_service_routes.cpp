@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -16,6 +18,13 @@ namespace
 {
 	std::mutex g_routesMutex;
 
+	bool DescriptionHasExe(const char* description)
+	{
+		if (!description || !description[0])
+			return false;
+		return std::strstr(description, ".exe") != nullptr || std::strstr(description, ".EXE") != nullptr;
+	}
+
 	void AssignCatalogEntry(const ServiceCatalogEntry& item, ServiceRouteEntry& entry)
 	{
 		entry.id = item.id ? item.id : "";
@@ -25,8 +34,116 @@ namespace
 		entry.description = item.description ? item.description : "";
 		entry.region = item.region;
 		entry.section = item.section;
+		entry.kind = VpnServiceRoutes::InferKind(item);
+		entry.custom = false;
 		entry.enabled = true;
 		entry.mode = ServiceRouteMode::None;
+	}
+
+	void AppendUniqueToken(std::vector<std::string>& out, std::string value)
+	{
+		while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
+			value.erase(value.begin());
+		while (!value.empty() && (value.back() == ' ' || value.back() == '\t'))
+			value.pop_back();
+		if (value.empty())
+			return;
+		for (const std::string& existing : out)
+		{
+			if (existing == value)
+				return;
+		}
+		out.push_back(std::move(value));
+	}
+
+	bool LooksLikeDomainToken(const std::string& token)
+	{
+		if (token.find('.') == std::string::npos)
+			return false;
+		std::string lower = token;
+		for (char& ch : lower)
+			ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+		if (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".exe") == 0)
+			return false;
+		for (unsigned char ch : token)
+		{
+			if (std::isalnum(ch) || ch == '.' || ch == '-' || ch == '_')
+				continue;
+			return false;
+		}
+		return true;
+	}
+
+	bool LooksLikeProcessToken(const std::string& token)
+	{
+		if (token.size() < 5)
+			return false;
+		std::string lower = token;
+		for (char& ch : lower)
+			ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+		return lower.compare(lower.size() - 4, 4, ".exe") == 0;
+	}
+
+	void ParseTargetCsv(
+		const std::string& csv,
+		ServiceCatalogKind kind,
+		std::vector<std::string>& outDomains,
+		std::vector<std::string>& outProcesses)
+	{
+		size_t start = 0;
+		while (start <= csv.size())
+		{
+			const size_t comma = csv.find(',', start);
+			std::string token = csv.substr(
+				start,
+				comma == std::string::npos ? std::string::npos : comma - start);
+			while (!token.empty() && (token.front() == ' ' || token.front() == '\t'))
+				token.erase(token.begin());
+			while (!token.empty() && (token.back() == ' ' || token.back() == '\t'))
+				token.pop_back();
+
+			if (!token.empty())
+			{
+				if (LooksLikeProcessToken(token))
+					AppendUniqueToken(outProcesses, token);
+				else if (LooksLikeDomainToken(token))
+					AppendUniqueToken(outDomains, token);
+				else if (kind == ServiceCatalogKind::App)
+				{
+					std::string exe = token;
+					std::string lower = exe;
+					for (char& ch : lower)
+						ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+					if (lower.size() < 4 || lower.compare(lower.size() - 4, 4, ".exe") != 0)
+						exe += ".exe";
+					AppendUniqueToken(outProcesses, std::move(exe));
+				}
+			}
+
+			if (comma == std::string::npos)
+				break;
+			start = comma + 1;
+		}
+	}
+
+	std::string SanitizeCustomIdPart(std::string value)
+	{
+		std::string out;
+		out.reserve(value.size());
+		for (unsigned char ch : value)
+		{
+			if (std::isalnum(ch))
+				out.push_back(static_cast<char>(std::tolower(ch)));
+			else if (ch == ' ' || ch == '-' || ch == '_')
+				out.push_back('_');
+		}
+		while (!out.empty() && out.back() == '_')
+			out.pop_back();
+		if (out.size() > 24)
+			out.resize(24);
+		if (out.empty())
+			out = "item";
+		return out;
 	}
 	std::string Trim(std::string value)
 	{
@@ -63,9 +180,6 @@ namespace
 	}
 
 	const ServiceCatalogEntry kCatalog[] = {
-		// --- Зарубежные: утилиты ---
-		{ "2ip", 0xE774, false, "2ip.ru", "2ip.ru, api.2ip.ru", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignTools },
-
 		// --- Зарубежные: соцсети и мессенджеры ---
 		{ "youtube", 0xf167, true, "YouTube", "YouTube, ytimg, ggpht, googleapis", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignSocial },
 		{ "discord", 0xf392, true, "Discord", "Discord, discord.media, AyuGram, Vesktop", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignSocial },
@@ -85,11 +199,34 @@ namespace
 		{ "netflix", 0xE714, false, "Netflix", "netflix.com, nflxvideo.net", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignStreaming },
 
 		// --- Зарубежные: браузеры ---
-		{ "chrome", 0xf268, true, "Google Chrome", "Chrome, Chromium", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
-		{ "firefox", 0xe007, true, "Firefox", "Firefox, Waterfox, LibreWolf", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
-		{ "edge", 0xf282, true, "Microsoft Edge", "msedge.exe, Edge WebView", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
-		{ "opera", 0xf26a, true, "Opera", "opera.exe, opera gx", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
-		{ "brave", 0xe63c, true, "Brave", "brave.exe, Chromium", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "chrome", 0xf268, true, "Google Chrome", "chrome.exe, chromium.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "firefox", 0xe007, true, "Firefox", "firefox.exe, Waterfox, LibreWolf", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "edge", 0xf282, true, "Microsoft Edge", "msedge.exe, msedgewebview2.exe, identity_helper.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "opera", 0xf26a, true, "Opera", "opera.exe, opera_browser.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "opera_gx", 0xf26a, true, "Opera GX", "opera.exe, operagx.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "brave", 0xe63c, true, "Brave", "brave.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "vivaldi", 0xf27d, true, "Vivaldi", "vivaldi.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "tor_browser", 0xf519, true, "Tor Browser", "firefox.exe, tor.exe, torbrowser", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "chromium", 0xf268, true, "Chromium", "chrome.exe, chromium.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "librewolf", 0xe007, true, "LibreWolf", "librewolf.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "waterfox", 0xe007, true, "Waterfox", "waterfox.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "floorp", 0xe007, true, "Floorp", "floorp.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "zen_browser", 0xe007, true, "Zen Browser", "zen.exe, zen-browser", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "thorium", 0xf268, true, "Thorium", "thorium.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "ungoogled", 0xf268, true, "Ungoogled Chromium", "chrome.exe, ungoogled", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "mullvad_browser", 0xf519, true, "Mullvad Browser", "mullvadbrowser.exe, firefox.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "arc", 0xf268, true, "Arc", "Arc.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "duckduckgo", 0xf519, true, "DuckDuckGo Browser", "duckduckgo.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "pale_moon", 0xe007, true, "Pale Moon", "palemoon.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "maxthon", 0xf268, true, "Maxthon", "Maxthon.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "centbrowser", 0xf268, true, "Cent Browser", "chrome.exe, centbrowser", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "iron", 0xf268, true, "SRWare Iron", "chrome.exe, iron.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "comodo", 0xf268, true, "Comodo Dragon", "dragon.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "avg_browser", 0xf268, true, "AVG Secure Browser", "AVGBrowser.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "avast_browser", 0xf268, true, "Avast Secure Browser", "AvastBrowser.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "sidekick", 0xf268, true, "Sidekick", "sidekick.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "wavebox", 0xf268, true, "Wavebox", "Wavebox.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
+		{ "slimjet", 0xf268, true, "Slimjet", "slimjet.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignBrowser },
 
 		// --- Зарубежные: AI (ограничены / недоступны в РФ) ---
 		{ "chatgpt", 0xE8F1, false, "ChatGPT / OpenAI", "chatgpt.com, openai.com, api.openai.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignAI },
@@ -189,13 +326,52 @@ namespace
 		{ "destiny2", 0xE7FC, false, "Destiny 2", "destiny2.exe, bungie.net", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
 		{ "gta5", 0xE7FC, false, "GTA Online", "GTA5.exe, rockstargames.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
 		{ "rdr2", 0xE7FC, false, "Red Dead Online", "RDR2.exe, rockstargames.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
-		{ "helldivers2", 0xE7FC, false, "Helldivers 2", "helldivers2.exe, arrowheadgamestudios.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "helldivers2", 0xE7FC, false, "HELLDIVERS™ 2", "helldivers2.exe, arrowheadgamestudios.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
 		{ "palworld", 0xE7FC, false, "Palworld", "Palworld-Win64-Shipping.exe, palworldgame.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
 		{ "rust", 0xE7FC, false, "Rust", "RustClient.exe, rust.facepunch.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
 		{ "ark", 0xE7FC, false, "ARK: Survival", "ShooterGame.exe, playark.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
 		{ "tarkov", 0xE7FC, false, "Escape from Tarkov", "EscapeFromTarkov.exe, escapefromtarkov.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
 		{ "warthunder", 0xE7FC, false, "War Thunder", "aces.exe, warthunder.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
-		{ "fc25", 0xE7FC, false, "EA FC Online / FIFA", "FC25.exe, ea.com/games/ea-sports-fc", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "wot_heat", 0xE7FC, false, "World of Tanks: HEAT", "WotHEAT.exe, WorldOfTanksHEAT.exe, wargaming.net", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "warships", 0xE7FC, false, "World of Warships", "WorldOfWarships.exe, worldofwarships.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "warframe", 0xE7FC, false, "Warframe", "Warframe.x64.exe, warframe.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "r6siege", 0xE7FC, false, "Rainbow Six Siege", "RainbowSix.exe, ubisoft.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "sea_of_thieves", 0xE7FC, false, "Sea of Thieves", "SoTGame.exe, seaofthieves.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "valheim", 0xE7FC, false, "Valheim", "valheim.exe, valheimgame.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "deep_rock", 0xE7FC, false, "Deep Rock Galactic", "FSD-Win64-Shipping.exe, deeprockgalactic.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "dayz", 0xE7FC, false, "DayZ", "DayZ_x64.exe, dayz.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "arma_reforger", 0xE7FC, false, "Arma Reforger", "ArmaReforgerSteam.exe, bohemia.net", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "hell_let_loose", 0xE7FC, false, "Hell Let Loose", "HLL-Win64-Shipping.exe, hellletloose.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "ready_or_not", 0xE7FC, false, "Ready or Not", "ReadyOrNotSteam.exe, readyornotgame.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "forza_horizon5", 0xE7FC, false, "Forza Horizon 5", "ForzaHorizon5.exe, forza.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "forza_horizon6", 0xE7FC, false, "Forza Horizon 6", "ForzaHorizon6.exe, forza.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "forza_motorsport", 0xE7FC, false, "Forza Motorsport", "ForzaMotorsport.exe, forza.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "euro_truck", 0xE7FC, false, "Euro Truck Simulator 2", "eurotrucks2.exe, scssoft.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "american_truck", 0xE7FC, false, "American Truck Simulator", "amtrucks.exe, scssoft.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "beamng", 0xE7FC, false, "BeamNG.drive", "BeamNG.drive.exe, beamng.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "gmod", 0xE7FC, false, "Garry's Mod", "gmod.exe, garrysmod.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "l4d2", 0xE7FC, false, "Left 4 Dead 2", "left4dead2.exe, valvesoftware.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "elden_ring", 0xE7FC, false, "ELDEN RING", "eldenring.exe, bandainamcoent.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "bg3", 0xE7FC, false, "Baldur's Gate 3", "bg3.exe, bg3_dx11.exe, larian.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "wuthering_waves", 0xE7FC, false, "Wuthering Waves", "Client-Win64-Shipping.exe, wutheringwaves.kurogame.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "black_desert", 0xE7FC, false, "Black Desert", "BlackDesert64.exe, blackdesertfoundry.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "guild_wars2", 0xE7FC, false, "Guild Wars 2", "Gw2-64.exe, guildwars2.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "no_mans_sky", 0xE7FC, false, "No Man's Sky", "NMS.exe, nomanssky.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "satisfactory", 0xE7FC, false, "Satisfactory", "FactoryGameSteam.exe, satisfactorygame.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "factorio", 0xE7FC, false, "Factorio", "factorio.exe, factorio.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "project_zomboid", 0xE7FC, false, "Project Zomboid", "ProjectZomboid64.exe, projectzomboid.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "seven_days", 0xE7FC, false, "7 Days to Die", "7DaysToDie.exe, 7daystodie.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "scum", 0xE7FC, false, "SCUM", "SCUM.exe, scumgame.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "vrising", 0xE7FC, false, "V Rising", "VRising.exe, playvrising.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "enshrouded", 0xE7FC, false, "Enshrouded", "enshrouded.exe, enshrouded.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "gray_zone", 0xE7FC, false, "Gray Zone Warfare", "GZWClientSteam.exe, grayzonewarfare.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "arena_breakout", 0xE7FC, false, "Arena Breakout: Infinite", "ABIGame.exe, arenabreakoutinfinite.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "first_descendant", 0xE7FC, false, "The First Descendant", "TFD.exe, nexon.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "naraka", 0xE7FC, false, "NARAKA: BLADEPOINT", "NarakaBladepoint.exe, narakathegame.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "starcraft2", 0xE7FC, false, "StarCraft II", "SC2_x64.exe, starcraft2.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "aoe4", 0xE7FC, false, "Age of Empires IV", "RelicCardinal.exe, ageofempires.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "wallpaper_engine", 0xE7FC, false, "Wallpaper Engine", "wallpaper64.exe, wallpaperengine.io", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
+		{ "fc25", 0xE7FC, false, "EA FC Online / FIFA", "FC25.exe, FC26.exe, ea.com/games/ea-sports-fc", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
 		{ "nba2k", 0xE7FC, false, "NBA 2K Online", "NBA2K.exe, nba.com, 2k.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
 		{ "rocket_league", 0xE7FC, false, "Rocket League", "RocketLeague.exe, rocketleague.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
 		{ "dbd", 0xE7FC, false, "Dead by Daylight", "DeadByDaylight.exe, deadbydaylight.com", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignGames },
@@ -253,16 +429,36 @@ namespace
 		{ "difficult", 0xE7FC, false, "diffiCULT", "diffiCULT.exe, social deduction multiplayer", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignSteamNew },
 		{ "warena", 0xE7FC, false, "Warena", "Warena.exe, real-time card battler", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignSteamNew },
 
-		// --- Зарубежные: прочее ---
-		{ "torrents", 0xE896, false, "Торренты", "qBittorrent, uTorrent, Transmission", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
-		{ "windows", 0xf17a, true, "Windows", "Системные процессы Windows", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		// --- Зарубежные: торрент клиенты ---
+		{ "qbittorrent", 0xE896, false, "qBittorrent", "qbittorrent.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "utorrent", 0xE896, false, "µTorrent / uTorrent", "uTorrent.exe, utorrent.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "bittorrent", 0xE896, false, "BitTorrent", "BitTorrent.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "transmission", 0xE896, false, "Transmission", "transmission-qt.exe, transmission-gtk.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "deluge", 0xE896, false, "Deluge", "deluge.exe, deluge-gtk.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "tixati", 0xE896, false, "Tixati", "tixati.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "biglybt", 0xE896, false, "BiglyBT", "BiglyBT.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "vuze", 0xE896, false, "Vuze / Azureus", "Azureus.exe, vuze.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "picotorrent", 0xE896, false, "PicoTorrent", "PicoTorrent.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "frostwire", 0xE896, false, "FrostWire", "FrostWire.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "motrix", 0xE896, false, "Motrix", "Motrix.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "fdm", 0xE896, false, "Free Download Manager", "fdm.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "aria2", 0xE896, false, "aria2", "aria2c.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "bitcomet", 0xE896, false, "BitComet", "BitComet.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "bitlord", 0xE896, false, "BitLord", "BitLord.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "halite", 0xE896, false, "Halite", "Halite.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+		{ "tribler", 0xE896, false, "Tribler", "tribler.exe", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignMisc },
+
+		// --- Вне категорий (конец списка приложений) ---
+		{ "windows", 0xf17a, true, "Windows", "Системные процессы Windows, svchost.exe, System", ServiceCatalogRegion::Foreign, ServiceCatalogSection::ForeignStandalone },
 
 		// --- Российские: браузеры ---
 		{ "yandex_browser", 0xf413, true, "Яндекс Браузер", "browser.exe, yandexbrowser.exe, yandex.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianBrowser },
 		{ "atom_browser", 0xE774, false, "Atom (VK)", "atom.exe, браузер VK / Mail.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianBrowser },
+		{ "sputnik_browser", 0xE774, false, "Спутник", "sputnik.exe, browser.sputnik.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianBrowser },
+		{ "nichrome", 0xE774, false, "Nichrome", "nichrome.exe", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianBrowser },
 
 		// --- Российские: экосистемы ---
-		{ "yandex", 0xf413, true, "Яндекс", "Диск, Музыка, Маркет, Карты, Почта, yandex.net", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianEco },
+		{ "yandex", 0xf413, true, "Яндекс", "Диск, Маркет, Карты, Почта, yandex.net", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianEco },
 		{ "vk", 0xf189, true, "VK", "VK.exe, vk.com, vk.ru, vkplay.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianEco },
 		{ "mailru", 0xE715, false, "Mail.ru", "mail.ru, cloud.mail.ru, ICQ New", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianEco },
 		{ "ok", 0xf263, true, "Одноклассники", "ok.ru, odnoklassniki.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianEco },
@@ -321,6 +517,8 @@ namespace
 		{ "start", 0xE714, false, "START", "start.ru, start.video", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianStreaming },
 		{ "premier", 0xE714, false, "Premier", "premier.one, api.premier.one", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianStreaming },
 		{ "zvuk", 0xE8D6, false, "Звук", "zvuk.com, sberaudio.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianStreaming },
+		{ "yandex_music", 0xf001, true, "Яндекс Музыка", "Яндекс Музыка.exe, music.yandex.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianStreaming },
+		{ "yandex_music_store", 0xf001, true, "Яндекс Музыка (Store)", "Y.Music.exe, music.yandex.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianStreaming },
 
 		// --- Российские: транспорт ---
 		{ "gis2", 0xE821, false, "2ГИС", "2gis.ru, 2gis.com, навигация", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianTravel },
@@ -347,7 +545,9 @@ namespace
 		{ "drweb", 0xE72E, false, "Dr.Web", "drweb.exe, drweb.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianWorkHealth },
 
 		// --- Российские: прочее ---
-		{ "rustore", 0xE896, false, "RuStore", "RuStore.exe, rustore.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianMisc },
+		{ "2ip", 0xE774, false, "2ip.ru", "2ip.ru, www.2ip.ru, api.2ip.ru", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianMisc },
+		{ "whoer", 0xE774, false, "Whoer", "whoer.net", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianMisc },
+		{ "ipleak", 0xE774, false, "IPLeak", "ipleak.net", ServiceCatalogRegion::Russian, ServiceCatalogSection::RussianMisc },
 	};
 }
 
@@ -433,6 +633,31 @@ void VpnServiceRoutes::CollectFallbackDomains(const std::string& serviceId, std:
 	VpnServiceFallbackDomains::Collect(serviceId, outDomains);
 }
 
+void VpnServiceRoutes::CollectRouteTargets(
+	const ServiceRouteEntry& service,
+	std::vector<std::string>& outDomains,
+	std::vector<std::string>& outProcesses)
+{
+	outDomains.clear();
+	outProcesses.clear();
+
+	if (service.custom)
+	{
+		ParseTargetCsv(service.description, service.kind, outDomains, outProcesses);
+		return;
+	}
+
+	CollectFallbackDomains(service.id, outDomains);
+
+	// Каталожные приложения: PROCESS-NAME из description (*.exe), плюс домены из fallback.
+	// Kind::Site — чтобы путь вроде ea.com/games/... не превратился в фейковый .exe.
+	if (service.kind == ServiceCatalogKind::App)
+	{
+		std::vector<std::string> unusedDomains;
+		ParseTargetCsv(service.description, ServiceCatalogKind::Site, unusedDomains, outProcesses);
+	}
+}
+
 bool VpnServiceRoutes::IsAdultSection(ServiceCatalogSection section)
 {
 	return section == ServiceCatalogSection::ForeignAdult;
@@ -447,11 +672,13 @@ bool VpnServiceRoutes::HasFallbackDomains(const std::string& serviceId)
 
 bool VpnServiceRoutes::PreferFallbackOnly(const std::string& serviceId)
 {
+	if (serviceId.rfind("custom_", 0) == 0)
+		return true;
 	if (VpnAdultSites::IsAdultServiceId(serviceId))
 		return true;
 
 	static const char* kFallbackOnly[] = {
-		"2ip", "sigame", "genshin", "honkai", "zzz", "faceit", "itch",
+		"2ip", "whoer", "ipleak", "sigame", "genshin", "honkai", "zzz", "faceit", "itch",
 		"midjourney", "character_ai", "leonardo", "runway", "elevenlabs",
 		"groq", "poe", "notion_ai", "perplexity", "grok",
 		"github", "gitlab", "bitbucket", "stackoverflow", "npm", "pypi", "crates_io",
@@ -464,6 +691,14 @@ bool VpnServiceRoutes::PreferFallbackOnly(const std::string& serviceId)
 		"cs2", "dota2", "pubg", "overwatch", "wow", "diablo", "hearthstone",
 		"path_of_exile", "destiny2", "gta5", "rdr2",
 		"helldivers2", "palworld", "rust", "ark", "tarkov", "warthunder",
+		"wot_heat", "warships", "warframe", "r6siege", "sea_of_thieves", "valheim",
+		"deep_rock", "dayz", "arma_reforger", "hell_let_loose", "ready_or_not",
+		"forza_horizon5", "forza_horizon6", "forza_motorsport",
+		"euro_truck", "american_truck", "beamng", "gmod", "l4d2",
+		"elden_ring", "bg3", "wuthering_waves", "black_desert", "guild_wars2",
+		"no_mans_sky", "satisfactory", "factorio", "project_zomboid", "seven_days",
+		"scum", "vrising", "enshrouded", "gray_zone", "arena_breakout",
+		"first_descendant", "naraka", "starcraft2", "aoe4", "wallpaper_engine",
 		"fc25", "nba2k", "rocket_league", "dbd", "among_us",
 		"ffxiv", "lost_ark", "new_world", "deadlock", "tf2",
 		"fall_guys", "brawlhalla", "smite", "osu", "vrchat", "phasmophobia",
@@ -475,6 +710,10 @@ bool VpnServiceRoutes::PreferFallbackOnly(const std::string& serviceId)
 		"zerospace", "soulbound", "carnival_hunt", "codename_cure2", "gun_x_gunner", "ouch_cargo",
 		"funnel_runners", "galley_mound", "bodycam_onrecord", "halo_evolved", "nightreign",
 		"monster_hunter_wilds", "umamusume", "meccha_chameleon", "difficult", "warena",
+		"yandex_music", "yandex_music_store",
+		"qbittorrent", "utorrent", "bittorrent", "transmission", "deluge", "tixati",
+		"biglybt", "vuze", "picotorrent", "frostwire", "motrix", "fdm", "aria2",
+		"bitcomet", "bitlord", "halite", "tribler", "windows",
 	};
 	for (const char* id : kFallbackOnly)
 	{
@@ -501,6 +740,67 @@ const char* VpnServiceRoutes::ModeLabel(ServiceRouteMode mode)
 	}
 }
 
+ServiceCatalogKind VpnServiceRoutes::InferKind(const ServiceCatalogEntry& item)
+{
+	ServiceRouteEntry tmp;
+	tmp.id = item.id ? item.id : "";
+	tmp.description = item.description ? item.description : "";
+	tmp.section = item.section;
+	tmp.custom = false;
+	return InferKind(tmp);
+}
+
+ServiceCatalogKind VpnServiceRoutes::InferKind(const ServiceRouteEntry& entry)
+{
+	if (entry.custom)
+		return entry.kind;
+
+	const bool hasExe = entry.description.find(".exe") != std::string::npos
+		|| entry.description.find(".EXE") != std::string::npos;
+
+	switch (entry.section)
+	{
+	case ServiceCatalogSection::ForeignBrowser:
+	case ServiceCatalogSection::ForeignLaunchers:
+	case ServiceCatalogSection::ForeignGames:
+	case ServiceCatalogSection::ForeignSteamNew:
+	case ServiceCatalogSection::ForeignMisc:
+	case ServiceCatalogSection::ForeignStandalone:
+	case ServiceCatalogSection::RussianBrowser:
+	case ServiceCatalogSection::CustomApps:
+		return ServiceCatalogKind::App;
+	case ServiceCatalogSection::CustomSites:
+	case ServiceCatalogSection::ForeignAdult:
+		return ServiceCatalogKind::Site;
+	case ServiceCatalogSection::ForeignSocial:
+		if (entry.id == "discord" || entry.id == "telegram" || entry.id == "whatsapp")
+			return ServiceCatalogKind::App;
+		return ServiceCatalogKind::Site;
+	case ServiceCatalogSection::RussianEco:
+		if (entry.id == "vk" || entry.id == "max")
+			return ServiceCatalogKind::App;
+		return ServiceCatalogKind::Site;
+	case ServiceCatalogSection::RussianStreaming:
+		if (entry.id == "yandex_music" || entry.id == "yandex_music_store" || hasExe)
+			return ServiceCatalogKind::App;
+		return ServiceCatalogKind::Site;
+	case ServiceCatalogSection::RussianMisc:
+		if (hasExe)
+			return ServiceCatalogKind::App;
+		return ServiceCatalogKind::Site;
+	case ServiceCatalogSection::RussianWorkHealth:
+		if (entry.id == "kaspersky" || entry.id == "drweb" || hasExe)
+			return ServiceCatalogKind::App;
+		return ServiceCatalogKind::Site;
+	default:
+		break;
+	}
+
+	if (hasExe)
+		return ServiceCatalogKind::App;
+	return ServiceCatalogKind::Site;
+}
+
 const char* VpnServiceRoutes::SectionLabel(ServiceCatalogSection section)
 {
 	switch (section)
@@ -515,7 +815,8 @@ const char* VpnServiceRoutes::SectionLabel(ServiceCatalogSection section)
 	case ServiceCatalogSection::ForeignGames: return "Онлайн / сетевые игры";
 	case ServiceCatalogSection::ForeignSteamNew: return "Новинки Steam";
 	case ServiceCatalogSection::ForeignAdult: return "18+ сайты";
-	case ServiceCatalogSection::ForeignMisc: return "Прочее";
+	case ServiceCatalogSection::ForeignMisc: return "Торрент клиенты";
+	case ServiceCatalogSection::ForeignStandalone: return "";
 	case ServiceCatalogSection::RussianBrowser: return "Браузеры";
 	case ServiceCatalogSection::RussianEco: return "Экосистемы и мессенджеры";
 	case ServiceCatalogSection::RussianBank: return "Банки и платежи";
@@ -527,8 +828,45 @@ const char* VpnServiceRoutes::SectionLabel(ServiceCatalogSection section)
 	case ServiceCatalogSection::RussianTravel: return "Транспорт и путешествия";
 	case ServiceCatalogSection::RussianProperty: return "Недвижимость и авто";
 	case ServiceCatalogSection::RussianWorkHealth: return "Работа, медицина, безопасность";
-	case ServiceCatalogSection::RussianMisc: return "Прочее";
+	case ServiceCatalogSection::RussianMisc: return "Проверка IP";
+	case ServiceCatalogSection::CustomApps: return "Мною добавленное";
+	case ServiceCatalogSection::CustomSites: return "Мною добавленное";
 	default: return "Сервисы";
+	}
+}
+
+uint32_t VpnServiceRoutes::SectionIcon(ServiceCatalogSection section)
+{
+	// Segoe MDL2 Assets
+	switch (section)
+	{
+	case ServiceCatalogSection::ForeignTools: return 0xE90F; // Repair
+	case ServiceCatalogSection::ForeignSocial: return 0xE8BD; // Contact
+	case ServiceCatalogSection::ForeignStreaming: return 0xE714; // Video
+	case ServiceCatalogSection::ForeignBrowser: return 0xE774; // Globe
+	case ServiceCatalogSection::ForeignAI: return 0xE945; // Processing / AI-ish
+	case ServiceCatalogSection::ForeignDev: return 0xE943; // Code
+	case ServiceCatalogSection::ForeignLaunchers: return 0xE7FC; // Game
+	case ServiceCatalogSection::ForeignGames: return 0xE7FC;
+	case ServiceCatalogSection::ForeignSteamNew: return 0xE7FC;
+	case ServiceCatalogSection::ForeignAdult: return 0xE8A5; // FavoriteStar / adult marker fallback
+	case ServiceCatalogSection::ForeignMisc: return 0xE896; // Download
+	case ServiceCatalogSection::ForeignStandalone: return 0xf17a;
+	case ServiceCatalogSection::RussianBrowser: return 0xE774;
+	case ServiceCatalogSection::RussianEco: return 0xE8BD;
+	case ServiceCatalogSection::RussianBank: return 0xE825; // Money
+	case ServiceCatalogSection::RussianGov: return 0xE730; // CityNext / building
+	case ServiceCatalogSection::RussianShop: return 0xE719; // Shop
+	case ServiceCatalogSection::RussianDelivery: return 0xE7EC; // DeliveryTruck-ish / MapPin
+	case ServiceCatalogSection::RussianTelecom: return 0xE704; // CellPhone
+	case ServiceCatalogSection::RussianStreaming: return 0xE714;
+	case ServiceCatalogSection::RussianTravel: return 0xE709; // Airplane
+	case ServiceCatalogSection::RussianProperty: return 0xE80F; // Home
+	case ServiceCatalogSection::RussianWorkHealth: return 0xE734; // Work
+	case ServiceCatalogSection::RussianMisc: return 0xE774;
+	case ServiceCatalogSection::CustomApps: return 0xE71D; // AppIcon
+	case ServiceCatalogSection::CustomSites: return 0xE774;
+	default: return 0xE8A5;
 	}
 }
 
@@ -574,15 +912,22 @@ bool VpnServiceRoutes::Load(std::vector<ServiceRouteEntry>& outRoutes)
 	std::lock_guard<std::mutex> lock(g_routesMutex);
 	BuildDefaultRoutes(outRoutes);
 
-	std::unordered_map<std::string, ServiceRouteEntry*> byId;
-	for (ServiceRouteEntry& entry : outRoutes)
-		byId[entry.id] = &entry;
+	std::unordered_map<std::string, size_t> byId;
+	for (size_t i = 0; i < outRoutes.size(); ++i)
+		byId[outRoutes[i].id] = i;
 
 	std::ifstream input(RoutesFile(), std::ios::binary);
 	if (!input)
 		return false;
 
-	std::string currentId;
+	struct PendingSection
+	{
+		std::string id;
+		std::unordered_map<std::string, std::string> kv;
+	};
+	std::vector<PendingSection> sections;
+	PendingSection* current = nullptr;
+
 	std::string line;
 	while (std::getline(input, line))
 	{
@@ -592,33 +937,94 @@ bool VpnServiceRoutes::Load(std::vector<ServiceRouteEntry>& outRoutes)
 
 		if (line.front() == '[' && line.back() == ']')
 		{
-			currentId = line.substr(1, line.size() - 2);
+			PendingSection section;
+			section.id = line.substr(1, line.size() - 2);
+			sections.push_back(std::move(section));
+			current = &sections.back();
 			continue;
 		}
 
 		const size_t eq = line.find('=');
-		if (eq == std::string::npos || currentId.empty())
+		if (eq == std::string::npos || current == nullptr)
 			continue;
 
 		const std::string key = Trim(line.substr(0, eq));
 		const std::string value = Trim(line.substr(eq + 1));
-		const auto it = byId.find(currentId);
-		if (it == byId.end())
+		current->kv[key] = value;
+	}
+
+	for (const PendingSection& section : sections)
+	{
+		const auto existing = byId.find(section.id);
+		const auto customIt = section.kv.find("custom");
+		const bool isCustom = (customIt != section.kv.end() && ParseBool(customIt->second, false))
+			|| section.id.rfind("custom_", 0) == 0;
+
+		if (existing != byId.end())
+		{
+			ServiceRouteEntry& entry = outRoutes[existing->second];
+			const auto modeIt = section.kv.find("mode");
+			if (modeIt != section.kv.end())
+			{
+				const int mode = ParseInt(modeIt->second, static_cast<int>(ServiceRouteMode::None));
+				if (mode >= static_cast<int>(ServiceRouteMode::Antizapret)
+					&& mode <= static_cast<int>(ServiceRouteMode::None))
+				{
+					entry.mode = static_cast<ServiceRouteMode>(mode);
+				}
+			}
+			const auto enabledIt = section.kv.find("enabled");
+			if (enabledIt != section.kv.end())
+				entry.enabled = ParseBool(enabledIt->second, true);
+			continue;
+		}
+
+		if (!isCustom)
 			continue;
 
-		if (key == "mode")
+		ServiceRouteEntry entry;
+		entry.id = section.id;
+		entry.custom = true;
+		entry.enabled = true;
+		entry.mode = ServiceRouteMode::None;
+		entry.kind = ServiceCatalogKind::Site;
+		entry.region = ServiceCatalogRegion::Foreign;
+		entry.section = ServiceCatalogSection::CustomSites;
+		entry.icon = 0xE774;
+		entry.brandIcon = false;
+
+		auto get = [&](const char* key) -> std::string {
+			const auto it = section.kv.find(key);
+			return it == section.kv.end() ? std::string() : it->second;
+		};
+
+		const std::string name = get("name");
+		entry.name = name.empty() ? section.id : name;
+		entry.description = get("description");
+
+		const int kind = ParseInt(get("kind"), static_cast<int>(ServiceCatalogKind::Site));
+		entry.kind = kind == static_cast<int>(ServiceCatalogKind::App)
+			? ServiceCatalogKind::App
+			: ServiceCatalogKind::Site;
+		entry.section = entry.kind == ServiceCatalogKind::App
+			? ServiceCatalogSection::CustomApps
+			: ServiceCatalogSection::CustomSites;
+		entry.icon = entry.kind == ServiceCatalogKind::App ? 0xE71D : 0xE774;
+
+		const int region = ParseInt(get("region"), static_cast<int>(ServiceCatalogRegion::Foreign));
+		if (region == static_cast<int>(ServiceCatalogRegion::Russian))
+			entry.region = ServiceCatalogRegion::Russian;
+
+		const int mode = ParseInt(get("mode"), static_cast<int>(ServiceRouteMode::None));
+		if (mode >= static_cast<int>(ServiceRouteMode::Antizapret)
+			&& mode <= static_cast<int>(ServiceRouteMode::None))
 		{
-			const int mode = ParseInt(value, static_cast<int>(ServiceRouteMode::None));
-			if (mode >= static_cast<int>(ServiceRouteMode::Antizapret)
-				&& mode <= static_cast<int>(ServiceRouteMode::None))
-			{
-				it->second->mode = static_cast<ServiceRouteMode>(mode);
-			}
+			entry.mode = static_cast<ServiceRouteMode>(mode);
 		}
-		else if (key == "enabled")
-		{
-			it->second->enabled = ParseBool(value, true);
-		}
+		entry.enabled = ParseBool(get("enabled"), true);
+
+		byId[entry.id] = outRoutes.size();
+		outRoutes.push_back(std::move(entry));
 	}
 
 	return true;
@@ -641,7 +1047,46 @@ void VpnServiceRoutes::Save(const std::vector<ServiceRouteEntry>& routes)
 		output << "[" << entry.id << "]\r\n";
 		output << "mode=" << static_cast<int>(entry.mode) << "\r\n";
 		output << "enabled=" << (entry.enabled ? 1 : 0) << "\r\n";
+		if (entry.custom)
+		{
+			output << "custom=1\r\n";
+			output << "kind=" << static_cast<int>(entry.kind) << "\r\n";
+			output << "name=" << entry.name << "\r\n";
+			output << "description=" << entry.description << "\r\n";
+			output << "region=" << static_cast<int>(entry.region) << "\r\n";
+			output << "section=" << static_cast<int>(entry.section) << "\r\n";
+			output << "icon=" << entry.icon << "\r\n";
+			output << "brandIcon=" << (entry.brandIcon ? 1 : 0) << "\r\n";
+		}
 	}
+}
+
+ServiceRouteEntry VpnServiceRoutes::MakeCustomEntry(
+	ServiceCatalogKind kind,
+	const std::string& name,
+	const std::string& targets)
+{
+	ServiceRouteEntry entry;
+	entry.custom = true;
+	entry.kind = kind;
+	entry.name = name.empty() ? (kind == ServiceCatalogKind::App ? "Приложение" : "Сайт") : name;
+	entry.description = targets;
+	entry.region = ServiceCatalogRegion::Foreign;
+	entry.section = kind == ServiceCatalogKind::App
+		? ServiceCatalogSection::CustomApps
+		: ServiceCatalogSection::CustomSites;
+	entry.icon = kind == ServiceCatalogKind::App ? 0xE71D : 0xE774;
+	entry.brandIcon = false;
+	entry.enabled = true;
+	entry.mode = ServiceRouteMode::None;
+
+	const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+	entry.id = std::string("custom_")
+		+ (kind == ServiceCatalogKind::App ? "app_" : "site_")
+		+ SanitizeCustomIdPart(entry.name)
+		+ "_"
+		+ std::to_string(static_cast<unsigned long long>(stamp % 100000000ULL));
+	return entry;
 }
 
 bool VpnServiceRoutes::IsFixDiscordEffective(const ServiceRouteEntry& entry)

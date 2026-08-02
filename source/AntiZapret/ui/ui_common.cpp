@@ -865,23 +865,67 @@ bool UiCommon::ToggleSwitch(const char* id, float mix, const UiThemeColors& colo
 	return pressed;
 }
 
-bool UiCommon::SettingRow(const char* label, float width, const UiThemeColors& colors, float mix)
+bool UiCommon::SettingRow(
+	const char* label,
+	float width,
+	const UiThemeColors& colors,
+	float mix,
+	bool embedded,
+	bool sepTop,
+	bool sepBottom)
 {
-	const float rowH = 44.f;
+	const float rowH = embedded ? 42.f : 44.f;
 	const ImVec2 pos = ImGui::GetCursorScreenPos();
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
-	drawList->AddRectFilled(pos, { pos.x + width, pos.y + rowH }, ImGui::GetColorU32(colors.tileBg), UiMetrics::kCardRadius);
+	if (!embedded)
+	{
+		drawList->AddRectFilled(
+			pos,
+			{ pos.x + width, pos.y + rowH },
+			ImGui::GetColorU32(colors.tileBg),
+			UiMetrics::kCardRadius);
+	}
 
 	ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
-	ImGui::SetCursorScreenPos({ pos.x + 14.f, pos.y + (rowH - ImGui::GetTextLineHeight()) * 0.5f });
+	ImGui::SetCursorScreenPos({
+		pos.x + (embedded ? 2.f : 14.f),
+		pos.y + (rowH - ImGui::GetTextLineHeight()) * 0.5f
+	});
 	ImGui::TextUnformatted(label);
 	ImGui::PopStyleColor();
 
-	ImGui::SetCursorScreenPos({ pos.x + width - 54.f, pos.y + 11.f });
+	ImGui::SetCursorScreenPos({ pos.x + width - 54.f, pos.y + (rowH - 22.f) * 0.5f });
 	const bool toggled = ToggleSwitch(label, mix, colors);
+
+	if (embedded)
+	{
+		const ImU32 lineColor = ImGui::GetColorU32(WithAlpha(colors.tileBorder, 0.65f));
+		if (sepTop)
+			drawList->AddLine({ pos.x, pos.y }, { pos.x + width, pos.y }, lineColor, 1.f);
+		if (sepBottom)
+		{
+			drawList->AddLine(
+				{ pos.x, pos.y + rowH - 1.f },
+				{ pos.x + width, pos.y + rowH - 1.f },
+				lineColor,
+				1.f);
+		}
+	}
+
 	ImGui::SetCursorScreenPos({ pos.x, pos.y + rowH });
-	ImGui::Dummy({ width, UiMetrics::kCardGap });
+	ImGui::Dummy({ width, embedded ? (sepBottom ? 2.f : 4.f) : UiMetrics::kCardGap });
 	return toggled;
+}
+
+void UiCommon::SettingBlockFooterSep(float width, const UiThemeColors& colors)
+{
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImGui::GetWindowDrawList()->AddLine(
+		{ pos.x, pos.y },
+		{ pos.x + width, pos.y },
+		ImGui::GetColorU32(WithAlpha(colors.tileBorder, 0.65f)),
+		1.f);
+	ImGui::Dummy({ width, 2.f });
 }
 
 void UiCommon::PushTableStyle(const UiThemeColors& colors)

@@ -20,7 +20,9 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <string>
 
 namespace
@@ -111,7 +113,23 @@ void UiShell::Render(
 	const float height = float(clientRect.bottom - clientRect.top);
 
 	api.BeginFrame(hwnd);
-	TitleBar{}.Draw(hwnd, L, window, theme, api, width);
+	bool openSnakeGame = false;
+	TitleBar{}.Draw(
+		hwnd,
+		L,
+		window,
+		theme,
+		api,
+		width,
+		m_minimizeBurstClicks,
+		m_minimizeBurstLastClick,
+		openSnakeGame);
+	if (openSnakeGame)
+	{
+		m_showSnakeGame = true;
+		m_snakeGame.Reset();
+		m_minimizeBurstClicks = 0;
+	}
 	api.BeginContent(kTitleBarHeight, width, height - kTitleBarHeight);
 	DrawMainLayout(theme, fonts, width, height - kTitleBarHeight);
 	api.EndContent();
@@ -156,6 +174,8 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		// Only check versions in background — download starts from the page button.
 		ZapretUpdateCheck::Instance().StartBackgroundCheck();
 		VpnModuleUpdateCheck::Instance().StartBackgroundCheck();
+		m_appLaunchAt = static_cast<std::int64_t>(std::time(nullptr));
+		m_runtimeLastFlushAt = m_appLaunchAt;
 		m_zapretPageInitialized = true;
 	}
 
@@ -220,6 +240,11 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 	m_trafficMonitor.Update(ImGui::GetIO().DeltaTime);
 	m_processNetMonitor.Update(ImGui::GetIO().DeltaTime);
 	m_appSettings.TickDiscordImportExpiry();
+	if (m_activeTab == UiTab::AntiZapret)
+		m_appSettings.ActivateDiscordImportForTab(false);
+	else if (m_activeTab == UiTab::Vpn)
+		m_appSettings.ActivateDiscordImportForTab(true);
+
 	std::string discordDetails = "☕ В AntiZapret";
 	if (m_vpnManager.IsRunning())
 	{
@@ -274,8 +299,10 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 	const bool importWindowOpen = m_appSettings.IsDiscordImportButtonAvailable();
 	if (importWindowOpen)
 	{
-		const bool wantAz = m_appSettings.GetDiscordImportAntiZapretEnabled() && m_activeTab == UiTab::AntiZapret;
-		const bool wantVpn = m_appSettings.GetDiscordImportVpnEnabled() && m_activeTab == UiTab::Vpn;
+		const bool wantAz =
+			m_appSettings.IsDiscordImportAntiZapretActive() && m_activeTab == UiTab::AntiZapret;
+		const bool wantVpn =
+			m_appSettings.IsDiscordImportVpnActive() && m_activeTab == UiTab::Vpn;
 		if (wantAz)
 		{
 			std::string strategyId;
@@ -311,6 +338,28 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		}
 	}
 
+	const std::int64_t nowSec = static_cast<std::int64_t>(std::time(nullptr));
+	if (m_appLaunchAt <= 0)
+	{
+		m_appLaunchAt = nowSec;
+		m_runtimeLastFlushAt = nowSec;
+	}
+
+	m_runtimeFlushAge += ImGui::GetIO().DeltaTime;
+	if (m_runtimeFlushAge >= 30.f)
+	{
+		FlushAppRuntime();
+		m_runtimeFlushAge = 0.f;
+	}
+
+	long long presenceStart = static_cast<long long>(m_appLaunchAt);
+	if (m_appSettings.GetDiscordShowTotalUptime())
+	{
+		const std::int64_t unflushed = nowSec > m_runtimeLastFlushAt ? (nowSec - m_runtimeLastFlushAt) : 0;
+		presenceStart = static_cast<long long>(
+			nowSec - (m_appSettings.GetAppTotalRuntimeSec() + unflushed));
+	}
+
 	m_discordPresence.Update(
 		m_activeTab,
 		m_zapretManager.IsRunning(),
@@ -319,6 +368,7 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		discordDetails,
 		m_appSettings.GetDiscordPresenceEnabled(),
 		discordButtons,
+		presenceStart,
 		ImGui::GetIO().DeltaTime);
 
 	const UiThemeColors colors = theme.GetColors();
@@ -351,19 +401,18 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 0.f, 0.f });
 
-	if (m_showVoidSpace)
+	if (m_showSnakeGame)
 	{
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, colors.bg);
-		ImGui::BeginChild("##VoidSpace", { width, height }, ImGuiChildFlags_None);
+		ImGui::BeginChild("##SnakeGame", { width, height }, ImGuiChildFlags_None);
 
 		ImGui::SetCursorPos({ kPagePad, kPagePad });
-		// Red ✕ — square hitbox, glyph centered by hand (ImGui Button misaligns this glyph).
 		constexpr char kRedCrossUtf8[] = "\xE2\x9C\x95";
 		const ImVec4 crossRed = { 0.96f, 0.26f, 0.21f, 1.f };
 		const ImVec2 glyphSize = ImGui::CalcTextSize(kRedCrossUtf8);
 		const float side = (glyphSize.x > glyphSize.y ? glyphSize.x : glyphSize.y) + 10.f;
 		const ImVec2 btnSize = { side, side };
-		const bool backClicked = ImGui::InvisibleButton("##void_back", btnSize);
+		const bool backClicked = ImGui::InvisibleButton("##snake_back", btnSize);
 		const ImVec2 rMin = ImGui::GetItemRectMin();
 		const ImVec2 rMax = ImGui::GetItemRectMax();
 		ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -377,14 +426,25 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 			rounding,
 			0,
 			1.f);
-		// ✕ glyph metrics sit optically left of the box; nudge right for visual center.
 		const ImVec2 textPos = {
 			rMin.x + (side - glyphSize.x) * 0.5f + 1.25f,
 			rMin.y + (side - glyphSize.y) * 0.5f
 		};
 		dl->AddText(textPos, ImGui::GetColorU32(crossRed), kRedCrossUtf8);
-		if (backClicked || UiCommon::IsMouseNavBackClicked())
-			m_showVoidSpace = false;
+
+		const ImVec2 contentMin = { rMax.x + 12.f, ImGui::GetWindowPos().y + kPagePad };
+		const ImVec2 contentMax = {
+			ImGui::GetWindowPos().x + width - kPagePad,
+			ImGui::GetWindowPos().y + height - kPagePad
+		};
+		m_snakeGame.Update(ImGui::GetIO().DeltaTime);
+		const bool exitRequested = m_snakeGame.Draw(
+			contentMin,
+			contentMax,
+			colors,
+			theme.GetAccents());
+		if (backClicked || exitRequested || UiCommon::IsMouseNavBackClicked())
+			m_showSnakeGame = false;
 
 		ImGui::EndChild();
 		ImGui::PopStyleColor();
@@ -392,7 +452,7 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		return;
 	}
 
-	bool openVoidSpace = false;
+	bool openSnakeFromSidebar = false;
 	const float sidebarWidth = m_sidebar.Draw(
 		m_activeTab,
 		theme,
@@ -400,9 +460,12 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		height,
 		azVersion,
 		tgVersion,
-		&openVoidSpace);
-	if (openVoidSpace)
-		m_showVoidSpace = true;
+		&openSnakeFromSidebar);
+	if (openSnakeFromSidebar)
+	{
+		m_showSnakeGame = true;
+		m_snakeGame.Reset();
+	}
 
 	ImGui::SameLine(0.f, 0.f);
 
@@ -595,7 +658,19 @@ void UiShell::ProcessProtocolCommands()
 
 void UiShell::ShutdownDiscord()
 {
+	FlushAppRuntime();
 	m_discordPresence.Shutdown();
+}
+
+void UiShell::FlushAppRuntime()
+{
+	if (m_appLaunchAt <= 0)
+		return;
+	const std::int64_t nowSec = static_cast<std::int64_t>(std::time(nullptr));
+	const std::int64_t delta = nowSec > m_runtimeLastFlushAt ? (nowSec - m_runtimeLastFlushAt) : 0;
+	if (delta > 0)
+		m_appSettings.AddAppTotalRuntimeSec(delta);
+	m_runtimeLastFlushAt = nowSec;
 }
 
 TrayMenuState UiShell::GetTrayMenuState()
@@ -763,7 +838,16 @@ namespace UiLayout
 	}
 }
 
-void UiShell::TitleBar::Draw(HWND hwnd, lua_State* L, WindowManager& window, ThemeManager& theme, LuaApi& api, float width)
+void UiShell::TitleBar::Draw(
+	HWND hwnd,
+	lua_State* L,
+	WindowManager& window,
+	ThemeManager& theme,
+	LuaApi& api,
+	float width,
+	int& minimizeBurstClicks,
+	double& minimizeBurstLastClick,
+	bool& openSnakeGame)
 {
 	const UiThemeColors colors = theme.GetColors();
 	std::string title = L ? api.GetTitleBarText(L) : "AntiZapret";
@@ -777,7 +861,14 @@ void UiShell::TitleBar::Draw(HWND hwnd, lua_State* L, WindowManager& window, The
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	const ImVec2 barMin = ImGui::GetWindowPos();
 	DrawBrand(drawList, barMin, kTitleBarHeight, title.c_str(), theme);
-	DrawButtons(hwnd, window, width, kTitleBarHeight);
+	DrawButtons(
+		hwnd,
+		window,
+		width,
+		kTitleBarHeight,
+		minimizeBurstClicks,
+		minimizeBurstLastClick,
+		openSnakeGame);
 	ImGui::EndChild();
 	ImGui::PopStyleColor();
 }
@@ -821,7 +912,14 @@ void UiShell::TitleBar::DrawBrand(ImDrawList* drawList, ImVec2 barMin, float hei
 		version);
 }
 
-void UiShell::TitleBar::DrawButtons(HWND hwnd, WindowManager& window, float width, float height)
+void UiShell::TitleBar::DrawButtons(
+	HWND hwnd,
+	WindowManager& window,
+	float width,
+	float height,
+	int& minimizeBurstClicks,
+	double& minimizeBurstLastClick,
+	bool& openSnakeGame)
 {
 	static bool hoverMinimize = false;
 	static bool hoverMaximize = false;
@@ -834,7 +932,7 @@ void UiShell::TitleBar::DrawButtons(HWND hwnd, WindowManager& window, float widt
 			{ 0.13f, 0.69f, 0.30f, 1.f },
 			{ 0.15f, 0.75f, 0.33f, 1.f },
 			{ 0.11f, 0.60f, 0.26f, 1.f },
-			[](HWND target, WindowManager&) { ShowWindow(target, SW_MINIMIZE); },
+			nullptr,
 		},
 		{
 			"##Maximize",
@@ -859,12 +957,40 @@ void UiShell::TitleBar::DrawButtons(HWND hwnd, WindowManager& window, float widt
 	float x = width - (kButtonSize * 3 + kButtonGap * 2) - 8.f;
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kButtonSize * 0.5f);
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { kButtonGap, 0 });
-	// Color themes enable global FrameBorderSize — traffic lights must stay borderless.
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.f);
 	for (int i = 0; i < 3; ++i)
 	{
-		if (DrawButton(kButtons[i], { x, y }, kButtonSize, *hovers[i]))
+		const bool leftClicked = DrawButton(kButtons[i], { x, y }, kButtonSize, *hovers[i]);
+		const bool rightClicked = *hovers[i] && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+
+		if (i == 0)
+		{
+			// Easter egg: 5× ПКМ (или 5× быстрый ЛКМ) по зелёной кнопке → змейка.
+			const bool eggClick = rightClicked || leftClicked;
+			if (eggClick)
+			{
+				constexpr double kBurstWindowSec = 2.5;
+				const double now = ImGui::GetTime();
+				if (now - minimizeBurstLastClick > kBurstWindowSec)
+					minimizeBurstClicks = 0;
+				++minimizeBurstClicks;
+				minimizeBurstLastClick = now;
+				if (minimizeBurstClicks >= 5)
+				{
+					minimizeBurstClicks = 0;
+					openSnakeGame = true;
+				}
+				else if (leftClicked && !openSnakeGame)
+				{
+					// Обычный ЛКМ — свернуть (если ещё не набрали 5).
+					ShowWindow(hwnd, SW_MINIMIZE);
+				}
+			}
+		}
+		else if (leftClicked && kButtons[i].action)
+		{
 			kButtons[i].action(hwnd, window);
+		}
 		x += kButtonSize + kButtonGap;
 	}
 	ImGui::PopStyleVar(3);

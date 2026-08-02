@@ -30,7 +30,8 @@ enum class ServiceCatalogSection : int
 	ForeignGames,
 	ForeignSteamNew,
 	ForeignAdult,
-	ForeignMisc,
+	ForeignMisc, // torrent clients
+	ForeignStandalone, // end of apps list, no fold group (e.g. Windows)
 	RussianBrowser,
 	RussianEco,
 	RussianBank,
@@ -43,6 +44,14 @@ enum class ServiceCatalogSection : int
 	RussianProperty,
 	RussianWorkHealth,
 	RussianMisc,
+	CustomApps,
+	CustomSites,
+};
+
+enum class ServiceCatalogKind : int
+{
+	Site = 0,
+	App = 1,
 };
 
 struct ServiceCatalogEntry
@@ -65,6 +74,8 @@ struct ServiceRouteEntry
 	std::string description;
 	ServiceCatalogRegion region = ServiceCatalogRegion::Foreign;
 	ServiceCatalogSection section = ServiceCatalogSection::ForeignSocial;
+	ServiceCatalogKind kind = ServiceCatalogKind::Site;
+	bool custom = false;
 	bool enabled = true;
 	ServiceRouteMode mode = ServiceRouteMode::None;
 };
@@ -73,9 +84,16 @@ namespace VpnServiceRoutes
 {
 	const char* ModeLabel(ServiceRouteMode mode);
 	const char* SectionLabel(ServiceCatalogSection section);
+	uint32_t SectionIcon(ServiceCatalogSection section);
+	ServiceCatalogKind InferKind(const ServiceCatalogEntry& item);
+	ServiceCatalogKind InferKind(const ServiceRouteEntry& entry);
 	std::string GeositeNameForService(const std::string& serviceId);
 	void CollectRequiredGeosites(const std::vector<ServiceRouteEntry>& routes, std::vector<std::string>& outNames);
 	void CollectFallbackDomains(const std::string& serviceId, std::vector<std::string>& outDomains);
+	void CollectRouteTargets(
+		const ServiceRouteEntry& service,
+		std::vector<std::string>& outDomains,
+		std::vector<std::string>& outProcesses);
 	bool HasFallbackDomains(const std::string& serviceId);
 	bool PreferFallbackOnly(const std::string& serviceId);
 	bool IsAdultSection(ServiceCatalogSection section);
@@ -84,6 +102,10 @@ namespace VpnServiceRoutes
 	void BuildDefaultRoutes(std::vector<ServiceRouteEntry>& outRoutes);
 	bool Load(std::vector<ServiceRouteEntry>& outRoutes);
 	void Save(const std::vector<ServiceRouteEntry>& routes);
+	ServiceRouteEntry MakeCustomEntry(
+		ServiceCatalogKind kind,
+		const std::string& name,
+		const std::string& targets);
 
 	// Keep Discord catalogue row aligned with VPN "Fix Discord" checkbox.
 	bool IsFixDiscordEffective(const ServiceRouteEntry& entry);

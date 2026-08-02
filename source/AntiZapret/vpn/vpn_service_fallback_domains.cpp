@@ -14,6 +14,8 @@ namespace
 	static const char* const k##var[] = { __VA_ARGS__ }
 
 	AZ_DOMAINS(Domains2ip, "2ip.ru", "www.2ip.ru", "api.2ip.ru");
+	AZ_DOMAINS(DomainsWhoer, "whoer.net", "www.whoer.net");
+	AZ_DOMAINS(DomainsIpleak, "ipleak.net", "www.ipleak.net");
 	AZ_DOMAINS(DomainsYoutube,
 		"youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "ggpht.com",
 		"youtube-nocookie.com", "youtubei.googleapis.com", "yt3.ggpht.com");
@@ -238,6 +240,18 @@ namespace
 
 	AZ_DOMAINS(DomainsTorrents, "rutracker.org", "rutracker.net", "thepiratebay.org");
 	AZ_DOMAINS(DomainsWindows, "windowsupdate.com", "update.microsoft.com", "microsoft.com", "windows.com");
+	AZ_DOMAINS(DomainsVivaldi, "vivaldi.com", "vivaldi.net");
+	AZ_DOMAINS(DomainsTorBrowser, "torproject.org");
+	AZ_DOMAINS(DomainsForza, "forza.com", "forzamotorsport.net", "xbox.com", "xboxlive.com");
+	AZ_DOMAINS(DomainsWotHeat, "wargaming.net", "worldoftanks.com", "wgcdn.co");
+	AZ_DOMAINS(DomainsWarframe, "warframe.com", "warframe.market");
+	AZ_DOMAINS(DomainsR6, "ubisoft.com", "ubi.com", "rainbow6.ubisoft.com");
+	AZ_DOMAINS(DomainsSeaOfThieves, "seaofthieves.com", "xbox.com", "xboxlive.com");
+	AZ_DOMAINS(DomainsValheim, "valheimgame.com", "steampowered.com");
+	AZ_DOMAINS(DomainsDeepRock, "deeprockgalactic.com", "steampowered.com");
+	AZ_DOMAINS(DomainsDayz, "dayz.com", "bohemia.net");
+	AZ_DOMAINS(DomainsWarships, "worldofwarships.com", "wargaming.net");
+	AZ_DOMAINS(DomainsWuthering, "kurogame.com", "wutheringwaves.kurogame.com");
 	AZ_DOMAINS(DomainsYandexBrowser,
 		"yandex.ru", "yandex.com", "yandex.net", "ya.ru", "yastatic.net", "yandex.st",
 		"browser.yandex.ru", "api.browser.yandex.net", "sync.browser.yandex.net",
@@ -292,6 +306,9 @@ namespace
 	AZ_DOMAINS(DomainsStart, "start.ru", "start.video");
 	AZ_DOMAINS(DomainsPremier, "premier.one", "api.premier.one");
 	AZ_DOMAINS(DomainsZvuk, "zvuk.com", "sberaudio.ru");
+	AZ_DOMAINS(DomainsYandexMusic,
+		"music.yandex.ru", "music.yandex.com", "music.yandex.net",
+		"yandexmusic.net", "strm.yandex.ru", "yastatic.net");
 	AZ_DOMAINS(DomainsGis2, "2gis.ru", "2gis.com", "2gis.biz");
 	AZ_DOMAINS(DomainsRzd, "rzd.ru", "ticket.rzd.ru", "pass.rzd.ru");
 	AZ_DOMAINS(DomainsAeroflot, "aeroflot.ru", "booking.aeroflot.ru");
@@ -310,7 +327,6 @@ namespace
 	AZ_DOMAINS(DomainsApteka, "apteka.ru", "eapteka.ru");
 	AZ_DOMAINS(DomainsKaspersky, "kaspersky.ru", "kaspersky.com");
 	AZ_DOMAINS(DomainsDrweb, "drweb.ru", "drweb.com");
-	AZ_DOMAINS(DomainsRustore, "rustore.ru");
 
 #undef AZ_DOMAINS
 
@@ -324,6 +340,8 @@ namespace
 	{
 		static const std::unordered_map<std::string, DomainEntry> map = {
 			{ "2ip", MakeEntry(kDomains2ip) },
+			{ "whoer", MakeEntry(kDomainsWhoer) },
+			{ "ipleak", MakeEntry(kDomainsIpleak) },
 			{ "youtube", MakeEntry(kDomainsYoutube) },
 			{ "discord", MakeEntry(kDomainsDiscord) },
 			{ "telegram", MakeEntry(kDomainsTelegram) },
@@ -503,7 +521,39 @@ namespace
 			{ "difficult", MakeEntry(kDomainsDifficult) },
 			{ "warena", MakeEntry(kDomainsWarena) },
 			{ "torrents", MakeEntry(kDomainsTorrents) },
+			{ "qbittorrent", MakeEntry(kDomainsTorrents) },
+			{ "utorrent", MakeEntry(kDomainsTorrents) },
+			{ "bittorrent", MakeEntry(kDomainsTorrents) },
+			{ "transmission", MakeEntry(kDomainsTorrents) },
+			{ "deluge", MakeEntry(kDomainsTorrents) },
+			{ "tixati", MakeEntry(kDomainsTorrents) },
+			{ "biglybt", MakeEntry(kDomainsTorrents) },
+			{ "vuze", MakeEntry(kDomainsTorrents) },
+			{ "picotorrent", MakeEntry(kDomainsTorrents) },
+			{ "frostwire", MakeEntry(kDomainsTorrents) },
+			{ "motrix", MakeEntry(kDomainsTorrents) },
+			{ "fdm", MakeEntry(kDomainsTorrents) },
+			{ "aria2", MakeEntry(kDomainsTorrents) },
+			{ "bitcomet", MakeEntry(kDomainsTorrents) },
+			{ "bitlord", MakeEntry(kDomainsTorrents) },
+			{ "halite", MakeEntry(kDomainsTorrents) },
+			{ "tribler", MakeEntry(kDomainsTorrents) },
 			{ "windows", MakeEntry(kDomainsWindows) },
+			{ "vivaldi", MakeEntry(kDomainsVivaldi) },
+			{ "tor_browser", MakeEntry(kDomainsTorBrowser) },
+			{ "mullvad_browser", MakeEntry(kDomainsTorBrowser) },
+			{ "forza_horizon5", MakeEntry(kDomainsForza) },
+			{ "forza_horizon6", MakeEntry(kDomainsForza) },
+			{ "forza_motorsport", MakeEntry(kDomainsForza) },
+			{ "wot_heat", MakeEntry(kDomainsWotHeat) },
+			{ "warships", MakeEntry(kDomainsWarships) },
+			{ "warframe", MakeEntry(kDomainsWarframe) },
+			{ "r6siege", MakeEntry(kDomainsR6) },
+			{ "sea_of_thieves", MakeEntry(kDomainsSeaOfThieves) },
+			{ "valheim", MakeEntry(kDomainsValheim) },
+			{ "deep_rock", MakeEntry(kDomainsDeepRock) },
+			{ "dayz", MakeEntry(kDomainsDayz) },
+			{ "wuthering_waves", MakeEntry(kDomainsWuthering) },
 			{ "yandex_browser", MakeEntry(kDomainsYandexBrowser) },
 			{ "atom_browser", MakeEntry(kDomainsAtomBrowser) },
 			{ "yandex", MakeEntry(kDomainsYandex) },
@@ -553,6 +603,8 @@ namespace
 			{ "start", MakeEntry(kDomainsStart) },
 			{ "premier", MakeEntry(kDomainsPremier) },
 			{ "zvuk", MakeEntry(kDomainsZvuk) },
+			{ "yandex_music", MakeEntry(kDomainsYandexMusic) },
+			{ "yandex_music_store", MakeEntry(kDomainsYandexMusic) },
 			{ "gis2", MakeEntry(kDomainsGis2) },
 			{ "rzd", MakeEntry(kDomainsRzd) },
 			{ "aeroflot", MakeEntry(kDomainsAeroflot) },
@@ -571,7 +623,6 @@ namespace
 			{ "apteka", MakeEntry(kDomainsApteka) },
 			{ "kaspersky", MakeEntry(kDomainsKaspersky) },
 			{ "drweb", MakeEntry(kDomainsDrweb) },
-			{ "rustore", MakeEntry(kDomainsRustore) },
 		};
 		return map;
 	}

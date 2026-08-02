@@ -13,6 +13,7 @@
 #include "ui/ui_settings_page.h"
 #include "ui/ui_console_page.h"
 #include "ui/ui_sidebar.h"
+#include "ui/ui_snake_game.h"
 #include "ui/ui_tgfix_page.h"
 #include "ui/ui_vpn_page.h"
 #include "app/app_settings.h"
@@ -56,7 +57,16 @@ private:
 	class TitleBar
 	{
 	public:
-		void Draw(HWND hwnd, lua_State* L, WindowManager& window, ThemeManager& theme, LuaApi& api, float width);
+		void Draw(
+			HWND hwnd,
+			lua_State* L,
+			WindowManager& window,
+			ThemeManager& theme,
+			LuaApi& api,
+			float width,
+			int& minimizeBurstClicks,
+			double& minimizeBurstLastClick,
+			bool& openSnakeGame);
 
 	private:
 		struct TrafficLightButton
@@ -70,15 +80,24 @@ private:
 		};
 
 		void DrawBrand(ImDrawList* drawList, ImVec2 barMin, float height, const char* title, const ThemeManager& theme) const;
-		void DrawButtons(HWND hwnd, WindowManager& window, float width, float height);
+		void DrawButtons(
+			HWND hwnd,
+			WindowManager& window,
+			float width,
+			float height,
+			int& minimizeBurstClicks,
+			double& minimizeBurstLastClick,
+			bool& openSnakeGame);
 		bool DrawButton(const TrafficLightButton& button, ImVec2 position, float size, bool& hovered) const;
 		void DrawGlow(ImDrawList* drawList, ImVec2 center, ImU32 color, float radius) const;
 	};
 
 	void DrawMainLayout(ThemeManager& theme, FontManager& fonts, float width, float height);
 	void ProcessProtocolCommands();
+	void FlushAppRuntime();
 
 	UiSidebar m_sidebar;
+	UiSnakeGame m_snakeGame;
 	UiPageHost m_pageHost;
 	UiHomePage m_homePage;
 	UiAntiZapretPage m_antiZapretPage;
@@ -90,7 +109,12 @@ private:
 	UiAboutPage m_aboutPage;
 	UiTab m_activeTab = UiTab::Home;
 	UiTab m_previousTab = UiTab::Home;
-	bool m_showVoidSpace = false;
+	bool m_showSnakeGame = false;
+	int m_minimizeBurstClicks = 0;
+	double m_minimizeBurstLastClick = 0.0;
+	std::int64_t m_appLaunchAt = 0;
+	std::int64_t m_runtimeLastFlushAt = 0;
+	float m_runtimeFlushAge = 0.f;
 	ZapretManager m_zapretManager;
 	TgWsProxyManager m_tgWsProxyManager;
 	VpnManager m_vpnManager;

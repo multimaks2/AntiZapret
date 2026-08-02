@@ -93,18 +93,17 @@ float UiSidebar::Draw(
 	float height,
 	const UiSidebarVersionInfo& antiZapretVersion,
 	const UiSidebarVersionInfo& tgWsProxyVersion,
-	bool* outOpenVoidSpace)
+	bool* outOpenSnakeGame)
 {
-	if (outOpenVoidSpace)
-		*outOpenVoidSpace = false;
+	if (outOpenSnakeGame)
+		*outOpenSnakeGame = false;
 
-	// Any non-RMB mouse button clears the void easter-egg counter.
 	for (int button = 0; button < ImGuiMouseButton_COUNT; ++button)
 	{
 		if (button == ImGuiMouseButton_Right)
 			continue;
 		if (ImGui::IsMouseClicked(button))
-			m_voidRmbClicks = 0;
+			m_eggRmbClicks = 0;
 	}
 
 	m_page = activeTab;
@@ -163,12 +162,12 @@ float UiSidebar::Draw(
 
 	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
 	{
-		++m_voidRmbClicks;
-		if (m_voidRmbClicks >= kVoidRmbClicksRequired)
+		++m_eggRmbClicks;
+		if (m_eggRmbClicks >= kEggRmbClicksRequired)
 		{
-			m_voidRmbClicks = 0;
-			if (outOpenVoidSpace)
-				*outOpenVoidSpace = true;
+			m_eggRmbClicks = 0;
+			if (outOpenSnakeGame)
+				*outOpenSnakeGame = true;
 		}
 	}
 
@@ -205,28 +204,20 @@ float UiSidebar::Draw(
 
 	const ImVec2 stripMin = { stripAnchor.x + kRightStripOffsetX, stripAnchor.y };
 	const ImVec2 stripMax = { stripMin.x + kRightStripWidth, stripAnchor.y + height };
-	// Foreground so the strip sits above MainArea; when a *modal* is open, also paint
-	// ModalWindowDimBg on top so the strip matches the dimmed workspace (otherwise it
-	// stays bright and "cuts" through the overlay). Context menus / combo popups must
-	// not dim — they are not modals.
-	ImDrawList* overlayDrawList = ImGui::GetForegroundDrawList();
-	overlayDrawList->PushClipRect(sidebarMin, stripMax, true);
-	overlayDrawList->AddRectFilled(
-		stripMin,
-		stripMax,
-		ToU32(colors.bg),
-		kRightStripRadius,
-		ImDrawFlags_RoundCornersLeft);
-	if (ImGui::GetTopMostPopupModal() != nullptr)
+	// Foreground strip sits above MainArea. Skip while a modal is open — otherwise the
+	// rounded strip paints over the modal (dim alone is not enough).
+	if (ImGui::GetTopMostPopupModal() == nullptr)
 	{
+		ImDrawList* overlayDrawList = ImGui::GetForegroundDrawList();
+		overlayDrawList->PushClipRect(sidebarMin, stripMax, true);
 		overlayDrawList->AddRectFilled(
 			stripMin,
 			stripMax,
-			ImGui::GetColorU32(ImGuiCol_ModalWindowDimBg),
+			ToU32(colors.bg),
 			kRightStripRadius,
 			ImDrawFlags_RoundCornersLeft);
+		overlayDrawList->PopClipRect();
 	}
-	overlayDrawList->PopClipRect();
 
 	activeTab = m_page;
 	return m_width + stripLayoutW;

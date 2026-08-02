@@ -30,7 +30,7 @@ public:
 		float height,
 		const UiSidebarVersionInfo& antiZapretVersion = {},
 		const UiSidebarVersionInfo& tgWsProxyVersion = {},
-		bool* outOpenVoidSpace = nullptr);
+		bool* outOpenSnakeGame = nullptr);
 	float Width() const { return m_width; }
 
 private:
@@ -95,7 +95,7 @@ private:
 	float m_pageElapsed = 0.f;
 	bool m_pageAnimActive = false;
 
-	// Easter egg: 5 RMB on collapse toggle → empty space.
-	int m_voidRmbClicks = 0;
-	static constexpr int kVoidRmbClicksRequired = 5;
+	// Easter egg: 5 RMB on collapse toggle → snake.
+	int m_eggRmbClicks = 0;
+	static constexpr int kEggRmbClicksRequired = 5;
 };

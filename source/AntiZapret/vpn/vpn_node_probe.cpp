@@ -278,10 +278,8 @@ namespace
 			snprintf(url, sizeof url, "https://dns.google/resolve?name=%s&type=A", host.c_str());
 			CollectIpv4FromDnsJson(HttpGetUtf8(url, nullptr, 4000), ips);
 		}
-		if (!ips.empty())
-			return JoinIps(ips);
 
-		// Cloudflare DoH JSON fallback.
+		// Cloudflare DoH JSON — merge, DNS anycast often returns different subsets.
 		{
 			char url[512];
 			snprintf(url, sizeof url, "https://cloudflare-dns.com/dns-query?name=%s&type=A", host.c_str());
@@ -316,6 +314,24 @@ namespace
 		freeaddrinfo(result);
 		return JoinIps(ips);
 	}
+
+	void SplitJoinedIps(const std::string& joined, std::vector<std::string>& out)
+	{
+		size_t start = 0;
+		while (start < joined.size())
+		{
+			size_t end = joined.find(',', start);
+			if (end == std::string::npos)
+				end = joined.size();
+			std::string part = joined.substr(start, end - start);
+			while (!part.empty() && (part.front() == ' ' || part.front() == '\t'))
+				part.erase(part.begin());
+			while (!part.empty() && (part.back() == ' ' || part.back() == '\t'))
+				part.pop_back();
+			AppendUniqueIpv4(out, part);
+			start = end + 1;
+		}
+	}
 }
 
 std::string VpnNodeProbe::ResolveHostIpv4(const std::string& host)
@@ -323,12 +339,12 @@ std::string VpnNodeProbe::ResolveHostIpv4(const std::string& host)
 	if (host.empty())
 		return {};
 
-	// System getaddrinfo often returns Clash fake-ip (198.18.x.x) while VPN runs.
-	// DoH over HTTPS bypasses DNS hijack and returns real A records.
-	std::string resolved = ResolveViaDoh(host);
-	if (!resolved.empty())
-		return resolved;
-	return ResolveViaGetAddrInfo(host);
+	// Merge DoH + system resolver: anycast DNS often returns different A subsets,
+	// and getaddrinfo may see records DoH missed (and vice versa).
+	std::vector<std::string> ips;
+	SplitJoinedIps(ResolveViaDoh(host), ips);
+	SplitJoinedIps(ResolveViaGetAddrInfo(host), ips);
+	return JoinIps(ips);
 }
 
 namespace

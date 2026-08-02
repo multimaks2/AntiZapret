@@ -56,6 +56,19 @@ private:
 	char m_serviceSearch[128] = {};
 	bool m_gamesExpanded = false;
 	std::unordered_map<int, bool> m_sectionExpanded;
+	char m_customAppName[96] = {};
+	char m_customAppTargets[192] = {};
+	char m_customSiteName[96] = {};
+	char m_customSiteTargets[192] = {};
+	bool m_openProcessPicker = false;
+	char m_processPickerFilter[128] = {};
+	std::vector<std::string> m_processPickerList;
+	float m_processPickerScrollY = 0.f;
+	float m_processPickerScrollDisplay = 0.f;
+	float m_processPickerScrollVel = 0.f;
+	bool m_showDuplicateWarning = false;
+	std::string m_duplicateWarningAttempt;
+	std::string m_duplicateWarningExisting;
 
 	void EnsureLoaded();
 	void EnsureServiceRoutesLoaded();
@@ -64,7 +77,25 @@ private:
 	void EnsureDomainRulesLoaded();
 	bool MatchesServiceSearch(const ServiceRouteEntry& service) const;
 	bool MatchesTextSearch(const char* text) const;
-	void DrawServiceRoutes(FontManager& fonts, float width, const UiThemeColors& colors);
+	void RefreshProcessPickerList();
+	bool IsProcessAlreadyCovered(const std::string& exeName) const;
+	const ServiceRouteEntry* FindCoveringApp(const std::string& exeOrName) const;
+	const ServiceRouteEntry* FindCoveringSite(const std::string& domainOrName) const;
+	bool TryAddCustomEntry(ServiceCatalogKind kind, const std::string& name, const std::string& targets);
+	void ShowDuplicateWarning(const std::string& attempted, const std::string& existing);
+	void AddCustomAppFromProcess(const std::string& exeName);
+	void DrawProcessPickerModal(
+		FontManager& fonts,
+		const UiThemeColors& colors,
+		const UiAccentColors& accents);
+	void DrawDuplicateWarningModal(
+		const UiThemeColors& colors,
+		const UiAccentColors& accents);
+	void DrawServiceRoutes(
+		FontManager& fonts,
+		float width,
+		const UiThemeColors& colors,
+		const UiAccentColors& accents);
 	void DrawAdvancedRules(
 		FontManager& fonts,
 		float width,

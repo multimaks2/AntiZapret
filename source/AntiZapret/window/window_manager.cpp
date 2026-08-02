@@ -221,7 +221,8 @@ bool WindowManager::Create(float dpiScale, int minWidth, int minHeight)
 		WS_EX_APPWINDOW,
 		kWindowClassName,
 		L"AntiZapret",
-		WS_POPUP | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
+		// THICKFRAME + min/max/sysmenu: taskbar toggle + snap. NCCALCSIZE keeps full client area.
+		WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
 		100, 100,
 		int(800 * dpiScale),
 		int(600 * dpiScale),
@@ -235,6 +236,19 @@ bool WindowManager::Create(float dpiScale, int minWidth, int minHeight)
 
 	const BOOL dark = TRUE;
 	DwmSetWindowAttribute(m_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+	// Win11: hide system border so focus activate/deactivate does not flash a white frame.
+#ifndef DWMWA_BORDER_COLOR
+	constexpr DWORD kDwmwaBorderColor = 34;
+#else
+	constexpr DWORD kDwmwaBorderColor = DWMWA_BORDER_COLOR;
+#endif
+#ifndef DWMWA_COLOR_NONE
+	constexpr COLORREF kDwmColorNone = 0xFFFFFFFE;
+#else
+	constexpr COLORREF kDwmColorNone = DWMWA_COLOR_NONE;
+#endif
+	COLORREF borderColor = kDwmColorNone;
+	DwmSetWindowAttribute(m_hwnd, kDwmwaBorderColor, &borderColor, sizeof(borderColor));
 	AddTrayIcon();
 	return true;
 }
@@ -744,6 +758,12 @@ LRESULT WindowManager::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 		else
 			m_lastDeactivateTick = 0;
 		return 0;
+	case WM_NCACTIVATE:
+		// Custom frame + WS_THICKFRAME: DefWindowProc otherwise paints a brief white NC border on focus.
+		return DefWindowProcW(hwnd, msg, wParam, -1);
+	case 0x00AE: // WM_NCUAHDRAWCAPTION (undocumented)
+	case 0x00AF: // WM_NCUAHDRAWFRAME (undocumented)
+		return 0;
 	case WM_GETMINMAXINFO:
 	{
 		auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
@@ -856,6 +876,11 @@ LRESULT WindowManager::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 		RemoveTrayIcon();
 		PostQuitMessage(0);
 		return 0;
+	case WM_NCCALCSIZE:
+		// Custom chrome: entire window is client area (no system title/border).
+		if (wParam)
+			return 0;
+		break;
 	case WM_NCHITTEST:
 		return HitTest(hwnd, lParam);
 	}
@@ -1006,7 +1031,7 @@ void WindowManager::KeepDragCapture() const
 
 LRESULT WindowManager::HitTest(HWND hwnd, LPARAM lParam) const
 {
-	if (m_animation.IsActive())
+	if (m_animation.IsActive() || m_maximized)
 		return HTCLIENT;
 
 	POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -1017,22 +1042,22 @@ LRESULT WindowManager::HitTest(HWND hwnd, LPARAM lParam) const
 	const int y = pt.y;
 	const int right = clientRect.right;
 	const int bottom = clientRect.bottom;
+	// Slightly thicker grab zone — easier to catch on high-DPI.
+	const int border = kBorder + 3;
 
-	if (y < kBorder)
+	if (y < border)
 	{
-		if (m_maximized)
-			return HTCLIENT;
-		if (x < kBorder)
+		if (x < border)
 			return HTTOPLEFT;
-		if (x > right - kBorder)
+		if (x > right - border)
 			return HTTOPRIGHT;
 		return HTTOP;
 	}
-	if (y > bottom - kBorder)
-		return x < kBorder ? HTBOTTOMLEFT : (x > right - kBorder ? HTBOTTOMRIGHT : HTBOTTOM);
-	if (x < kBorder)
+	if (y > bottom - border)
+		return x < border ? HTBOTTOMLEFT : (x > right - border ? HTBOTTOMRIGHT : HTBOTTOM);
+	if (x < border)
 		return HTLEFT;
-	if (x > right - kBorder)
+	if (x > right - border)
 		return HTRIGHT;
 	return HTCLIENT;
 }

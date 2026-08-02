@@ -217,6 +217,70 @@ namespace
 			out.push_back(value);
 	}
 
+	std::wstring ReadEnvironmentPathValue(HKEY root, const wchar_t* subKey)
+	{
+		HKEY key = nullptr;
+		if (RegOpenKeyExW(root, subKey, 0, KEY_READ, &key) != ERROR_SUCCESS)
+			return {};
+
+		DWORD type = 0;
+		DWORD bytes = 0;
+		if (RegQueryValueExW(key, L"Path", nullptr, &type, nullptr, &bytes) != ERROR_SUCCESS
+			|| bytes == 0
+			|| (type != REG_SZ && type != REG_EXPAND_SZ))
+		{
+			RegCloseKey(key);
+			return {};
+		}
+
+		std::wstring raw(bytes / sizeof(wchar_t), L'\0');
+		DWORD readBytes = bytes;
+		const LONG ok = RegQueryValueExW(
+			key,
+			L"Path",
+			nullptr,
+			&type,
+			reinterpret_cast<BYTE*>(raw.data()),
+			&readBytes);
+		RegCloseKey(key);
+		if (ok != ERROR_SUCCESS)
+			return {};
+
+		while (!raw.empty() && raw.back() == L'\0')
+			raw.pop_back();
+
+		if (type == REG_EXPAND_SZ)
+		{
+			const DWORD needed = ExpandEnvironmentStringsW(raw.c_str(), nullptr, 0);
+			if (needed > 1)
+			{
+				std::wstring expanded(needed, L'\0');
+				ExpandEnvironmentStringsW(raw.c_str(), expanded.data(), needed);
+				while (!expanded.empty() && expanded.back() == L'\0')
+					expanded.pop_back();
+				return expanded;
+			}
+		}
+		return raw;
+	}
+
+	void RefreshProcessPathFromRegistry()
+	{
+		const std::wstring userPath = ReadEnvironmentPathValue(HKEY_CURRENT_USER, L"Environment");
+		const std::wstring machinePath = ReadEnvironmentPathValue(
+			HKEY_LOCAL_MACHINE,
+			L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment");
+
+		std::wstring combined;
+		if (!userPath.empty() && !machinePath.empty())
+			combined = userPath + L";" + machinePath;
+		else
+			combined = !userPath.empty() ? userPath : machinePath;
+
+		if (!combined.empty())
+			SetEnvironmentVariableW(L"PATH", combined.c_str());
+	}
+
 	void ScanPythonDirectory(const fs::path& dir, std::vector<std::string>& out, bool scanChildren)
 	{
 		std::error_code ec;
@@ -237,11 +301,23 @@ namespace
 				continue;
 			AppendPythonExeCandidate(entry.path() / "python.exe", out);
 			AppendPythonExeCandidate(entry.path() / "python3.exe", out);
+			// pythoncore-3.x-64\python.exe (one more nesting level used by Install Manager).
+			for (const fs::directory_entry& nested : fs::directory_iterator(entry.path(), ec))
+			{
+				if (ec || !nested.is_directory(ec))
+					continue;
+				AppendPythonExeCandidate(nested.path() / "python.exe", out);
+				AppendPythonExeCandidate(nested.path() / "python3.exe", out);
+			}
 		}
 	}
 
 	std::vector<std::string> CollectPythonLaunchers()
 	{
+		// Newly installed Python updates HKCU Path — inherit the live registry, not the
+		// stale PATH AntiZapret got at process start (otherwise Store install needs restart).
+		RefreshProcessPathFromRegistry();
+
 		std::vector<std::string> launchers;
 
 		wchar_t localAppData[MAX_PATH] = {};
@@ -257,7 +333,11 @@ namespace
 		if (GetEnvironmentVariableW(L"ProgramFiles", programFiles, MAX_PATH) != 0)
 			ScanPythonDirectory(fs::path(programFiles) / "Python", launchers, true);
 
-		const char* pathLaunchers[] = { "py -3", "py", "python", "python3" };
+		wchar_t programFilesX86[MAX_PATH] = {};
+		if (GetEnvironmentVariableW(L"ProgramFiles(x86)", programFilesX86, MAX_PATH) != 0)
+			ScanPythonDirectory(fs::path(programFilesX86) / "Python", launchers, true);
+
+		const char* pathLaunchers[] = { "py -3", "py", "python3", "python" };
 		for (const char* launcher : pathLaunchers)
 			launchers.push_back(launcher);
 
@@ -598,10 +678,19 @@ void TgWsProxyManager::TryFlushPendingStart()
 		return;
 	}
 
-	if (env == TgProxyEnvState::MissingFiles || env == TgProxyEnvState::MissingPython)
+	if (env == TgProxyEnvState::MissingFiles)
 	{
 		m_lastError = EnvStateUserMessage(env);
 		SetStatusMessage(m_lastError);
+		return;
+	}
+
+	if (env == TgProxyEnvState::MissingPython)
+	{
+		// Store install may have completed while AntiZapret stayed open — re-probe.
+		m_pythonLauncher.clear();
+		std::thread([this, openTelegram]() { RunSetupAndStart(openTelegram); }).detach();
+		SetStatusMessage("Повторная проверка Python...");
 		return;
 	}
 
@@ -1018,10 +1107,17 @@ bool TgWsProxyManager::Start(bool openTelegram)
 	if (m_envState.load() == TgProxyEnvState::Ready)
 		return LaunchIfReady(openTelegram);
 
-	if (m_envState.load() == TgProxyEnvState::MissingFiles
-		|| m_envState.load() == TgProxyEnvState::MissingPython)
+	if (m_envState.load() == TgProxyEnvState::MissingFiles)
 	{
 		m_lastError = EnvStateUserMessage(m_envState.load());
+		return false;
+	}
+
+	if (m_envState.load() == TgProxyEnvState::MissingPython)
+	{
+		m_pythonLauncher.clear();
+		std::thread([this, openTelegram]() { RunSetupAndStart(openTelegram); }).detach();
+		SetStatusMessage("Повторная проверка Python...");
 		return false;
 	}
 
@@ -1192,9 +1288,12 @@ void TgWsProxyManager::HandlePrimaryAction(bool openTelegramAfterStart)
 	const TgProxyEnvState state = m_envState.load();
 	if (state == TgProxyEnvState::MissingPython)
 	{
-		std::string message;
-		OpenPythonInstaller(message);
-		SetStatusMessage(message);
+		// Do not only open Store again — re-detect Python first (PATH refresh + folder scan).
+		if (m_setupRunning.load() || m_envProbeRunning.load())
+			return;
+		m_pythonLauncher.clear();
+		SetStatusMessage("Повторная проверка Python...");
+		std::thread([this, openTelegramAfterStart]() { RunSetupAndStart(openTelegramAfterStart); }).detach();
 		return;
 	}
 
@@ -1224,7 +1323,7 @@ const char* TgWsProxyManager::GetPrimaryActionLabel() const
 	switch (m_envState.load())
 	{
 	case TgProxyEnvState::MissingPython:
-		return "Установить Python";
+		return "Установить / проверить Python";
 	case TgProxyEnvState::MissingDependencies:
 		return "Установить зависимости";
 	case TgProxyEnvState::MissingFiles:

@@ -7,6 +7,7 @@
 #include <wincrypt.h>
 
 #include <cctype>
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
@@ -84,6 +85,8 @@ void AppSettings::Load()
 	m_autostartVpn = false;
 	m_confirmAdult = false;
 	m_discordPresenceEnabled = true;
+	m_discordShowTotalUptime = false;
+	m_appTotalRuntimeSec = 0;
 	m_discordDownloadButtonEnabled = true;
 	m_discordDownloadUrl =
 		"https://github.com/multimaks2/AntiZapret/releases/latest/download/AntiZapret-Installer.exe";
@@ -92,6 +95,8 @@ void AppSettings::Load()
 	m_discordImportTimedEnabled = true;
 	m_discordImportDurationMinutes = 5;
 	m_discordImportExpiresAt = 0;
+	m_discordImportAzExpiresAt = 0;
+	m_discordImportVpnExpiresAt = 0;
 	m_autoSelectBestStrategy = false;
 	m_showExtraStrategies = false;
 	m_quickStrategyTest = false;
@@ -167,6 +172,14 @@ void AppSettings::Load()
 				m_confirmAdult = ParseBool(value);
 			else if (key == "discord_presence")
 				m_discordPresenceEnabled = ParseBool(value);
+			else if (key == "discord_total_uptime")
+				m_discordShowTotalUptime = ParseBool(value);
+			else if (key == "app_total_runtime_sec")
+			{
+				const std::int64_t sec = static_cast<std::int64_t>(std::atoll(value.c_str()));
+				if (sec >= 0)
+					m_appTotalRuntimeSec = sec;
+			}
 			else if (key == "discord_share_button")
 			{
 				// Legacy: old single "Import" toggle → AntiZapret import.
@@ -190,16 +203,23 @@ void AppSettings::Load()
 			}
 			else if (key == "discord_import_expires_at")
 				m_discordImportExpiresAt = static_cast<std::int64_t>(std::atoll(value.c_str()));
+			else if (key == "discord_import_az_expires_at")
+				m_discordImportAzExpiresAt = static_cast<std::int64_t>(std::atoll(value.c_str()));
+			else if (key == "discord_import_vpn_expires_at")
+				m_discordImportVpnExpiresAt = static_cast<std::int64_t>(std::atoll(value.c_str()));
 			else if (key == "network_speed_bits")
 				m_networkSpeedBits = ParseBool(value);
 			else if (key == "font_scale")
 				m_fontScale = ClampFontScale(ParseFloat(value, kDefaultFontScale));
+			else if (key == "custom_hwid" && !value.empty())
+				m_customHwid = value;
 			continue;
 		}
 
 		if (currentSection == "vpn")
 		{
-			if (key == "custom_hwid")
+			// Legacy location (pre-1.3.10) — only if [ui] did not already provide one.
+			if (key == "custom_hwid" && m_customHwid.empty() && !value.empty())
 				m_customHwid = value;
 			continue;
 		}
@@ -229,6 +249,14 @@ void AppSettings::Load()
 		else if (key == "open_telegram_on_start")
 			m_openTelegramOnProxyStart = ParseBool(value);
 	}
+
+	// Migrate legacy single expires_at into neither (require fresh tab activation).
+	if (m_discordImportExpiresAt > 0
+		&& m_discordImportAzExpiresAt == 0
+		&& m_discordImportVpnExpiresAt == 0)
+	{
+		m_discordImportExpiresAt = 0;
+	}
 }
 
 void AppSettings::Save()
@@ -254,15 +282,21 @@ void AppSettings::Save()
 	ui["autostart_vpn"] = m_autostartVpn ? "1" : "0";
 	ui["confirm_adult"] = m_confirmAdult ? "1" : "0";
 	ui["discord_presence"] = m_discordPresenceEnabled ? "1" : "0";
+	ui["discord_total_uptime"] = m_discordShowTotalUptime ? "1" : "0";
+	ui["app_total_runtime_sec"] = std::to_string(static_cast<long long>(m_appTotalRuntimeSec));
 	ui["discord_download_button"] = m_discordDownloadButtonEnabled ? "1" : "0";
 	ui["discord_download_url"] = m_discordDownloadUrl;
 	ui["discord_import_az"] = m_discordImportAntiZapretEnabled ? "1" : "0";
 	ui["discord_import_vpn"] = m_discordImportVpnEnabled ? "1" : "0";
 	ui["discord_import_timed"] = m_discordImportTimedEnabled ? "1" : "0";
 	ui["discord_import_minutes"] = std::to_string(m_discordImportDurationMinutes);
-	ui["discord_import_expires_at"] = std::to_string(static_cast<long long>(m_discordImportExpiresAt));
+	ui["discord_import_expires_at"] = "0";
+	ui["discord_import_az_expires_at"] = std::to_string(static_cast<long long>(m_discordImportAzExpiresAt));
+	ui["discord_import_vpn_expires_at"] = std::to_string(static_cast<long long>(m_discordImportVpnExpiresAt));
 	ui["network_speed_bits"] = m_networkSpeedBits ? "1" : "0";
 	ui["font_scale"] = std::to_string(m_fontScale);
+	if (!m_customHwid.empty())
+		ui["custom_hwid"] = m_customHwid;
 
 	SettingsDocument::KeyMap scroll;
 	scroll["home"] = std::to_string(m_pageScrollMultipliers[0]);
@@ -279,7 +313,8 @@ void AppSettings::Save()
 	SettingsDocument::Load(doc);
 	// Merge into [vpn] — subscription card meta and other VpnStore keys live here too.
 	SettingsDocument::KeyMap vpn = SettingsDocument::GetSection(doc, "vpn");
-	vpn["custom_hwid"] = m_customHwid;
+	// HWID lives under [ui] now; drop legacy key so VpnStore saves cannot revive a stale value.
+	vpn.erase("custom_hwid");
 	SettingsDocument::SetSection(doc, "tg_proxy", tgProxy);
 	SettingsDocument::SetSection(doc, "antizapret", antizapret);
 	SettingsDocument::SetSection(doc, "ui", ui);
@@ -449,6 +484,22 @@ void AppSettings::SetDiscordPresenceEnabled(bool value)
 	Save();
 }
 
+void AppSettings::SetDiscordShowTotalUptime(bool value)
+{
+	if (m_discordShowTotalUptime == value)
+		return;
+	m_discordShowTotalUptime = value;
+	Save();
+}
+
+void AppSettings::AddAppTotalRuntimeSec(std::int64_t deltaSec)
+{
+	if (deltaSec <= 0)
+		return;
+	m_appTotalRuntimeSec += deltaSec;
+	Save();
+}
+
 void AppSettings::SetDiscordDownloadButtonEnabled(bool value)
 {
 	m_discordDownloadButtonEnabled = value;
@@ -476,56 +527,178 @@ void AppSettings::SetDiscordDownloadUrl(const std::string& value)
 
 void AppSettings::RestartDiscordImportTimer()
 {
+	// Kept for callers that expect a full refresh of armed timers.
+	const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+	const int minutes = m_discordImportDurationMinutes > 0 ? m_discordImportDurationMinutes : 5;
+	const std::int64_t expires =
+		now + static_cast<std::int64_t>(minutes) * 60;
+
+	bool changed = false;
 	if (!m_discordImportTimedEnabled)
 	{
-		m_discordImportExpiresAt = 0;
+		if (m_discordImportAzExpiresAt != 0 || m_discordImportVpnExpiresAt != 0)
+		{
+			m_discordImportAzExpiresAt = 0;
+			m_discordImportVpnExpiresAt = 0;
+			m_discordImportExpiresAt = 0;
+			changed = true;
+		}
+	}
+	else
+	{
+		if (m_discordImportAzExpiresAt > now)
+		{
+			m_discordImportAzExpiresAt = expires;
+			changed = true;
+		}
+		if (m_discordImportVpnExpiresAt > now)
+		{
+			m_discordImportVpnExpiresAt = expires;
+			changed = true;
+		}
+	}
+
+	if (changed)
+		Save();
+}
+
+void AppSettings::ActivateDiscordImportForTab(bool vpnTab)
+{
+	if (!m_discordImportTimedEnabled)
+		return;
+
+	const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+	const int minutes = m_discordImportDurationMinutes > 0 ? m_discordImportDurationMinutes : 5;
+	const std::int64_t expires = now + static_cast<std::int64_t>(minutes) * 60;
+
+	if (vpnTab)
+	{
+		if (!m_discordImportVpnEnabled)
+			return;
+		if (m_discordImportVpnExpiresAt > now)
+			return; // already counting for VPN
+		m_discordImportVpnExpiresAt = expires;
 		Save();
 		return;
 	}
-	const int minutes = m_discordImportDurationMinutes > 0 ? m_discordImportDurationMinutes : 5;
-	m_discordImportExpiresAt = static_cast<std::int64_t>(std::time(nullptr)) + static_cast<std::int64_t>(minutes) * 60;
+
+	if (!m_discordImportAntiZapretEnabled)
+		return;
+	if (m_discordImportAzExpiresAt > now)
+		return;
+	m_discordImportAzExpiresAt = expires;
 	Save();
 }
 
 void AppSettings::ClearDiscordImportTimer()
 {
-	if (m_discordImportExpiresAt == 0)
+	if (m_discordImportExpiresAt == 0
+		&& m_discordImportAzExpiresAt == 0
+		&& m_discordImportVpnExpiresAt == 0)
 		return;
 	m_discordImportExpiresAt = 0;
+	m_discordImportAzExpiresAt = 0;
+	m_discordImportVpnExpiresAt = 0;
 	Save();
 }
 
 void AppSettings::TickDiscordImportExpiry()
 {
-	if (!m_discordImportTimedEnabled || m_discordImportExpiresAt <= 0)
+	if (!m_discordImportTimedEnabled
+		&& m_discordImportAzExpiresAt == 0
+		&& m_discordImportVpnExpiresAt == 0)
 		return;
-	if (static_cast<std::int64_t>(std::time(nullptr)) < m_discordImportExpiresAt)
-		return;
-	m_discordImportAntiZapretEnabled = false;
-	m_discordImportVpnEnabled = false;
-	m_discordImportExpiresAt = 0;
-	Save();
+
+	const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+	bool changed = false;
+
+	if (m_discordImportAzExpiresAt > 0 && now >= m_discordImportAzExpiresAt)
+	{
+		m_discordImportAzExpiresAt = 0;
+		m_discordImportAntiZapretEnabled = false;
+		changed = true;
+	}
+	if (m_discordImportVpnExpiresAt > 0 && now >= m_discordImportVpnExpiresAt)
+	{
+		m_discordImportVpnExpiresAt = 0;
+		m_discordImportVpnEnabled = false;
+		changed = true;
+	}
+
+	if (m_discordImportTimedEnabled
+		&& !m_discordImportAntiZapretEnabled
+		&& !m_discordImportVpnEnabled
+		&& m_discordImportAzExpiresAt == 0
+		&& m_discordImportVpnExpiresAt == 0)
+	{
+		// Keep master toggle on so user can re-arm subtypes; only auto-off if both
+		// subtypes were cleared by expiry while master stays — actually user asked
+		// timer per tab; master can stay. Don't force master off.
+	}
+
+	if (changed)
+		Save();
+}
+
+namespace
+{
+	int RemainingSecondsFromExpires(std::int64_t expiresAt, bool armed)
+	{
+		if (!armed || expiresAt <= 0)
+			return -1;
+		const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+		if (now >= expiresAt)
+			return 0;
+		return static_cast<int>(expiresAt - now);
+	}
 }
 
 int AppSettings::GetDiscordImportRemainingSeconds() const
 {
-	if (!m_discordImportTimedEnabled || m_discordImportExpiresAt <= 0)
-		return -1;
-	const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
-	if (now >= m_discordImportExpiresAt)
-		return 0;
-	return static_cast<int>(m_discordImportExpiresAt - now);
+	const int az = GetDiscordImportRemainingSecondsAz();
+	const int vpn = GetDiscordImportRemainingSecondsVpn();
+	if (az < 0)
+		return vpn;
+	if (vpn < 0)
+		return az;
+	return (std::max)(az, vpn);
+}
+
+int AppSettings::GetDiscordImportRemainingSecondsAz() const
+{
+	return RemainingSecondsFromExpires(
+		m_discordImportAzExpiresAt,
+		m_discordImportTimedEnabled && m_discordImportAntiZapretEnabled);
+}
+
+int AppSettings::GetDiscordImportRemainingSecondsVpn() const
+{
+	return RemainingSecondsFromExpires(
+		m_discordImportVpnExpiresAt,
+		m_discordImportTimedEnabled && m_discordImportVpnEnabled);
+}
+
+bool AppSettings::IsDiscordImportAntiZapretActive() const
+{
+	if (!m_discordImportTimedEnabled || !m_discordImportAntiZapretEnabled)
+		return false;
+	if (m_discordImportAzExpiresAt <= 0)
+		return false;
+	return static_cast<std::int64_t>(std::time(nullptr)) < m_discordImportAzExpiresAt;
+}
+
+bool AppSettings::IsDiscordImportVpnActive() const
+{
+	if (!m_discordImportTimedEnabled || !m_discordImportVpnEnabled)
+		return false;
+	if (m_discordImportVpnExpiresAt <= 0)
+		return false;
+	return static_cast<std::int64_t>(std::time(nullptr)) < m_discordImportVpnExpiresAt;
 }
 
 bool AppSettings::IsDiscordImportButtonAvailable() const
 {
-	if (!m_discordImportAntiZapretEnabled && !m_discordImportVpnEnabled)
-		return false;
-	if (!m_discordImportTimedEnabled)
-		return true;
-	if (m_discordImportExpiresAt <= 0)
-		return false;
-	return static_cast<std::int64_t>(std::time(nullptr)) < m_discordImportExpiresAt;
+	return IsDiscordImportAntiZapretActive() || IsDiscordImportVpnActive();
 }
 
 void AppSettings::SetDiscordImportAntiZapretEnabled(bool value)
@@ -533,12 +706,9 @@ void AppSettings::SetDiscordImportAntiZapretEnabled(bool value)
 	if (m_discordImportAntiZapretEnabled == value)
 		return;
 	m_discordImportAntiZapretEnabled = value;
-	if (value && m_discordImportTimedEnabled)
-		RestartDiscordImportTimer();
-	else if (!m_discordImportAntiZapretEnabled && !m_discordImportVpnEnabled)
-		ClearDiscordImportTimer();
-	else
-		Save();
+	if (!value)
+		m_discordImportAzExpiresAt = 0;
+	Save();
 }
 
 void AppSettings::SetDiscordImportVpnEnabled(bool value)
@@ -546,12 +716,9 @@ void AppSettings::SetDiscordImportVpnEnabled(bool value)
 	if (m_discordImportVpnEnabled == value)
 		return;
 	m_discordImportVpnEnabled = value;
-	if (value && m_discordImportTimedEnabled)
-		RestartDiscordImportTimer();
-	else if (!m_discordImportAntiZapretEnabled && !m_discordImportVpnEnabled)
-		ClearDiscordImportTimer();
-	else
-		Save();
+	if (!value)
+		m_discordImportVpnExpiresAt = 0;
+	Save();
 }
 
 void AppSettings::SetDiscordImportTimedEnabled(bool value)
@@ -559,15 +726,15 @@ void AppSettings::SetDiscordImportTimedEnabled(bool value)
 	if (m_discordImportTimedEnabled == value)
 		return;
 	m_discordImportTimedEnabled = value;
-	if (value && (m_discordImportAntiZapretEnabled || m_discordImportVpnEnabled))
-		RestartDiscordImportTimer();
-	else if (!value)
+	if (!value)
 	{
+		m_discordImportAntiZapretEnabled = false;
+		m_discordImportVpnEnabled = false;
 		m_discordImportExpiresAt = 0;
-		Save();
+		m_discordImportAzExpiresAt = 0;
+		m_discordImportVpnExpiresAt = 0;
 	}
-	else
-		Save();
+	Save();
 }
 
 void AppSettings::SetDiscordImportDurationMinutes(int minutes)
@@ -579,7 +746,8 @@ void AppSettings::SetDiscordImportDurationMinutes(int minutes)
 	if (m_discordImportDurationMinutes == minutes)
 		return;
 	m_discordImportDurationMinutes = minutes;
-	if (m_discordImportTimedEnabled && (m_discordImportAntiZapretEnabled || m_discordImportVpnEnabled))
+	const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+	if (m_discordImportAzExpiresAt > now || m_discordImportVpnExpiresAt > now)
 		RestartDiscordImportTimer();
 	else
 		Save();

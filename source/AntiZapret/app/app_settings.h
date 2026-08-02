@@ -59,6 +59,13 @@ public:
 	bool GetDiscordPresenceEnabled() const { return m_discordPresenceEnabled; }
 	void SetDiscordPresenceEnabled(bool value);
 
+	// Discord elapsed clock: total across launches vs current session only.
+	bool GetDiscordShowTotalUptime() const { return m_discordShowTotalUptime; }
+	void SetDiscordShowTotalUptime(bool value);
+
+	std::int64_t GetAppTotalRuntimeSec() const { return m_appTotalRuntimeSec; }
+	void AddAppTotalRuntimeSec(std::int64_t deltaSec);
+
 	bool GetDiscordDownloadButtonEnabled() const { return m_discordDownloadButtonEnabled; }
 	void SetDiscordDownloadButtonEnabled(bool value);
 
@@ -78,10 +85,19 @@ public:
 	void SetDiscordImportDurationMinutes(int minutes);
 
 	std::int64_t GetDiscordImportExpiresAt() const { return m_discordImportExpiresAt; }
+	std::int64_t GetDiscordImportAzExpiresAt() const { return m_discordImportAzExpiresAt; }
+	std::int64_t GetDiscordImportVpnExpiresAt() const { return m_discordImportVpnExpiresAt; }
+
+	// Start per-tab countdown when user opens AntiZapret / VPN with that import armed.
+	void ActivateDiscordImportForTab(bool vpnTab);
 	void RestartDiscordImportTimer();
 	void ClearDiscordImportTimer();
 	void TickDiscordImportExpiry();
 	int GetDiscordImportRemainingSeconds() const;
+	int GetDiscordImportRemainingSecondsAz() const;
+	int GetDiscordImportRemainingSecondsVpn() const;
+	bool IsDiscordImportAntiZapretActive() const;
+	bool IsDiscordImportVpnActive() const;
 	bool IsDiscordImportButtonAvailable() const;
 
 	bool GetAutoSelectBestStrategy() const;
@@ -103,6 +119,7 @@ public:
 	void SaveFontScale();
 
 	// Optional override for VPN subscription x-hwid header. Empty = auto (MachineGuid).
+	// Stored under [ui] custom_hwid (legacy [vpn] custom_hwid is still read once).
 	const std::string& GetCustomHwid() const { return m_customHwid; }
 	void SetCustomHwid(const std::string& value);
 
@@ -130,6 +147,8 @@ private:
 	bool m_autostartVpn = false;
 	bool m_confirmAdult = false;
 	bool m_discordPresenceEnabled = true;
+	bool m_discordShowTotalUptime = false;
+	std::int64_t m_appTotalRuntimeSec = 0;
 	bool m_discordDownloadButtonEnabled = true;
 	std::string m_discordDownloadUrl =
 		"https://github.com/multimaks2/AntiZapret/releases/latest/download/AntiZapret-Installer.exe";
@@ -137,7 +156,9 @@ private:
 	bool m_discordImportVpnEnabled = false;
 	bool m_discordImportTimedEnabled = true;
 	int m_discordImportDurationMinutes = 5;
-	std::int64_t m_discordImportExpiresAt = 0;
+	std::int64_t m_discordImportExpiresAt = 0; // legacy single timer (migrated on load)
+	std::int64_t m_discordImportAzExpiresAt = 0;
+	std::int64_t m_discordImportVpnExpiresAt = 0;
 	bool m_autoSelectBestStrategy = false;
 	bool m_showExtraStrategies = false;
 	bool m_quickStrategyTest = false;

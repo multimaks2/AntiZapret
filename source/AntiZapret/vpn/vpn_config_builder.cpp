@@ -591,7 +591,7 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 	yaml << "ipv6: false\n";
 	yaml << "geodata-mode: true\n";
 	yaml << "geo-auto-update: false\n";
-	yaml << "find-process-mode: " << (useTun ? "strict" : "off") << "\n";
+	yaml << "find-process-mode: " << (useTun ? "always" : "off") << "\n";
 	yaml << "\n";
 
 	yaml << "sniffer:\n";
