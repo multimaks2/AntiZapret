@@ -52,11 +52,11 @@
 Последний релиз: **[v1.3.9](https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.9)** 🎉
 
 **Рекомендуется:** скачать и запустить установщик  
-➡️ **[AntiZapret-Installer.exe](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.6/AntiZapret-Installer.exe)**  
+➡️ **[AntiZapret-Installer.exe](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.9/AntiZapret-Installer.exe)**  
 (нужны права администратора)
 
 Альтернатива без установщика: архив  
-[`AntiZapret-1.3.6-win32.zip`](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.6/AntiZapret-1.3.6-win32.zip) → распаковать → запустить `AntiZapret.exe` **от имени администратора** 🔑
+[`AntiZapret-1.3.9-win32.zip`](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.9/AntiZapret-1.3.9-win32.zip) → распаковать → запустить `AntiZapret.exe` **от имени администратора** 🔑
 
 ---
 
