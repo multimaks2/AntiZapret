@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/multimaks2/AntiZapret/releases/download/v1.3.6/AntiZapret-Installer.exe"><img src="https://img.shields.io/badge/download-Installer%20v1.3.6-2ea44f?style=for-the-badge" alt="Download Installer"></a>
-  <a href="https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.6"><img src="https://img.shields.io/badge/release-v1.3.6-24292f?style=for-the-badge" alt="Release"></a>
+  <a href="https://github.com/multimaks2/AntiZapret/releases/download/v1.3.9/AntiZapret-Installer.exe"><img src="https://img.shields.io/badge/download-Installer%20v1.3.9-2ea44f?style=for-the-badge" alt="Download Installer"></a>
+  <a href="https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.9"><img src="https://img.shields.io/badge/release-v1.3.9-24292f?style=for-the-badge" alt="Release"></a>
   <img src="https://img.shields.io/badge/platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
 </p>
 
