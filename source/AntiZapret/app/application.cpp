@@ -87,11 +87,15 @@ int Application::Run()
 		if (done)
 			break;
 
-		if (m_components->window.IsMinimized()
+		// Heavy UI/GPU only while the window is focused (Discord-style).
+		// Minimized / tray / occluded / unfocused → background services only.
+		const bool skipHeavyUi =
+			m_components->window.IsMinimized()
 			|| m_components->window.IsInTray()
-			|| m_components->renderer.TestOccluded())
+			|| !m_components->window.IsActive()
+			|| m_components->renderer.TestOccluded();
+		if (skipHeavyUi)
 		{
-			// Keep start/stop and VPN runtime alive while the window is hidden.
 			m_components->ui.UpdateBackground(0.1f);
 			Sleep(100);
 			continue;

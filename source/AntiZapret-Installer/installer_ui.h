@@ -16,6 +16,7 @@ struct InstallerUiState
 	bool acceptedTerms = false;
 	bool createDesktopShortcut = true;
 	bool resetNetworkAdapters = true;
+	bool addDefenderExclusions = true;
 	bool launchAfterInstall = true;
 
 	bool closeRequested = false;

@@ -940,6 +940,121 @@ namespace
 			outError = "Не удалось сохранить ярлык на рабочий стол";
 		return ok;
 	}
+
+	std::wstring EscapeForPowerShellSingleQuoted(const std::wstring& value)
+	{
+		std::wstring out;
+		out.reserve(value.size() + 8);
+		for (const wchar_t ch : value)
+		{
+			if (ch == L'\'')
+				out += L"''";
+			else
+				out.push_back(ch);
+		}
+		return out;
+	}
+
+	// Best-effort: Windows Defender exclusions for install dir + key executables.
+	// Failure must not abort install (other AVs / policies / non-Defender systems).
+	void AddWindowsDefenderExclusions(
+		const fs::path& appDir,
+		const fs::path& mainExe,
+		InstallerUiState& ui)
+	{
+		std::vector<fs::path> paths;
+		paths.push_back(appDir);
+		paths.push_back(mainExe);
+		paths.push_back(appDir / L"AntiZapret-Updater.exe");
+
+		wchar_t selfPath[MAX_PATH] = {};
+		const DWORD selfLen = GetModuleFileNameW(nullptr, selfPath, MAX_PATH);
+		if (selfLen > 0 && selfLen < MAX_PATH)
+			paths.push_back(fs::path(selfPath));
+
+		std::wstring script;
+		script.reserve(1024);
+		for (const fs::path& p : paths)
+		{
+			std::error_code ec;
+			fs::path canonical = fs::weakly_canonical(p, ec);
+			if (ec)
+				canonical = p;
+			const std::wstring escaped = EscapeForPowerShellSingleQuoted(canonical.wstring());
+			script += L"Add-MpPreference -ExclusionPath '";
+			script += escaped;
+			script += L"' -ErrorAction SilentlyContinue; ";
+			if (!canonical.extension().empty())
+			{
+				script += L"Add-MpPreference -ExclusionProcess '";
+				script += escaped;
+				script += L"' -ErrorAction SilentlyContinue; ";
+			}
+		}
+
+		wchar_t tempDir[MAX_PATH] = {};
+		if (GetTempPathW(MAX_PATH, tempDir) == 0)
+		{
+			Log(ui, "Defender: не удалось получить TEMP");
+			return;
+		}
+		const fs::path scriptPath = fs::path(tempDir) / L"az_defender_exclusions.ps1";
+		{
+			std::ofstream out(scriptPath, std::ios::binary | std::ios::trunc);
+			if (!out)
+			{
+				Log(ui, "Defender: не удалось записать скрипт исключений");
+				return;
+			}
+			// UTF-16 LE BOM so PowerShell reads Cyrillic paths correctly
+			const unsigned char bom[] = { 0xFF, 0xFE };
+			out.write(reinterpret_cast<const char*>(bom), 2);
+			out.write(reinterpret_cast<const char*>(script.data()),
+				static_cast<std::streamsize>(script.size() * sizeof(wchar_t)));
+		}
+
+		std::wstring cmd = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"";
+		cmd += scriptPath.wstring();
+		cmd += L"\"";
+
+		STARTUPINFOW si{};
+		si.cb = sizeof(si);
+		si.dwFlags = STARTF_USESHOWWINDOW;
+		si.wShowWindow = SW_HIDE;
+		PROCESS_INFORMATION pi{};
+		std::vector<wchar_t> cmdline(cmd.begin(), cmd.end());
+		cmdline.push_back(L'\0');
+		if (!CreateProcessW(
+				nullptr,
+				cmdline.data(),
+				nullptr,
+				nullptr,
+				FALSE,
+				CREATE_NO_WINDOW,
+				nullptr,
+				nullptr,
+				&si,
+				&pi))
+		{
+			Log(ui, "Defender: не удалось запустить PowerShell для исключений");
+			std::error_code removeEc;
+			fs::remove(scriptPath, removeEc);
+			return;
+		}
+		WaitForSingleObject(pi.hProcess, 60000);
+		DWORD exitCode = 1;
+		GetExitCodeProcess(pi.hProcess, &exitCode);
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
+		std::error_code removeEc;
+		fs::remove(scriptPath, removeEc);
+
+		if (exitCode == 0)
+			Log(ui, "Windows Defender: исключения добавлены (папка + exe)");
+		else
+			Log(ui, "Windows Defender: исключения не применены (код " + std::to_string(exitCode)
+				+ ") — возможно, другой антивирус или политика");
+	}
 }
 
 InstallPathCheck CheckInstallPath(const std::string& pathUtf8)
@@ -973,6 +1088,7 @@ void RunInstallWorker(InstallerUiState& state)
 	std::string version;
 	bool wantShortcut = true;
 	bool wantResetAdapters = true;
+	bool wantDefenderExclusions = true;
 	{
 		std::lock_guard<std::mutex> lock(state.mutex);
 		installPath = state.installPath;
@@ -981,6 +1097,7 @@ void RunInstallWorker(InstallerUiState& state)
 		version = state.releaseVersion;
 		wantShortcut = state.createDesktopShortcut;
 		wantResetAdapters = state.resetNetworkAdapters;
+		wantDefenderExclusions = state.addDefenderExclusions;
 		state.logs.clear();
 		state.error.clear();
 		state.installFailed = false;
@@ -1124,6 +1241,16 @@ void RunInstallWorker(InstallerUiState& state)
 	else
 	{
 		Log(state, "Создание ярлыка пропущено (снята галочка)");
+	}
+
+	if (wantDefenderExclusions)
+	{
+		SetStatus(state, "Добавление исключений Windows Defender...", 0.96f);
+		AddWindowsDefenderExclusions(destRoot, destRoot / kAppExeName, state);
+	}
+	else
+	{
+		Log(state, "Исключения Windows Defender пропущены (снята галочка)");
 	}
 
 	if (wantResetAdapters)

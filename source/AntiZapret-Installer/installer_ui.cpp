@@ -336,46 +336,82 @@ namespace
 		ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + PageInnerWidth());
 	}
 
-	bool BottomRightCheckboxStack(const char* const* labels, bool* const* values, int count, float dpiScale)
+	bool BottomRightCheckboxStack(
+		const char* const* labels,
+		bool* const* values,
+		int count,
+		float dpiScale,
+		bool pinToBottom = true)
 	{
 		if (count <= 0)
 			return false;
 
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, { 3.f * dpiScale, 2.f * dpiScale });
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, { 6.f * dpiScale, 4.f * dpiScale });
-		ImGui::SetWindowFontScale(0.92f);
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { ImGui::GetStyle().ItemSpacing.x, 0.f });
+		ImGui::SetWindowFontScale(0.90f);
 
 		const float box = ImGui::GetFrameHeight();
+		const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
 		const float rowGap = 4.f * dpiScale;
-		float maxW = 0.f;
+		const float contentW = ImGui::GetContentRegionAvail().x;
+		const float labelWrap = (std::max)(48.f * dpiScale, contentW - box - gap - 4.f * dpiScale);
+
 		float totalH = 0.f;
 		for (int i = 0; i < count; ++i)
 		{
-			const ImVec2 labelSize = ImGui::CalcTextSize(labels[i]);
-			const float rowW = box + ImGui::GetStyle().ItemInnerSpacing.x + labelSize.x;
-			const float rowH = (std::max)(box, labelSize.y);
-			if (rowW > maxW)
-				maxW = rowW;
-			totalH += rowH;
+			const ImVec2 labelSize = ImGui::CalcTextSize(labels[i], nullptr, false, labelWrap);
+			totalH += (std::max)(box, labelSize.y);
 			if (i + 1 < count)
 				totalH += rowGap;
 		}
 
 		const float availY = ImGui::GetContentRegionAvail().y;
-		if (availY > totalH + 1.f)
-			ImGui::Dummy({ 0.f, availY - totalH - 1.f });
+		const float minGap = 8.f * dpiScale;
+		// Keep a bottom safety pad so the last row is never clipped by the card edge.
+		const float bottomPad = 6.f * dpiScale;
+		if (pinToBottom && availY > totalH + minGap + bottomPad + 2.f)
+			ImGui::Dummy({ 0.f, availY - totalH - bottomPad });
+		else
+			ImGui::Dummy({ 0.f, minGap });
 
 		bool anyChanged = false;
 		for (int i = 0; i < count; ++i)
 		{
-			ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - maxW);
-			anyChanged = ImGui::Checkbox(labels[i], values[i]) || anyChanged;
+			ImGui::PushID(i);
+			const ImVec2 labelSize = ImGui::CalcTextSize(labels[i], nullptr, false, labelWrap);
+			const float rowH = (std::max)(box, labelSize.y);
+			const float y0 = ImGui::GetCursorPosY();
+
+			ImGui::BeginGroup();
+			ImGui::SetCursorPosY(y0 + (labelSize.y > box ? 0.f : (rowH - box) * 0.5f));
+			if (ImGui::Checkbox("##cb", values[i]))
+				anyChanged = true;
+			ImGui::SameLine(0.f, gap);
+			ImGui::SetCursorPosY(y0 + (labelSize.y < box ? (box - labelSize.y) * 0.5f : 0.f));
+			ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + labelWrap);
+			ImGui::TextUnformatted(labels[i]);
+			ImGui::PopTextWrapPos();
+			ImGui::EndGroup();
+			if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+				&& !ImGui::IsItemActive())
+			{
+				const ImVec2 mouse = ImGui::GetMousePos();
+				const ImVec2 rmin = ImGui::GetItemRectMin();
+				if (mouse.x > rmin.x + box + gap)
+				{
+					*values[i] = !*values[i];
+					anyChanged = true;
+				}
+			}
+			ImGui::SetCursorPosY(y0 + rowH);
 			if (i + 1 < count)
-				ImGui::Dummy({ 0.f, rowGap * 0.25f });
+				ImGui::Dummy({ 0.f, rowGap });
+			ImGui::PopID();
 		}
 
 		ImGui::SetWindowFontScale(1.f);
-		ImGui::PopStyleVar(2);
+		ImGui::PopStyleVar(3);
 		return anyChanged;
 	}
 
@@ -383,7 +419,7 @@ namespace
 	{
 		const char* labels[1] = { label };
 		bool* values[1] = { value };
-		return BottomRightCheckboxStack(labels, values, 1, dpiScale);
+		return BottomRightCheckboxStack(labels, values, 1, dpiScale, true);
 	}
 
 	const char* ReleaseLinkUrl(const InstallerUiState& state)
@@ -642,14 +678,17 @@ namespace
 		}
 
 		const char* pathLabels[] = {
+			"Исключения Windows Defender (папка и exe)",
 			"Сброс сетевых адаптеров",
 			"Создать ярлык на рабочем столе",
 		};
 		bool* pathValues[] = {
+			&state.addDefenderExclusions,
 			&state.resetNetworkAdapters,
 			&state.createDesktopShortcut,
 		};
-		BottomRightCheckboxStack(pathLabels, pathValues, 2, dpiScale);
+		// Do not pin to bottom — with warning + 3 rows the card clips the last checkbox.
+		BottomRightCheckboxStack(pathLabels, pathValues, 3, dpiScale, false);
 	}
 
 	void SyncInstallCache(UiFrame& frame, InstallerUiState& state)
