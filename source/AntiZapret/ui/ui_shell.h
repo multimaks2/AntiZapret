@@ -12,6 +12,7 @@
 #include "ui/ui_about_page.h"
 #include "ui/ui_settings_page.h"
 #include "ui/ui_console_page.h"
+#include "ui/ui_dns_page.h"
 #include "ui/ui_sidebar.h"
 #include "ui/ui_snake_game.h"
 #include "ui/ui_tgfix_page.h"
@@ -104,6 +105,7 @@ private:
 	UiTgFixPage m_tgFixPage;
 	UiVpnPage m_vpnPage;
 	UiRoutingPage m_routingPage;
+	UiDnsPage m_dnsPage;
 	UiConsolePage m_consolePage;
 	UiSettingsPage m_settingsPage;
 	UiAboutPage m_aboutPage;

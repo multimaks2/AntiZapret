@@ -7,6 +7,7 @@
 #include "ui/ui_home_page.h"
 #include "ui/ui_antizapret_page.h"
 #include "ui/ui_console_page.h"
+#include "ui/ui_dns_page.h"
 #include "ui/ui_routing_page.h"
 #include "ui/ui_settings_page.h"
 #include "ui/ui_tgfix_page.h"
@@ -43,9 +44,10 @@ int UiPageHost::TabIndex(UiTab tab)
 	case UiTab::TgWsProxy: return 2;
 	case UiTab::Vpn: return 3;
 	case UiTab::Routing: return 4;
-	case UiTab::Console: return 5;
-	case UiTab::Settings: return 6;
-	case UiTab::About: return 7;
+	case UiTab::Dns: return 5;
+	case UiTab::Console: return 6;
+	case UiTab::Settings: return 7;
+	case UiTab::About: return 8;
 	}
 	return 0;
 }
@@ -83,6 +85,7 @@ void UiPageHost::Draw(
 	UiTgFixPage& tgFixPage,
 	UiVpnPage& vpnPage,
 	UiRoutingPage& routingPage,
+	UiDnsPage& dnsPage,
 	UiConsolePage& consolePage,
 	UiSettingsPage& settingsPage,
 	UiAboutPage& aboutPage)
@@ -112,6 +115,7 @@ void UiPageHost::Draw(
 			tgFixPage,
 			vpnPage,
 			routingPage,
+			dnsPage,
 			consolePage,
 			settingsPage,
 			aboutPage,
@@ -136,6 +140,7 @@ void UiPageHost::Draw(
 			tgFixPage,
 			vpnPage,
 			routingPage,
+			dnsPage,
 			consolePage,
 			settingsPage,
 			aboutPage,
@@ -152,6 +157,7 @@ void UiPageHost::Draw(
 			tgFixPage,
 			vpnPage,
 			routingPage,
+			dnsPage,
 			consolePage,
 			settingsPage,
 			aboutPage,
@@ -174,6 +180,7 @@ void UiPageHost::DrawPage(
 	UiTgFixPage& tgFixPage,
 	UiVpnPage& vpnPage,
 	UiRoutingPage& routingPage,
+	UiDnsPage& dnsPage,
 	UiConsolePage& consolePage,
 	UiSettingsPage& settingsPage,
 	UiAboutPage& aboutPage,
@@ -209,6 +216,9 @@ void UiPageHost::DrawPage(
 			case UiTab::Routing:
 				routingPage.DrawContent(theme, fonts, contentWidth);
 				break;
+			case UiTab::Dns:
+				dnsPage.DrawContent(theme, fonts, contentWidth);
+				break;
 			case UiTab::Console:
 				consolePage.DrawContent(theme, fonts, contentWidth);
 				break;
@@ -222,7 +232,7 @@ void UiPageHost::DrawPage(
 		},
 		wheelMultiplier,
 		nullptr,
-		tab != UiTab::Console,
+		tab != UiTab::Console && tab != UiTab::Dns,
 		tab == UiTab::Vpn);
 	ImGui::PopID();
 }

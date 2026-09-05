@@ -141,12 +141,14 @@ void AppSettings::Load()
 				m_pageScrollMultipliers[3] = ClampScrollMultiplier(ParseFloat(value, kDefaultScrollMultiplier));
 			else if (key == "routing")
 				m_pageScrollMultipliers[4] = ClampScrollMultiplier(ParseFloat(value, kDefaultScrollMultiplier));
-			else if (key == "console")
+			else if (key == "dns")
 				m_pageScrollMultipliers[5] = ClampScrollMultiplier(ParseFloat(value, kDefaultScrollMultiplier));
-			else if (key == "settings")
+			else if (key == "console")
 				m_pageScrollMultipliers[6] = ClampScrollMultiplier(ParseFloat(value, kDefaultScrollMultiplier));
-			else if (key == "about")
+			else if (key == "settings")
 				m_pageScrollMultipliers[7] = ClampScrollMultiplier(ParseFloat(value, kDefaultScrollMultiplier));
+			else if (key == "about")
+				m_pageScrollMultipliers[8] = ClampScrollMultiplier(ParseFloat(value, kDefaultScrollMultiplier));
 			continue;
 		}
 
@@ -304,9 +306,10 @@ void AppSettings::Save()
 	scroll["tg_ws_proxy"] = std::to_string(m_pageScrollMultipliers[2]);
 	scroll["vpn"] = std::to_string(m_pageScrollMultipliers[3]);
 	scroll["routing"] = std::to_string(m_pageScrollMultipliers[4]);
-	scroll["console"] = std::to_string(m_pageScrollMultipliers[5]);
-	scroll["settings"] = std::to_string(m_pageScrollMultipliers[6]);
-	scroll["about"] = std::to_string(m_pageScrollMultipliers[7]);
+	scroll["dns"] = std::to_string(m_pageScrollMultipliers[5]);
+	scroll["console"] = std::to_string(m_pageScrollMultipliers[6]);
+	scroll["settings"] = std::to_string(m_pageScrollMultipliers[7]);
+	scroll["about"] = std::to_string(m_pageScrollMultipliers[8]);
 
 	std::lock_guard<std::mutex> lock(SettingsDocument::Mutex());
 	SettingsDocument::Doc doc;

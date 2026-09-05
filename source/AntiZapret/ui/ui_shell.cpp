@@ -491,6 +491,7 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 		m_tgFixPage,
 		m_vpnPage,
 		m_routingPage,
+		m_dnsPage,
 		m_consolePage,
 		m_settingsPage,
 		m_aboutPage);
@@ -519,6 +520,8 @@ void UiShell::ProcessProtocolCommands()
 				m_activeTab = UiTab::TgWsProxy;
 			else if (tab == "routing" || tab == "route")
 				m_activeTab = UiTab::Routing;
+			else if (tab == "dns")
+				m_activeTab = UiTab::Dns;
 			else if (tab == "console" || tab == "log" || tab == "logs")
 				m_activeTab = UiTab::Console;
 			else if (tab == "settings" || tab == "options")
@@ -822,7 +825,7 @@ void UiShell::GetMinWindowSize(int* minWidth, int* minHeight)
 	if (minWidth)
 		*minWidth = 720;
 	if (minHeight)
-		*minHeight = 520;
+		*minHeight = 560;
 }
 
 namespace UiLayout

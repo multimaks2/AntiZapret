@@ -9,7 +9,7 @@
 class AppSettings
 {
 public:
-	static constexpr int kPageScrollCount = 8;
+	static constexpr int kPageScrollCount = 9;
 	static constexpr float kDefaultScrollMultiplier = 2.f;
 	static constexpr float kMinScrollMultiplier = 0.5f;
 	static constexpr float kMaxScrollMultiplier = 10.f;

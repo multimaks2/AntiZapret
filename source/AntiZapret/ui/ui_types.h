@@ -7,6 +7,7 @@ enum class UiTab
 	TgWsProxy,
 	Vpn,
 	Routing,
+	Dns,
 	Console,
 	Settings,
 	About

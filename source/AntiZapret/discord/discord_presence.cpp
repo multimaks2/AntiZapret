@@ -233,6 +233,7 @@ const char* AppRichPresence::TabImageKey(UiTab tab)
 	case UiTab::TgWsProxy: return "icon-tgfix";
 	case UiTab::Vpn: return "icon-vpn";
 	case UiTab::Routing: return "icon-routing";
+	case UiTab::Dns: return "icon-dns";
 	case UiTab::Console: return "icon-console";
 	case UiTab::Settings: return "icon-settings";
 	case UiTab::About: return "icon-about";
@@ -249,6 +250,7 @@ const char* AppRichPresence::TabLabel(UiTab tab)
 	case UiTab::TgWsProxy: return "✈️ TG Fix";
 	case UiTab::Vpn: return "🔒 VPN";
 	case UiTab::Routing: return "🗺️ Маршрутизация";
+	case UiTab::Dns: return "🌐 DNS";
 	case UiTab::Console: return "📋 Консоль";
 	case UiTab::Settings: return "⚙️ Настройки";
 	case UiTab::About: return "ℹ️ О приложении";

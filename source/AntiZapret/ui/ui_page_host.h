@@ -8,6 +8,7 @@ class UiHomePage;
 class UiTgFixPage;
 class UiVpnPage;
 class UiRoutingPage;
+class UiDnsPage;
 class UiConsolePage;
 class UiSettingsPage;
 class UiAboutPage;
@@ -31,6 +32,7 @@ public:
 		UiTgFixPage& tgFixPage,
 		UiVpnPage& vpnPage,
 		UiRoutingPage& routingPage,
+		UiDnsPage& dnsPage,
 		UiConsolePage& consolePage,
 		UiSettingsPage& settingsPage,
 		UiAboutPage& aboutPage);
@@ -49,6 +51,7 @@ private:
 		UiTgFixPage& tgFixPage,
 		UiVpnPage& vpnPage,
 		UiRoutingPage& routingPage,
+		UiDnsPage& dnsPage,
 		UiConsolePage& consolePage,
 		UiSettingsPage& settingsPage,
 		UiAboutPage& aboutPage,
@@ -59,7 +62,7 @@ private:
 	UiTab m_toTab = UiTab::Home;
 	float m_elapsed = 0.f;
 	bool m_animActive = false;
-	UiSmoothScroll m_scroll[8];
+	UiSmoothScroll m_scroll[9];
 	AppSettings* m_appSettings = nullptr;
 
 	static constexpr float kPageAnimSec = 0.28f;

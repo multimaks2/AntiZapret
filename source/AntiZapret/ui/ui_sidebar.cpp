@@ -124,20 +124,40 @@ float UiSidebar::Draw(
 	const float collapseMix = CollapseMix();
 
 	using IconSet = NavItem::IconSet;
+	// Order: … Маршрутизация → DNS → Консоль …
 	static const NavItem kNavItems[] = {
 		{ 0xf015, IconSet::Solid, "Главная", UiTab::Home },
 		{ 0xf3ed, IconSet::Solid, "Антизапрет", UiTab::AntiZapret },
 		{ 0xf2c6, IconSet::Brands, "TG WS Proxy", UiTab::TgWsProxy },
 		{ 0xf0ac, IconSet::Solid, "VPN", UiTab::Vpn },
 		{ 0xf4d7, IconSet::Solid, "Маршрутизация", UiTab::Routing },
+		{ 0xf233, IconSet::Solid, "DNS", UiTab::Dns },
 		{ 0xf120, IconSet::Solid, "Консоль", UiTab::Console },
 		{ 0xf013, IconSet::Solid, "Настройки", UiTab::Settings },
 		{ 0xf05a, IconSet::Solid, "О приложении", UiTab::About },
 	};
 
-	for (int i = 0; i < static_cast<int>(std::size(kNavItems)); ++i)
+	const float toggleY = origin.y + height - kBtnHeight - kBottom;
+	const float navAreaTop = origin.y + kTop;
+	const float navAreaBottom = toggleY - 6.f;
+	const int navCount = static_cast<int>(std::size(kNavItems));
+	float navStep = kNavStep;
+	const float needed = static_cast<float>(navCount - 1) * kNavStep + kBtnHeight;
+	const float available = navAreaBottom - navAreaTop;
+	if (navCount > 1 && needed > available && available > kBtnHeight)
+		navStep = (available - kBtnHeight) / static_cast<float>(navCount - 1);
+	if (navStep < 28.f)
+		navStep = 28.f;
+
+	ImDrawList* sidebarDraw = ImGui::GetWindowDrawList();
+	sidebarDraw->PushClipRect(
+		{ origin.x, navAreaTop - 2.f },
+		{ origin.x + m_width, navAreaBottom + 2.f },
+		true);
+
+	for (int i = 0; i < navCount; ++i)
 	{
-		const ImVec2 pos = { origin.x + kPad, origin.y + kTop + i * kNavStep };
+		const ImVec2 pos = { origin.x + kPad, navAreaTop + static_cast<float>(i) * navStep };
 		const UiSidebarVersionInfo* versionInfo = nullptr;
 		if (kNavItems[i].tab == UiTab::AntiZapret)
 			versionInfo = &antiZapretVersion;
@@ -146,8 +166,8 @@ float UiSidebar::Draw(
 
 		DrawNavButton(kNavItems[i], pos, btnWidth, kBtnHeight, collapseMix, activeTab, colors, accents, fonts, versionInfo);
 	}
+	sidebarDraw->PopClipRect();
 
-	const float toggleY = origin.y + height - kBtnHeight - kBottom;
 	const ImVec2 togglePos = { origin.x + kPad, toggleY };
 	const ImVec2 toggleSize = { 36.f, 32.f };
 	ImGui::SetCursorScreenPos(togglePos);
