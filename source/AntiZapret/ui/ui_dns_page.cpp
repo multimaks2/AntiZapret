@@ -84,19 +84,57 @@ const DnsManager::AdapterInfo* UiDnsPage::SelectedAdapter() const
 
 void UiDnsPage::PumpProbeResults()
 {
-	if (!m_probing.load())
-		return;
+	const bool probingNow = m_probing.load();
 
-	std::lock_guard<std::mutex> lock(m_probeMutex);
-	const size_t n = (std::min)(m_probeLatencies.size(), m_servers.size());
-	for (size_t i = 0; i < n; ++i)
+	if (probingNow || m_wasProbing)
 	{
-		const int latency = m_probeLatencies[i];
-		if (latency == -2)
-			continue;
-		m_servers[i].latencyMs = latency;
-		m_servers[i].probed = true;
-		m_probeLatencies[i] = -2;
+		std::lock_guard<std::mutex> lock(m_probeMutex);
+		const size_t n = (std::min)(m_probeLatencies.size(), m_servers.size());
+		for (size_t i = 0; i < n; ++i)
+		{
+			const int latency = m_probeLatencies[i];
+			if (latency == -2)
+				continue;
+			m_servers[i].latencyMs = latency;
+			m_servers[i].probed = true;
+			m_probeLatencies[i] = -2;
+		}
+	}
+
+	if (m_wasProbing && !probingNow && !m_probeCancel.load())
+		SortServersByLatency();
+
+	m_wasProbing = probingNow;
+}
+
+void UiDnsPage::SortServersByLatency()
+{
+	std::string primaryIp;
+	std::string alternateIp;
+	if (m_primaryIndex >= 0 && m_primaryIndex < static_cast<int>(m_servers.size()))
+		primaryIp = m_servers[static_cast<size_t>(m_primaryIndex)].ipv4;
+	if (m_alternateIndex >= 0 && m_alternateIndex < static_cast<int>(m_servers.size()))
+		alternateIp = m_servers[static_cast<size_t>(m_alternateIndex)].ipv4;
+
+	std::stable_sort(m_servers.begin(), m_servers.end(), [](const ServerRow& a, const ServerRow& b) {
+		const bool aOk = a.probed && a.latencyMs >= 0;
+		const bool bOk = b.probed && b.latencyMs >= 0;
+		if (aOk != bOk)
+			return aOk && !bOk;
+		if (aOk && bOk && a.latencyMs != b.latencyMs)
+			return a.latencyMs < b.latencyMs;
+		return false;
+	});
+
+	m_primaryIndex = -1;
+	m_alternateIndex = -1;
+	for (int i = 0; i < static_cast<int>(m_servers.size()); ++i)
+	{
+		const std::string& ip = m_servers[static_cast<size_t>(i)].ipv4;
+		if (m_primaryIndex < 0 && !primaryIp.empty() && ip == primaryIp)
+			m_primaryIndex = i;
+		else if (m_alternateIndex < 0 && !alternateIp.empty() && ip == alternateIp)
+			m_alternateIndex = i;
 	}
 }
 
@@ -332,19 +370,20 @@ void UiDnsPage::ToggleSelect(int index)
 	if (index < 0 || index >= static_cast<int>(m_servers.size()))
 		return;
 
-	// Повторный клик по уже выбранному — снять только этот слот.
+	// Снять слот 1 → 2 становится 1.
 	if (index == m_primaryIndex)
 	{
-		m_primaryIndex = -1;
+		m_primaryIndex = m_alternateIndex;
+		m_alternateIndex = -1;
 		return;
 	}
+	// Снять слот 2.
 	if (index == m_alternateIndex)
 	{
 		m_alternateIndex = -1;
 		return;
 	}
 
-	// Пустой слот 1 → ставим 1.
 	if (m_primaryIndex < 0)
 	{
 		m_primaryIndex = index;
@@ -360,16 +399,13 @@ void UiDnsPage::ToggleSelect(int index)
 		return;
 	}
 
-	// Пустой слот 2 → ставим 2.
 	if (m_alternateIndex < 0)
 	{
 		m_alternateIndex = index;
 		return;
 	}
 
-	// Оба заняты: меняем только 1, слот 2 не трогаем.
-	if (m_alternateIndex >= 0
-		&& clickedIp == m_servers[static_cast<size_t>(m_alternateIndex)].ipv4)
+	if (clickedIp == m_servers[static_cast<size_t>(m_alternateIndex)].ipv4)
 	{
 		m_status = "Этот IP уже выбран как альтернативный (2)";
 		m_statusOk = false;
@@ -568,15 +604,19 @@ void UiDnsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width
 	}
 	UiCommon::CardGap();
 
-	if (UiCommon::BeginCard("##dns_adapter", width, colors))
+	// Компактный блок адаптера.
 	{
-		const float innerWidth = ImGui::GetContentRegionAvail().x;
-		UiCommon::SectionHeader("Сетевой адаптер", colors);
-		ImGui::Dummy({ 0.f, 4.f });
+		const float rowH = 34.f;
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 12.f, 6.f });
+		ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiMetrics::kCardRadius);
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, colors.tileBg);
+		ImGui::PushStyleColor(ImGuiCol_Border, colors.tileBorder);
+		ImGui::BeginChild("##dns_adapter", { width, rowH + 12.f }, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
 
-		const float comboW = innerWidth - 110.f;
+		const float innerWidth = ImGui::GetContentRegionAvail().x;
+		const float comboW = innerWidth - 108.f;
 		UiCommon::PushInputStyle(colors);
-		ImGui::SetNextItemWidth(comboW > 120.f ? comboW : innerWidth);
+		ImGui::SetNextItemWidth(comboW > 100.f ? comboW : innerWidth * 0.65f);
 		const char* preview = AdapterValid()
 			? m_adapters[static_cast<size_t>(m_adapterIndex)].name.c_str()
 			: "(нет адаптеров)";
@@ -602,10 +642,13 @@ void UiDnsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width
 		UiCommon::PopInputStyle();
 
 		ImGui::SameLine(0.f, 8.f);
-		if (UiCommon::SecondaryButton("Обновить", { 100.f, UiMetrics::kBtnHeight }, colors, !busy))
+		if (UiCommon::SecondaryButton("Обновить", { 100.f, rowH }, colors, !busy))
 			RefreshAdapters();
+
+		ImGui::EndChild();
+		ImGui::PopStyleColor(2);
+		ImGui::PopStyleVar(2);
 	}
-	UiCommon::EndCard();
 	UiCommon::CardGap();
 
 	if (UiCommon::BeginCard("##dns_actions", width, colors))
@@ -613,6 +656,7 @@ void UiDnsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width
 		const float innerWidth = ImGui::GetContentRegionAvail().x;
 		const float gap = UiMetrics::kGridGap;
 		const float btnW = (innerWidth - gap * 2.f) / 3.f;
+		const float btnH = UiMetrics::kSmallBtnHeight + 4.f;
 
 		const bool canProbe = !busy && !m_servers.empty();
 		const bool canApplyFastest = !busy;
@@ -621,7 +665,7 @@ void UiDnsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width
 
 		if (UiCommon::AccentButton(
 				"Проверить DNS сервера",
-				{ btnW, UiMetrics::kBtnHeight },
+				{ btnW, btnH },
 				accents.ok,
 				colors,
 				canProbe))
@@ -631,7 +675,7 @@ void UiDnsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width
 		ImGui::SameLine(0.f, gap);
 		if (UiCommon::AccentButton(
 				"Применить самые быстрые",
-				{ btnW, UiMetrics::kBtnHeight },
+				{ btnW, btnH },
 				accents.download,
 				colors,
 				canApplyFastest))
@@ -643,7 +687,7 @@ void UiDnsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width
 		{
 			if (UiCommon::AccentButton(
 					"Применить выбранные",
-					{ btnW, UiMetrics::kBtnHeight },
+					{ btnW, btnH },
 					accents.ok,
 					colors,
 					canApply))
@@ -653,7 +697,7 @@ void UiDnsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width
 		}
 		else if (UiCommon::SecondaryButton(
 					 "Применить выбранные",
-					 { btnW, UiMetrics::kBtnHeight },
+					 { btnW, btnH },
 					 colors,
 					 false))
 		{
@@ -677,12 +721,12 @@ void UiDnsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width
 			const float frac = static_cast<float>(done) / static_cast<float>(total);
 			char progress[64] = {};
 			snprintf(progress, sizeof progress, "Проверено %d / %d", done, total);
-			ImGui::ProgressBar(frac, { innerWidth, 18.f }, progress);
+			ImGui::ProgressBar(frac, { innerWidth, 16.f }, progress);
 		}
 
 		if (!m_status.empty())
 		{
-			ImGui::Dummy({ 0.f, 4.f });
+			ImGui::Dummy({ 0.f, 2.f });
 			ImGui::PushStyleColor(
 				ImGuiCol_Text,
 				m_statusOk ? UiCommon::FixedStartAccent() : UiCommon::FixedStopAccent());
@@ -691,22 +735,22 @@ void UiDnsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width
 			ImGui::PopTextWrapPos();
 			ImGui::PopStyleColor();
 		}
-
-		ImGui::Dummy({ 0.f, 2.f });
-		UiCommon::CaptionText(
-			"ЛКМ: 1-й клик — слот 1, 2-й — слот 2; дальше клики меняют только 1. «Применить выбранные» пишет DNS в Windows.",
-			colors,
-			innerWidth);
 	}
 	UiCommon::EndCard();
 	UiCommon::CardGap();
 
-	// Карточка списка заполняет оставшуюся высоту окна (страница DNS без внешнего скролла).
-	const float listCardH = (std::max)(220.f, ImGui::GetContentRegionAvail().y);
+	// Карточка списка заполняет оставшуюся высоту. NoScrollWithMouse — иначе крутится родитель.
+	const ImVec2 pageWinPos = ImGui::GetWindowPos();
+	const float pageBottom = pageWinPos.y + ImGui::GetWindowSize().y;
+	const float listCardH = (std::max)(180.f, pageBottom - ImGui::GetCursorScreenPos().y - 2.f);
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, colors.tileBg);
 	ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiMetrics::kCardRadius);
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { UiMetrics::kCardPad, UiMetrics::kCardPad });
-	ImGui::BeginChild("##dns_list", { width, listCardH }, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { UiMetrics::kCardPad, 10.f });
+	ImGui::BeginChild(
+		"##dns_list",
+		{ width, listCardH },
+		ImGuiChildFlags_Borders,
+		ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
 	{
 		const float innerWidth = ImGui::GetContentRegionAvail().x;
@@ -912,6 +956,8 @@ void UiDnsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float width
 						ImGui::Separator();
 						if (ImGui::MenuItem("Применить этот как основной сейчас", nullptr, false, !busy))
 							SetPrimary(i, true);
+						if (ImGui::MenuItem("Применить этот как альтернативный сейчас", nullptr, false, !busy))
+							SetAlternate(i, true);
 						ImGui::EndPopup();
 					}
 

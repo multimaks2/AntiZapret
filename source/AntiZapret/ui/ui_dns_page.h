@@ -40,6 +40,7 @@ private:
 	void ToggleSelect(int index);
 	void RestoreDhcp();
 	void PumpProbeResults();
+	void SortServersByLatency();
 	bool MatchesSearch(const ServerRow& row) const;
 
 	bool AdapterValid() const;
@@ -52,6 +53,7 @@ private:
 	int m_primaryIndex = -1;
 	int m_alternateIndex = -1;
 	bool m_initialized = false;
+	bool m_wasProbing = false;
 
 	UiSmoothScroll m_listScroll;
 

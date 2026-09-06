@@ -748,11 +748,13 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 		}
 		ImGui::SameLine(0.f, gap);
 		if (UiCommon::SecondaryButton(
-			m_diagnosticsRunning.load() ? "Диагностика..." : "Запустить Диагностику",
+			"Сброс кэша Discord",
 			{ actionBtnW, btnH },
 			colors,
 			!m_diagnosticsRunning.load()))
-			StartDiagnostics();
+		{
+			m_askClearDiscordCache = true;
+		}
 
 		ImGui::Dummy({ 0.f, 4.f });
 		if (!m_diagnosticsStatus.empty())
@@ -943,7 +945,8 @@ void UiAntiZapretPage::DrawContent(ThemeManager& theme, FontManager& fonts, floa
 			ImGui::PopStyleColor();
 			drawDiagConfirmButtons(m_askClearDiscordCache, [&]() {
 				ZapretDiagnostics::ClearDiscordCache();
-				AppLog::Instance().Append(LogSource::Zapret, "[Диагностика] Кэш Discord очищен.");
+				AppLog::Instance().Append(LogSource::Zapret, "[Discord] Кэш Discord очищен.");
+				m_diagnosticsStatus = "Кэш Discord очищен";
 			});
 			ImGui::EndPopup();
 		}
