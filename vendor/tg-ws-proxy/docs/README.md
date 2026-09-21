@@ -1,11 +1,25 @@
+<div align="center">
+
+**🇷🇺 Русский • [🇬🇧 English](./EN/README.md)**
+
+</div>
+
+<div align="center">
+	<br />
+	<p>
+		<img width="1729" height="910" alt="tgwsproxy" src="./images/workflow.png" />
+	</p>
+</div>
+
+##
+
 > [!TIP]
 >
-> ### [🎉 Поддержать меня](./Funding.md)
+> ### [🎉 Поддержать меня](./RU/Funding.md)
 >
 > **USDT (TRC20)**: `TXPnKs2Ww1RD8JN6nChFUVmi5r2hqrWjuu`  
 > **BTC**: `bc1qr8vd6jelkyyry3m4mq6z5txdx4pl856fu6ss0w`  
 > **ETH**: `0x1417878fdc5047E670a77748B34819b9A49C72F1`  
-> **Другие монеты**: https://nowpayments.io/donation/flowseal
 
 > [!CAUTION]
 >
@@ -24,27 +38,31 @@
 **Локальный MTProto-прокси** для Telegram Desktop, который **ускоряет работу Telegram**, перенаправляя трафик через WebSocket-соединения. Данные передаются в том же зашифрованном виде, а для работы не нужны сторонние серверы.
 
 <picture>
-  <source srcset="https://github.com/user-attachments/assets/17f1d15e-e1c2-41ea-a452-220d13359262" media="(prefers-color-scheme: dark)">
-  <img src="https://github.com/user-attachments/assets/8d595468-83a1-4e4f-bac4-9ce4a07027bd">
+  <source srcset="./images/preview-dark.png" media="(prefers-color-scheme: dark)">
+  <img src="./images/preview-white.png">
 </picture>
 
 ## Навигация
 
 - **🚀 Быстрый старт**
-  - **[Windows](./README.windows.md)**
-  - **[macOS](./README.macos.md)**
-  - **[Linux](./README.linux.md)**
-- [Настройка Cloudflare-домена (CF-прокси)](./CfProxy.md)
-- [Fake TLS + upstream в Nginx](./FakeTlsNginx.md)
-- [Файлы конфигурации Tray-приложения](./TrayConfig.md)
-- [Установка из исходников](./BuildFromSource.md)
-- [Руководство для контрибьюторов](../CONTRIBUTING.md)
+  - **[Windows](./RU/README.windows.md)**
+  - **[macOS](./RU/README.macos.md)**
+  - **[Linux](./RU/README.linux.md)**
+  - **[Docker](./RU/README.docker.md)**
+- [Настройка Cloudflare Worker'а (бесплатный аналог CF-прокси)](./RU/CfWorker.md)
+- [Настройка Cloudflare-домена (CF-прокси)](./RU/CfProxy.md)
+- [Тестовое окружение Telegram (тестовые DC)](./RU/TestDc.md)
+- [Fake TLS + upstream в Nginx](./RU/FakeTlsNginx.md)
+- [Файлы конфигурации Tray-приложения](./RU/TrayConfig.md)
+- [Установка из исходников](./RU/BuildFromSource.md)
+- [Руководство для контрибьюторов](./CONTRIBUTING.md)
 
 ## Windows: быстрый вход
 
 Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте:
 
-- `TgWsProxy_windows.exe` (Windows 10+)
+- `TgWsProxy_windows.exe` (Windows 10+ x64)
+- `TgWsProxy_windows_arm64.exe` (Windows 10+ ARM64)
 - `TgWsProxy_windows_7_64bit.exe` (Windows 7 x64)
 - `TgWsProxy_windows_7_32bit.exe` (Windows 7 x32)
 
@@ -97,7 +115,7 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 > **Удалите в настройках прокси в DC → IP всё, кроме `4:149.154.167.220`**  
 > **Если это не помогло, полностью очистите это поле**  
 > Подобная проблема встречается на аккаунтах без Premium  
-> Если это не помогло, настройте собственный домен по инструкции: [CfProxy.md](./CfProxy.md)
+> Если это не помогло, настройте собственный домен по инструкции: [CfProxy.md](./RU/CfProxy.md)
 
 ## Автоматическая сборка
 
@@ -105,7 +123,8 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 
 Минимально поддерживаемые версии ОС для текущих бинарных сборок:
 
-- Windows 10+ для `TgWsProxy_windows.exe`
+- Windows 10+ x64 для `TgWsProxy_windows.exe`
+- Windows 10+ ARM64 для `TgWsProxy_windows_arm64.exe`
 - Windows 7 (x64) для `TgWsProxy_windows_7_64bit.exe`
 - Windows 7 (x32) для `TgWsProxy_windows_7_32bit.exe`
 - Intel macOS 10.15+
