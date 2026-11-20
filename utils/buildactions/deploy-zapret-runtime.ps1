@@ -94,8 +94,19 @@ $copied = 0
 $skipped = 0
 $locked = 0
 
+$Compat = Join-Path $PSScriptRoot 'zapret-compat'
+
+function Get-RuntimeSource {
+	param([string]$RelativePath)
+	$source = Join-Path $Vendor $RelativePath
+	if (Test-Path -LiteralPath $source -PathType Leaf) { return $source }
+	$fallback = Join-Path $Compat $RelativePath
+	if (Test-Path -LiteralPath $fallback -PathType Leaf) { return $fallback }
+	return $source
+}
+
 foreach ($file in $BinFiles) {
-	switch (Copy-RuntimeFile -Source (Join-Path $Vendor "bin\$file") -Destination (Join-Path $TargetBin $file)) {
+	switch (Copy-RuntimeFile -Source (Get-RuntimeSource "bin\$file") -Destination (Join-Path $TargetBin $file)) {
 		'copied' { ++$copied }
 		'skipped' { ++$skipped }
 		'locked' { ++$locked }
@@ -103,7 +114,18 @@ foreach ($file in $BinFiles) {
 }
 
 foreach ($file in $ListFiles) {
-	switch (Copy-RuntimeFile -Source (Join-Path $Vendor "lists\$file") -Destination (Join-Path $TargetLists $file)) {
+	$destination = Join-Path $TargetLists $file
+	if ($file.EndsWith('-user.txt') -and (Test-Path -LiteralPath $destination -PathType Leaf)) {
+		++$skipped
+		continue
+	}
+	$source = Get-RuntimeSource "lists\$file"
+	if ($file.EndsWith('-user.txt') -and -not (Test-Path -LiteralPath $source -PathType Leaf)) {
+		New-Item -ItemType File -Path $destination | Out-Null
+		++$copied
+		continue
+	}
+	switch (Copy-RuntimeFile -Source $source -Destination $destination) {
 		'copied' { ++$copied }
 		'skipped' { ++$skipped }
 		'locked' { ++$locked }
