@@ -1,8 +1,0 @@
-bin/
-build/
-*.suo
-*.user
-*.VC.db
-*.VC.opendb
-*.log
-

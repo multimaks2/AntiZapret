@@ -1,6 +1,4 @@
 import os
-import ssl
-import certifi
 import logging
 import base64
 import struct
@@ -9,6 +7,7 @@ import socket as _socket
 
 from typing import List, Optional, Tuple
 from .config import proxy_config
+from .utils import create_ssl_context
 
 log = logging.getLogger('tg-mtproto-proxy')
 
@@ -22,9 +21,10 @@ _st_BBQ4s = struct.Struct('>BBQ4s')
 _st_H = struct.Struct('>H')
 _st_Q = struct.Struct('>Q')
 
-_ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-_ssl_ctx_fronting = ssl.create_default_context(cafile=certifi.where())
-_ssl_ctx_fronting.check_hostname = False
+_XOR_TABLES = tuple(bytes(value ^ key for value in range(256)) for key in range(256))
+
+_ssl_ctx = create_ssl_context()
+_ssl_ctx_fronting = create_ssl_context(check_hostname=False)
 
 class WsHandshakeError(Exception):
     def __init__(self, status_code: int, status_line: str,
@@ -44,6 +44,11 @@ def _xor_mask(data: bytes, mask: bytes) -> bytes:
     if not data:
         return data
     n = len(data)
+    if n >= 512:
+        masked = bytearray(data)
+        for offset in range(4):
+            masked[offset::4] = masked[offset::4].translate(_XOR_TABLES[mask[offset]])
+        return bytes(masked)
     mask_rep = (mask * (n // 4 + 1))[:n]
     return (int.from_bytes(data, 'big') ^
             int.from_bytes(mask_rep, 'big')).to_bytes(n, 'big')
@@ -88,44 +93,38 @@ class RawWebSocket:
     async def connect(host: str, domain: str, timeout: float = 10.0,
                       path: str = '/apiws', *,
                       sni: Optional[str] = None, secure = True) -> 'RawWebSocket':
-        ssl = _ssl_ctx_fronting if sni else _ssl_ctx
+        ssl_context = _ssl_ctx_fronting if sni else _ssl_ctx
 
         if sni is None:
             sni = domain
 
-        reader, writer = await asyncio.wait_for(
-            (
-                asyncio.open_connection(
-                    host, 443,
-                    ssl=ssl,
-                    server_hostname=sni,
-                )
-                if secure
-                else asyncio.open_connection(host, 80)
-            ),
-            timeout=min(timeout, 10),
-        )
-        
-        set_sock_opts(writer.transport, proxy_config.buffer_size)
-
-        ws_key = base64.b64encode(os.urandom(16)).decode()
-
-        req = (
-            f'GET {path} HTTP/1.1\r\n'
-            f'Host: {domain}\r\n'
-            f'Upgrade: websocket\r\n'
-            f'Connection: Upgrade\r\n'
-            f'Sec-WebSocket-Key: {ws_key}\r\n'
-            f'Sec-WebSocket-Version: 13\r\n'
-            f'Sec-WebSocket-Protocol: binary\r\n'
-            f'\r\n'
-        )
-
-        writer.write(req.encode())
-        await writer.drain()
-
-        response_lines: list[str] = []
+        port = 443 if secure else 80
+        tls_options = {'ssl': ssl_context, 'server_hostname': sni} if secure else {}
+        writer = None
         try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port, **tls_options),
+                timeout=min(timeout, 10),
+            )
+            set_sock_opts(writer.transport, proxy_config.buffer_size)
+
+            ws_key = base64.b64encode(os.urandom(16)).decode()
+
+            req = (
+                f'GET {path} HTTP/1.1\r\n'
+                f'Host: {domain}\r\n'
+                f'Upgrade: websocket\r\n'
+                f'Connection: Upgrade\r\n'
+                f'Sec-WebSocket-Key: {ws_key}\r\n'
+                f'Sec-WebSocket-Version: 13\r\n'
+                f'Sec-WebSocket-Protocol: binary\r\n'
+                f'\r\n'
+            )
+
+            writer.write(req.encode())
+            await writer.drain()
+
+            response_lines: list[str] = []
             while True:
                 line = await asyncio.wait_for(reader.readline(),
                                               timeout=timeout)
@@ -133,33 +132,44 @@ class RawWebSocket:
                     break
                 response_lines.append(
                     line.decode('utf-8', errors='replace').strip())
-        except asyncio.TimeoutError:
-            writer.close()
+
+            if not response_lines:
+                raise WsHandshakeError(0, 'empty response')
+
+            first_line = response_lines[0]
+            parts = first_line.split(' ', 2)
+            try:
+                status_code = int(parts[1]) if len(parts) >= 2 else 0
+            except ValueError:
+                status_code = 0
+
+            if status_code == 101:
+                return RawWebSocket(reader, writer)
+
+            headers: dict[str, str] = {}
+            for hl in response_lines[1:]:
+                if ':' in hl:
+                    k, v = hl.split(':', 1)
+                    headers[k.strip().lower()] = v.strip()
+
+            raise WsHandshakeError(status_code, first_line, headers,
+                                    location=headers.get('location'))
+        except BaseException as exc:
+            if writer is not None:
+                writer.close()
+            if isinstance(exc, Exception) and log.isEnabledFor(logging.DEBUG):
+                if writer is not None:
+                    stage = 'ws_upgrade'
+                    local = writer.get_extra_info('sockname')
+                    remote = writer.get_extra_info('peername')
+                else:
+                    stage = 'tcp/tls' if secure else 'tcp'
+                    if isinstance(exc, _socket.gaierror):
+                        stage = 'dns'
+                    local = remote = None
+                log.debug('WS setup failed: host=%s port=%d stage=%s local=%s remote=%s error=%r',
+                          host, port, stage, local, remote, exc)
             raise
-
-        if not response_lines:
-            writer.close()
-            raise WsHandshakeError(0, 'empty response')
-
-        first_line = response_lines[0]
-        parts = first_line.split(' ', 2)
-        try:
-            status_code = int(parts[1]) if len(parts) >= 2 else 0
-        except ValueError:
-            status_code = 0
-
-        if status_code == 101:
-            return RawWebSocket(reader, writer)
-
-        headers: dict[str, str] = {}
-        for hl in response_lines[1:]:
-            if ':' in hl:
-                k, v = hl.split(':', 1)
-                headers[k.strip().lower()] = v.strip()
-
-        writer.close()
-        raise WsHandshakeError(status_code, first_line, headers,
-                                location=headers.get('location'))
 
     async def send(self, data: bytes):
         if self._closed:
@@ -222,20 +232,21 @@ class RawWebSocket:
         return None
 
     async def close(self):
-        if self._closed:
-            return
-        self._closed = True
         try:
-            self.writer.write(
-                self._build_frame(self.OP_CLOSE, b'', mask=True))
-            await self.writer.drain()
-        except Exception:
-            pass
-        try:
-            self.writer.close()
-            await self.writer.wait_closed()
-        except Exception:
-            pass
+            if not self._closed:
+                self._closed = True
+                try:
+                    self.writer.write(
+                        self._build_frame(self.OP_CLOSE, b'', mask=True))
+                    await self.writer.drain()
+                except Exception:
+                    pass
+        finally:
+            try:
+                self.writer.close()
+                await self.writer.wait_closed()
+            except Exception:
+                pass
 
     _WS_CLOSE_REASONS = {
         1000: 'normal', 1001: 'going_away', 1002: 'protocol_error',

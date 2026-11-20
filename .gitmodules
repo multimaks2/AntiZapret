@@ -1,0 +1,6 @@
+[submodule "vendor/zapret-discord-youtube"]
+	path = vendor/zapret-discord-youtube
+	url = https://github.com/Flowseal/zapret-discord-youtube
+[submodule "vendor/tg-ws-proxy"]
+	path = vendor/tg-ws-proxy
+	url = https://github.com/Flowseal/tg-ws-proxy

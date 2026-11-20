@@ -26,6 +26,11 @@ Cloudflare limits the number of simultaneous WebSocket (WS) connections. The def
 
 5. In the `TgWsProxy` settings, replace the default domain with your own.
 
+## HTTP/2 media multiplexing
+
+Multiplexing is enabled by default. Media connections share one TCP/TLS connection to Cloudflare per DC and domain, using `/api` instead of `/apiws`. Main connections and test DCs continue using WS. H2 requires CF proxy and TLS enabled.  
+Can be disabled with `--no-h2` or by unchecking the **Media multiplexing (HTTP/2)** in the **Cloudflare Proxy** settings. 
+
 ## Credits / Acknowledgments
 
 - Original Idea: https://github.com/Nekogram/WSProxy

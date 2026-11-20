@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from unittest.mock import AsyncMock, Mock, patch
 
 from proxy.raw_websocket import RawWebSocket, WsHandshakeError, _xor_mask
 
@@ -35,6 +36,15 @@ def _recv(chunks, cls=RawWebSocket):
 
 
 class XorMaskTest(unittest.TestCase):
+    def test_matches_bytewise_xor_at_fast_path_and_frame_boundaries(self):
+        for length in (0, 1, 2, 3, 4, 5, 125, 126, 127, 255, 511, 512, 513, 514, 515,
+                       16384, 65535, 65536, 65537, 1024 * 1024 + 3):
+            data = (bytes(range(256)) * (length // 256 + 1))[:length]
+            for mask in (b'\x00' * 4, b'\xff' * 4, b'\x01\x7f\x80\xff'):
+                with self.subTest(length=length, mask=mask):
+                    expected = bytes(value ^ mask[index % 4] for index, value in enumerate(data))
+                    self.assertEqual(_xor_mask(data, mask), expected)
+
     def test_roundtrip(self):
         data = bytes(range(256)) * 3
         mask = b'\x01\x02\x03\x04'
@@ -45,6 +55,21 @@ class XorMaskTest(unittest.TestCase):
 
 
 class BuildFrameTest(unittest.TestCase):
+    def test_masked_frame_wire_format_across_all_length_encodings(self):
+        mask = b'\x01\x7f\x80\xff'
+        for length in (1, 125, 126, 511, 512, 513, 65535, 65536, 65537):
+            payload = (bytes(range(256)) * (length // 256 + 1))[:length]
+            with self.subTest(length=length), patch('proxy.raw_websocket.os.urandom', return_value=mask):
+                frame = RawWebSocket._build_frame(RawWebSocket.OP_BINARY, payload, mask=True)
+                if length < 126:
+                    header = bytes([0x82, 0x80 | length])
+                elif length < 65536:
+                    header = b'\x82\xfe' + length.to_bytes(2, 'big')
+                else:
+                    header = b'\x82\xff' + length.to_bytes(8, 'big')
+                masked = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+                self.assertEqual(frame, header + mask + masked)
+
     def test_short_unmasked_frame(self):
         self.assertEqual(
             RawWebSocket._build_frame(RawWebSocket.OP_BINARY, b'abc'),
@@ -118,12 +143,92 @@ class ParseCloseTest(unittest.TestCase):
         self.assertEqual(RawWebSocket._parse_close(b''), (None, ''))
 
 
+class CloseTest(unittest.IsolatedAsyncioTestCase):
+    async def test_peer_close_still_closes_transport_without_another_close_frame(self):
+        reader = asyncio.StreamReader()
+        reader.feed_data(_raw_frame(RawWebSocket.OP_CLOSE, b'\x03\xe8'))
+        writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock())
+        ws = RawWebSocket(reader, writer)
+
+        self.assertIsNone(await ws.recv())
+        await ws.close()
+
+        writer.close.assert_called_once()
+        writer.wait_closed.assert_awaited_once()
+        self.assertEqual(writer.write.call_count, 1)
+
+    async def test_repeated_close_sends_only_one_close_frame(self):
+        writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock())
+        ws = RawWebSocket(asyncio.StreamReader(), writer)
+
+        await ws.close()
+        await ws.close()
+
+        self.assertTrue(ws._closed)
+        self.assertEqual(writer.write.call_count, 1)
+        writer.close.assert_called()
+
+    async def test_cancelling_close_during_drain_still_closes_transport(self):
+        draining = asyncio.Event()
+
+        async def drain():
+            draining.set()
+            await asyncio.Future()
+
+        writer = Mock(drain=AsyncMock(side_effect=drain), wait_closed=AsyncMock())
+        ws = RawWebSocket(asyncio.StreamReader(), writer)
+        task = asyncio.create_task(ws.close())
+        try:
+            await asyncio.wait_for(draining.wait(), 1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            writer.close.assert_called_once()
+            writer.wait_closed.assert_awaited_once()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
 class HandshakeErrorTest(unittest.TestCase):
     def test_redirect_status_codes(self):
         for code in (301, 302, 303, 307, 308):
             self.assertTrue(WsHandshakeError(code, '').is_redirect)
         for code in (0, 200, 429, 502):
             self.assertFalse(WsHandshakeError(code, '').is_redirect)
+
+
+class HandshakeCleanupTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelling_pending_upgrade_closes_socket(self):
+        reader = asyncio.StreamReader()
+        writer = Mock(drain=AsyncMock())
+        started = asyncio.Event()
+
+        async def drain():
+            started.set()
+
+        writer.drain.side_effect = drain
+        with patch('proxy.raw_websocket.asyncio.open_connection',
+                   AsyncMock(return_value=(reader, writer))), \
+                patch('proxy.raw_websocket.set_sock_opts'):
+            task = asyncio.create_task(RawWebSocket.connect('192.0.2.1', 'example.org'))
+            await asyncio.wait_for(started.wait(), 1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        writer.close.assert_called_once()
+
+    async def test_failed_upgrade_closes_socket(self):
+        for error in (ConnectionResetError(), asyncio.TimeoutError()):
+            with self.subTest(error=type(error)):
+                reader = Mock(readline=AsyncMock(side_effect=error))
+                writer = Mock(drain=AsyncMock())
+                with patch('proxy.raw_websocket.asyncio.open_connection',
+                           AsyncMock(return_value=(reader, writer))), \
+                        patch('proxy.raw_websocket.set_sock_opts'):
+                    with self.assertRaises(type(error)):
+                        await RawWebSocket.connect('192.0.2.1', 'example.org')
+                writer.close.assert_called_once()
 
 
 if __name__ == '__main__':

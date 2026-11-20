@@ -3,7 +3,9 @@ import urllib.request
 import http.client
 import ssl
 import logging
+import os
 import re
+import sys
 
 import certifi
 
@@ -31,7 +33,8 @@ PROTO_PADDED_INTERMEDIATE_INT = 0xDDDDDDDD
 RESERVED_FIRST_BYTES = {0xEF}
 RESERVED_STARTS = {b'\x48\x45\x41\x44', b'\x50\x4F\x53\x54',
                     b'\x47\x45\x54\x20', b'\xee\xee\xee\xee',
-                    b'\xdd\xdd\xdd\xdd', b'\x16\x03\x01\x02'}
+                    b'\xdd\xdd\xdd\xdd', b'\x16\x03\x01\x02',
+                    b'\x4F\x50\x54\x49'}
 RESERVED_CONTINUE = b'\x00\x00\x00\x00'
 
 _GITHUB_IPS: Dict[str, str] = {
@@ -58,11 +61,11 @@ WS_PATH = '/apiws'
 WS_PATH_TEST = WS_PATH + '_test'
 
 
-def ws_domains(dc: int, is_media) -> List[str]:
+def ws_domains(dc: int, is_media: bool) -> List[str]:
     if dc == 203:
         dc = 2
     if not is_media:
-        return [f'kws{dc}.web.telegram.org', f'kws{dc}-1.web.telegram.org']
+        return [f'kws{dc}.web.telegram.org']
     return [f'kws{dc}-1.web.telegram.org', f'kws{dc}.web.telegram.org']
 
 
@@ -140,6 +143,24 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
             return super().https_open(req)
 
 
+def set_x25519(context: ssl.SSLContext) -> None:
+    try:
+        context.set_ecdh_curve('X25519')
+    except Exception:
+        pass
+
+
+def create_ssl_context(*, check_hostname: bool = True) -> ssl.SSLContext:
+    bundle_dir = getattr(sys, '_MEIPASS', None)
+    cafile = (os.path.join(bundle_dir, 'certifi', 'cacert.pem')
+              if bundle_dir else certifi.where())
+    context = ssl.create_default_context(cafile=cafile)
+    context.load_default_certs()
+    set_x25519(context)
+    context.check_hostname = check_hostname
+    return context
+
+
 def build_github_opener() -> urllib.request.OpenerDirector:
-    context = ssl.create_default_context(cafile=certifi.where())
-    return urllib.request.build_opener(_PinnedHTTPSHandler(context=context))
+    return urllib.request.build_opener(
+        _PinnedHTTPSHandler(context=create_ssl_context()))
