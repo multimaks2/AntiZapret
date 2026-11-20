@@ -9,36 +9,11 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $Vendor = Join-Path $Root 'vendor\zapret-discord-youtube'
 $TargetRoot = if ([System.IO.Path]::IsPathRooted($TargetDir)) { $TargetDir } else { Join-Path $Root $TargetDir }
 
-$BinFiles = @(
-	'winws.exe',
-	'WinDivert.dll',
-	'WinDivert64.sys',
-	'cygwin1.dll',
-	'quic_initial_dbankcloud_ru.bin',
-	'quic_initial_www_google_com.bin',
-	'stun.bin',
-	'tls_clienthello_4pda_to.bin',
-	'tls_clienthello_max_ru.bin',
-	'tls_clienthello_www_google_com.bin'
-)
-
-$ListFiles = @(
-	'list-general.txt',
-	'list-general-user.txt',
-	'list-exclude.txt',
-	'list-exclude-user.txt',
-	'list-google.txt',
-	'list-youtube.txt',
-	'list-discord.txt',
-	'list-ultimate.txt',
-	'ipset-all.txt',
-	'ipset-cloudflare.txt',
-	'ipset-discord.txt',
-	'ipset-ubisoft.txt',
-	'ipset-russia.txt',
-	'ipset-exclude.txt',
-	'ipset-exclude-user.txt'
-)
+foreach ($required in @('bin\winws.exe', 'general.bat')) {
+	if (-not (Test-Path -LiteralPath (Join-Path $Vendor $required) -PathType Leaf)) {
+		throw "Flowseal submodule is incomplete: missing $required in $Vendor. Run git submodule update --init --recursive."
+	}
+}
 
 function Copy-RuntimeFile {
 	param(
@@ -85,50 +60,27 @@ function Copy-RuntimeFile {
 }
 
 $TargetAntiZapret = Join-Path $TargetRoot 'zapret-discord-youtube'
-$TargetBin = Join-Path $TargetAntiZapret 'bin'
-$TargetLists = Join-Path $TargetAntiZapret 'lists'
-$TargetService = Join-Path $TargetAntiZapret '.service'
-New-Item -ItemType Directory -Force -Path $TargetBin, $TargetLists, $TargetService | Out-Null
 
 $copied = 0
 $skipped = 0
 $locked = 0
 
-$Compat = Join-Path $PSScriptRoot 'zapret-compat'
-
-function Get-RuntimeSource {
-	param([string]$RelativePath)
-	$source = Join-Path $Vendor $RelativePath
-	if (Test-Path -LiteralPath $source -PathType Leaf) { return $source }
-	$fallback = Join-Path $Compat $RelativePath
-	if (Test-Path -LiteralPath $fallback -PathType Leaf) { return $fallback }
-	return $source
-}
-
-foreach ($file in $BinFiles) {
-	switch (Copy-RuntimeFile -Source (Get-RuntimeSource "bin\$file") -Destination (Join-Path $TargetBin $file)) {
-		'copied' { ++$copied }
-		'skipped' { ++$skipped }
-		'locked' { ++$locked }
-	}
-}
-
-foreach ($file in $ListFiles) {
-	$destination = Join-Path $TargetLists $file
-	if ($file.EndsWith('-user.txt') -and (Test-Path -LiteralPath $destination -PathType Leaf)) {
-		++$skipped
-		continue
-	}
-	$source = Get-RuntimeSource "lists\$file"
-	if ($file.EndsWith('-user.txt') -and -not (Test-Path -LiteralPath $source -PathType Leaf)) {
-		New-Item -ItemType File -Path $destination | Out-Null
-		++$copied
-		continue
-	}
-	switch (Copy-RuntimeFile -Source $source -Destination $destination) {
-		'copied' { ++$copied }
-		'skipped' { ++$skipped }
-		'locked' { ++$locked }
+# Keep the upstream runtime layout; Flowseal owns the asset list.
+foreach ($directory in @('bin', 'lists', '.service', 'utils')) {
+	$sourceDir = Join-Path $Vendor $directory
+	if (-not (Test-Path -LiteralPath $sourceDir -PathType Container)) { continue }
+	foreach ($file in (Get-ChildItem -LiteralPath $sourceDir -File -Recurse -Force)) {
+		$relative = $file.FullName.Substring($sourceDir.Length + 1)
+		$destination = Join-Path (Join-Path $TargetAntiZapret $directory) $relative
+		if ($directory -eq 'lists' -and $file.Name -like '*-user.txt' -and (Test-Path -LiteralPath $destination -PathType Leaf)) {
+			++$skipped
+			continue
+		}
+		switch (Copy-RuntimeFile -Source $file.FullName -Destination $destination) {
+			'copied' { ++$copied }
+			'skipped' { ++$skipped }
+			'locked' { ++$locked }
+		}
 	}
 }
 
@@ -141,7 +93,7 @@ Get-ChildItem -LiteralPath $Vendor -Filter 'general*.bat' -File -ErrorAction Sil
 	}
 }
 
-foreach ($rootFile in @('service.bat')) {
+foreach ($rootFile in @('service.bat', 'LICENSE.txt')) {
 	$src = Join-Path $Vendor $rootFile
 	if (Test-Path -LiteralPath $src) {
 		switch (Copy-RuntimeFile -Source $src -Destination (Join-Path $TargetAntiZapret $rootFile)) {
@@ -149,15 +101,6 @@ foreach ($rootFile in @('service.bat')) {
 			'skipped' { ++$skipped }
 			'locked' { ++$locked }
 		}
-	}
-}
-
-$versionSrc = Join-Path $Vendor '.service\version.txt'
-if (Test-Path -LiteralPath $versionSrc) {
-	switch (Copy-RuntimeFile -Source $versionSrc -Destination (Join-Path $TargetService 'version.txt')) {
-		'copied' { ++$copied }
-		'skipped' { ++$skipped }
-		'locked' { ++$locked }
 	}
 }
 
