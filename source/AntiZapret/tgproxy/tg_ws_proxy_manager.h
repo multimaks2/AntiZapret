@@ -46,8 +46,6 @@ class TgWsProxyManager
 
 public:
 
-	static constexpr const char* kPythonManagerStoreUrl = "ms-windows-store://pdp/?ProductId=9NQ7512CXL7T";
-	static constexpr const char* kPythonManagerUrl = "https://www.python.org/ftp/python/pymanager/python-manager-26.1.msix";
 
 
 
@@ -134,9 +132,9 @@ private:
 
 	bool CanRunProxyModule(const std::string& launcher) const;
 
-	bool OpenPythonInstaller(std::string& outMessage);
+	bool InstallPythonSilently();
 
-	void RunSetupAndStart(bool openTelegram);
+	void RunSetupAndStart(bool openTelegram, bool allowPythonInstall = false);
 
 	void RefreshRunningState();
 

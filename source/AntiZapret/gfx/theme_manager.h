@@ -18,6 +18,11 @@ enum class UiThemeId : int
 	Forest,
 	Mocha,
 	Matrix,
+	Peach,
+	Pear,
+	Blueberry,
+	Raspberry,
+	Apricot,
 	Count
 };
 
@@ -48,6 +53,7 @@ struct UiThemeColors
 	ImVec4 inputBg;
 	// Dark/Light keep original control look; tinted themes raise contrast.
 	bool classicControls = true;
+	ImVec4 workspaceBg = bg;
 };
 
 struct UiThemeInfo

@@ -35,10 +35,10 @@ public:
 private:
 	void Sample(float elapsedSec);
 	void UpdateDisplaySmoothing(float deltaTime);
-	static float NiceScaleMax(float valueBps);
 
-	std::array<float, kHistorySize> m_downloadHistory {};
-	std::array<float, kHistorySize> m_uploadHistory {};
+	static constexpr size_t kHistoryCapacity = kHistorySize + 1;
+	std::array<float, kHistoryCapacity> m_downloadHistory {};
+	std::array<float, kHistoryCapacity> m_uploadHistory {};
 	size_t m_historyIndex = 0;
 	bool m_historyFilled = false;
 

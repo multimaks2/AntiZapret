@@ -300,14 +300,7 @@ namespace
 		if (count == 0)
 			return 0.f;
 
-		const float fromNewest = ageSlots - scrollPhase;
-		if (fromNewest <= 0.f)
-		{
-			const float newest = SampleValue(monitor, download, count - 1);
-			const float t = scrollPhase > 0.001f ? (ageSlots / scrollPhase) : 0.f;
-			return liveValue + (newest - liveValue) * (std::clamp)(t, 0.f, 1.f);
-		}
-
+		const float fromNewest = ageSlots - scrollPhase + 1.f;
 		const float chronoFloat = static_cast<float>(count - 1) - fromNewest;
 		if (chronoFloat < 0.f)
 		{
@@ -325,45 +318,14 @@ namespace
 		return v0 + (v1 - v0) * (std::clamp)(frac, 0.f, 1.f);
 	}
 
-	ImVec2 CatmullRom(const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, float t)
+	float AnimatedTip(const TrafficMonitor& monitor, bool download, float phase)
 	{
-		const float t2 = t * t;
-		const float t3 = t2 * t;
-		return {
-			0.5f * ((2.f * p1.x) + (-p0.x + p2.x) * t + (2.f * p0.x - 5.f * p1.x + 4.f * p2.x - p3.x) * t2
-				+ (-p0.x + 3.f * p1.x - 3.f * p2.x + p3.x) * t3),
-			0.5f * ((2.f * p1.y) + (-p0.y + p2.y) * t + (2.f * p0.y - 5.f * p1.y + 4.f * p2.y - p3.y) * t2
-				+ (-p0.y + 3.f * p1.y - 3.f * p2.y + p3.y) * t3),
-		};
-	}
-
-	void ClipSeriesToLeft(std::vector<ImVec2>& points, float graphLeft)
-	{
-		if (points.size() < 2)
-			return;
-
-		size_t firstVisible = 0;
-		while (firstVisible < points.size() && points[firstVisible].x < graphLeft)
-			++firstVisible;
-
-		if (firstVisible == 0)
-			return;
-
-		if (firstVisible >= points.size())
-		{
-			points.clear();
-			return;
-		}
-
-		const ImVec2& a = points[firstVisible - 1];
-		const ImVec2& b = points[firstVisible];
-		const float span = b.x - a.x;
-		float y = b.y;
-		if (std::fabs(span) > 0.001f)
-			y = a.y + (b.y - a.y) * ((graphLeft - a.x) / span);
-
-		points.erase(points.begin(), points.begin() + static_cast<std::ptrdiff_t>(firstVisible));
-		points.insert(points.begin(), ImVec2{ graphLeft, y });
+		const size_t count = monitor.GetHistorySampleCount();
+		if (count == 0)
+			return 0.f;
+		const float previous = count > 1 ? SampleValue(monitor, download, count - 2) : 0.f;
+		const float latest = SampleValue(monitor, download, count - 1);
+		return previous + (latest - previous) * (phase * phase * (3.f - 2.f * phase));
 	}
 
 	void BuildSeriesPoints(
@@ -386,16 +348,16 @@ namespace
 		auto pushPoint = [&](float ageSlots, float value)
 		{
 			const float x = graphRight - ageSlots * slotW;
-			// Keep one slot past the left so ClipSeriesToLeft can interpolate the edge.
-			if (x < graphLeft - slotW || x > graphRight + slotW)
+			// Кривая строится за краем и обрезается только при отрисовке.
+			if (ageSlots > static_cast<float>(TrafficMonitor::kHistorySize))
 				return;
 			const float norm = (std::clamp)(value / scaleMax, 0.f, 1.f);
 			outPoints.push_back({ x, graphBottom - norm * graphH });
 		};
 
-		// Sliding timeline (stable). 250ms delay is only for the text cards, not here.
+		// Новая точка плавно входит справа; предыдущий замер уходит в историю.
 		pushPoint(0.f, liveValue);
-		for (size_t rev = 0; rev + 1 < TrafficMonitor::kHistorySize; ++rev)
+		for (size_t rev = 0; rev <= TrafficMonitor::kHistorySize; ++rev)
 		{
 			const float ageSlots = static_cast<float>(rev) + scrollPhase;
 			if (ageSlots < 0.001f)
@@ -410,14 +372,12 @@ namespace
 		{
 			outPoints.insert(outPoints.begin(), ImVec2{ graphLeft, graphBottom });
 		}
-
-		ClipSeriesToLeft(outPoints, graphLeft);
 	}
 
 	void TessellateSmooth(
 		const std::vector<ImVec2>& control,
 		std::vector<ImVec2>& outSmooth,
-		int segmentsPerSpan = 6)
+		int segmentsPerSpan = 16)
 	{
 		outSmooth.clear();
 		if (control.size() < 2)
@@ -434,19 +394,14 @@ namespace
 		outSmooth.reserve(control.size() * static_cast<size_t>(segmentsPerSpan));
 		for (size_t i = 0; i + 1 < control.size(); ++i)
 		{
-			const ImVec2& p0 = control[i == 0 ? 0 : i - 1];
 			const ImVec2& p1 = control[i];
 			const ImVec2& p2 = control[i + 1];
-			const ImVec2& p3 = control[i + 2 < control.size() ? i + 2 : control.size() - 1];
-			const float yMin = (std::min)(p1.y, p2.y);
-			const float yMax = (std::max)(p1.y, p2.y);
 
 			for (int s = 0; s < segmentsPerSpan; ++s)
 			{
 				const float t = static_cast<float>(s) / static_cast<float>(segmentsPerSpan);
-				ImVec2 pt = CatmullRom(p0, p1, p2, p3, t);
-				pt.y = (std::clamp)(pt.y, yMin, yMax);
-				outSmooth.push_back(pt);
+				const float eased = t * t * t * (10.f + t * (-15.f + 6.f * t));
+				outSmooth.push_back({ p1.x + (p2.x - p1.x) * t, p1.y + (p2.y - p1.y) * eased });
 			}
 		}
 		outSmooth.push_back(control.back());
@@ -454,7 +409,6 @@ namespace
 
 	void DrawSeriesArea(
 		ImDrawList* drawList,
-		const std::vector<ImVec2>& controlPoints,
 		const std::vector<ImVec2>& smoothPoints,
 		float graphBottom,
 		ImU32 lineColor,
@@ -463,30 +417,24 @@ namespace
 		if (smoothPoints.size() < 2)
 			return;
 
-		if (controlPoints.size() >= 2)
+		const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+		const ImU32 transparent = fillColor & ~IM_COL32_A_MASK;
+		for (size_t i = 0; i + 1 < smoothPoints.size(); ++i)
 		{
-			const ImDrawListFlags backupFlags = drawList->Flags;
-			drawList->Flags &= ~ImDrawListFlags_AntiAliasedFill;
-			for (size_t i = 0; i + 1 < controlPoints.size(); ++i)
-			{
-				const ImVec2& a = controlPoints[i];
-				const ImVec2& b = controlPoints[i + 1];
-				drawList->AddQuadFilled(
-					a,
-					b,
-					{ b.x, graphBottom },
-					{ a.x, graphBottom },
-					fillColor);
-			}
-			drawList->Flags = backupFlags;
+			const ImVec2& a = smoothPoints[i];
+			const ImVec2& b = smoothPoints[i + 1];
+			drawList->PrimReserve(6, 4);
+			const auto first = drawList->_VtxCurrentIdx;
+			for (unsigned offset : { 0u, 1u, 2u, 0u, 2u, 3u })
+				drawList->PrimWriteIdx(static_cast<ImDrawIdx>(first + offset));
+			drawList->PrimWriteVtx(a, uv, fillColor);
+			drawList->PrimWriteVtx(b, uv, fillColor);
+			drawList->PrimWriteVtx({ b.x, graphBottom }, uv, transparent);
+			drawList->PrimWriteVtx({ a.x, graphBottom }, uv, transparent);
 		}
 
-		drawList->AddPolyline(
-			smoothPoints.data(),
-			static_cast<int>(smoothPoints.size()),
-			lineColor,
-			ImDrawFlags_None,
-			2.25f);
+		drawList->AddPolyline(smoothPoints.data(), static_cast<int>(smoothPoints.size()),
+			lineColor, ImDrawFlags_None, 2.25f);
 	}
 
 	void DrawSpeedGraph(
@@ -495,6 +443,7 @@ namespace
 		float height,
 		bool bitsMode,
 		const UiThemeColors& colors,
+		const UiAccentColors& accents,
 		float fillAlphaDown = 0.28f,
 		float fillAlphaUp = 0.22f)
 	{
@@ -503,6 +452,7 @@ namespace
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 
 		drawList->AddRectFilled(origin, rectMax, ImGui::GetColorU32(colors.inputBg), UiMetrics::kCardRadius);
+		drawList->AddRect(origin, rectMax, ImGui::GetColorU32(colors.tileBorder), UiMetrics::kCardRadius);
 
 		const float scaleMax = (std::max)(monitor.GetDisplayScaleMax(), 1024.f);
 		const float scrollPhase = (std::clamp)(monitor.GetScrollPhase(), 0.f, 1.f);
@@ -549,7 +499,7 @@ namespace
 			graphBottom,
 			scaleMax,
 			scrollPhase,
-			monitor.GetDisplayDownloadBps(),
+			AnimatedTip(monitor, true, scrollPhase),
 			downControl);
 		BuildSeriesPoints(
 			monitor,
@@ -560,7 +510,7 @@ namespace
 			graphBottom,
 			scaleMax,
 			scrollPhase,
-			monitor.GetDisplayUploadBps(),
+			AnimatedTip(monitor, false, scrollPhase),
 			upControl);
 
 		std::vector<ImVec2> downSmooth;
@@ -568,29 +518,31 @@ namespace
 		TessellateSmooth(downControl, downSmooth);
 		TessellateSmooth(upControl, upSmooth);
 
-		const ImVec4 downAccent = UiCommon::FixedDownloadAccent();
-		const ImVec4 upAccent = UiCommon::FixedUploadAccent();
+		const ImVec4 downAccent = accents.download;
+		const ImVec4 upAccent = accents.upload;
 
 		drawList->PushClipRect({ graphLeft, graphTop }, { graphRight, graphBottom }, true);
 		DrawSeriesArea(
 			drawList,
-			downControl,
 			downSmooth,
 			graphBottom,
 			ImGui::GetColorU32(downAccent),
 			ImGui::GetColorU32(UiCommon::WithAlpha(downAccent, fillAlphaDown)));
 		DrawSeriesArea(
 			drawList,
-			upControl,
 			upSmooth,
 			graphBottom,
 			ImGui::GetColorU32(upAccent),
 			ImGui::GetColorU32(UiCommon::WithAlpha(upAccent, fillAlphaUp)));
 
-		if (!downSmooth.empty())
-			drawList->AddCircleFilled(downSmooth.back(), 3.2f, ImGui::GetColorU32(downAccent), 12);
-		if (!upSmooth.empty())
-			drawList->AddCircleFilled(upSmooth.back(), 3.2f, ImGui::GetColorU32(upAccent), 12);
+		const auto drawLatest = [&](const std::vector<ImVec2>& points, const ImVec4& accent) {
+			if (points.empty())
+				return;
+			drawList->AddCircleFilled(points.back(), 6.f, ImGui::GetColorU32(UiCommon::WithAlpha(accent, 0.22f)), 16);
+			drawList->AddCircleFilled(points.back(), 3.2f, ImGui::GetColorU32(accent), 12);
+		};
+		drawLatest(downSmooth, downAccent);
+		drawLatest(upSmooth, upAccent);
 
 		// Hover scrubber.
 		ImGui::SetCursorScreenPos({ graphLeft, graphTop });
@@ -601,24 +553,26 @@ namespace
 			const float mouseX = (std::clamp)(ImGui::GetIO().MousePos.x, graphLeft, graphRight);
 			const float ageSlots = (graphRight - mouseX) / (graphW / static_cast<float>(TrafficMonitor::kHistorySize - 1));
 			const float ageSec = ageSlots * TrafficMonitor::kSampleIntervalSec;
-			const float downHover = ValueAtAgeSlots(
-				monitor,
-				true,
-				monitor.GetDisplayDownloadBps(),
-				scrollPhase,
-				ageSlots);
-			const float upHover = ValueAtAgeSlots(
-				monitor,
-				false,
-				monitor.GetDisplayUploadBps(),
-				scrollPhase,
-				ageSlots);
+			const auto traceY = [mouseX, graphBottom](const std::vector<ImVec2>& points) {
+				if (points.empty())
+					return graphBottom;
+				const auto right = std::lower_bound(points.begin(), points.end(), mouseX,
+					[](const ImVec2& point, float x) { return point.x < x; });
+				if (right == points.begin())
+					return right->y;
+				if (right == points.end())
+					return points.back().y;
+				const auto& left = *(right - 1);
+				return left.y + (right->y - left.y) * ((mouseX - left.x) / (right->x - left.x));
+			};
+			const float downY = traceY(downSmooth);
+			const float upY = traceY(upSmooth);
+			const float downHover = (graphBottom - downY) * scaleMax / graphH;
+			const float upHover = (graphBottom - upY) * scaleMax / graphH;
 
 			const ImU32 scrubColor = ImGui::GetColorU32(UiCommon::WithAlpha(colors.textPrimary, 0.55f));
 			drawList->AddLine({ mouseX, graphTop }, { mouseX, graphBottom }, scrubColor, 1.25f);
 
-			const float downY = graphBottom - (std::clamp)(downHover / scaleMax, 0.f, 1.f) * graphH;
-			const float upY = graphBottom - (std::clamp)(upHover / scaleMax, 0.f, 1.f) * graphH;
 			drawList->AddCircleFilled({ mouseX, downY }, 3.5f, ImGui::GetColorU32(downAccent), 12);
 			drawList->AddCircleFilled({ mouseX, upY }, 3.5f, ImGui::GetColorU32(upAccent), 12);
 
@@ -672,6 +626,22 @@ namespace
 		ImGui::Dummy({ width, height });
 	}
 
+	void DrawMetricLine(ImDrawList* drawList, ImVec2 pos, float width, float height, ImU32 color, const std::string& text)
+	{
+		const float pad = 8.f;
+		const float available = (std::max)(1.f, width - 2.f * pad);
+		const float textWidth = ImGui::CalcTextSize(text.c_str()).x;
+		const float scale = textWidth > available ? (std::max)(0.8f, available / textWidth) : 1.f;
+		const float size = ImGui::GetFontSize() * scale;
+		const ImVec4 clip(pos.x + pad, pos.y, pos.x + width - pad, pos.y + height);
+		const float x = pos.x + (std::max)(pad, (width - textWidth * scale) * 0.5f);
+		drawList->AddText(ImGui::GetFont(), size, { x, pos.y + (height - size) * 0.5f },
+			color, text.c_str(), nullptr, 0.f, &clip);
+		ImGui::Dummy({ width, height });
+		if (textWidth * scale > available && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+			ImGui::SetTooltip("%s", text.c_str());
+	}
+
 	void DrawRateCard(
 		const char* title,
 		float bytesPerSec,
@@ -694,18 +664,8 @@ namespace
 			ImGui::GetColorU32(UiCommon::WithAlpha(accent, 0.35f)),
 			8.f);
 
-		drawList->AddText(
-			{ pos.x + 12.f, pos.y + 8.f },
-			ImGui::GetColorU32(UiCommon::WithAlpha(accent, 0.95f)),
-			title);
-
-		const std::string primary = FormatSpeed(bytesPerSec, bitsMode);
-		drawList->AddText(
-			{ pos.x + 12.f, pos.y + 8.f + ImGui::GetTextLineHeight() + 4.f },
-			ImGui::GetColorU32(accent),
-			primary.c_str());
-
-		ImGui::Dummy({ width, height });
+		DrawMetricLine(drawList, pos, width, height, ImGui::GetColorU32(accent),
+			std::string(title) + ": " + FormatSpeed(bytesPerSec, bitsMode));
 	}
 
 	void DrawSessionCard(
@@ -717,8 +677,6 @@ namespace
 	{
 		const ImVec2 pos = ImGui::GetCursorScreenPos();
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
-		const ImVec4 downAccent = UiCommon::FixedDownloadAccent();
-		const ImVec4 upAccent = UiCommon::FixedUploadAccent();
 
 		drawList->AddRectFilled(
 			pos,
@@ -731,34 +689,8 @@ namespace
 			ImGui::GetColorU32(colors.tileBorder),
 			8.f);
 
-		drawList->AddText(
-			{ pos.x + 12.f, pos.y + 8.f },
-			ImGui::GetColorU32(colors.textMuted),
-			"Сессия");
-
-		const float midX = pos.x + width * 0.5f;
-		const float labelY = pos.y + 8.f + ImGui::GetTextLineHeight() + 4.f;
-		const float valueY = labelY + ImGui::GetTextLineHeight() + 2.f;
-
-		drawList->AddText(
-			{ pos.x + 12.f, labelY },
-			ImGui::GetColorU32(UiCommon::WithAlpha(downAccent, 0.9f)),
-			"Загружено");
-		drawList->AddText(
-			{ pos.x + 12.f, valueY },
-			ImGui::GetColorU32(downAccent),
-			FormatBytes(bytesIn).c_str());
-
-		drawList->AddText(
-			{ midX + 6.f, labelY },
-			ImGui::GetColorU32(UiCommon::WithAlpha(upAccent, 0.9f)),
-			"Отдано");
-		drawList->AddText(
-			{ midX + 6.f, valueY },
-			ImGui::GetColorU32(upAccent),
-			FormatBytes(bytesOut).c_str());
-
-		ImGui::Dummy({ width, height });
+		DrawMetricLine(drawList, pos, width, height, ImGui::GetColorU32(colors.textPrimary),
+			"Сессия: ↓ " + FormatBytes(bytesIn) + "  ↑ " + FormatBytes(bytesOut));
 	}
 
 	void DrawSpeedProgressBars(
@@ -1034,12 +966,10 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 			strategyNote = buf;
 		}
 	}
-	else if (azRunning && m_zapret)
-	{
-		const int activeIndex = m_zapret->GetActiveStrategyIndex();
-		if (activeIndex >= 0)
-			strategyNote = std::string("Стратегия: ") + m_zapret->GetStrategyLabel(activeIndex);
-	}
+	const std::string strategyLabel = azStatus == ZapretRunStatus::Running && m_zapret && !strategySelectionActive
+		? m_zapret->GetStrategyLabel(activeStrategy)
+		: std::string {};
+	const std::string azSubtitle = strategyLabel.empty() ? "Обход Discord, YouTube" : "Стратегия - " + strategyLabel;
 
 	const char* azStatusText = RunStatusLabel(azStatus);
 	ImVec4 azStatusColor = RunStatusColor(azStatus);
@@ -1054,7 +984,7 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 		moduleW,
 		moduleH,
 		"Антизапрет",
-		"Обход Discord, YouTube",
+		azSubtitle.c_str(),
 		azStatusText,
 		azStatusColor,
 		strategyNote.empty() ? nullptr : strategyNote.c_str(),
@@ -1163,29 +1093,59 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 	{
 		const bool bitsMode = m_settings && m_settings->GetNetworkSpeedBits();
 		bool displayBits = bitsMode;
-		{
-			const ImVec2 headerStart = ImGui::GetCursorPos();
-#ifdef _DEBUG
-			UiCommon::SectionHeader("Мониторинг сети · DEBUG", colors);
-#else
-			UiCommon::SectionHeader("Мониторинг сети", colors);
-#endif
-			ImGui::SameLine(0.f, 0.f);
-			ImGui::SetCursorPosY(headerStart.y);
-			if (DrawSpeedUnitToggle(bitsMode, colors) && m_settings)
-			{
-				displayBits = !bitsMode;
-				m_settings->SetNetworkSpeedBits(displayBits);
-			}
-		}
-		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
-
 		const float downBps = m_traffic ? m_traffic->GetDisplayDownloadBps() : 0.f;
 		const float upBps = m_traffic ? m_traffic->GetDisplayUploadBps() : 0.f;
 		const std::uint64_t bytesIn = m_traffic ? m_traffic->GetSessionBytesIn() : 0;
 		const std::uint64_t bytesOut = m_traffic ? m_traffic->GetSessionBytesOut() : 0;
 		const float scaleMax = m_traffic ? (std::max)(m_traffic->GetDisplayScaleMax(), 1.f) : 1.f;
 		(void)scaleMax;
+		m_cardSampleTimer += ImGui::GetIO().DeltaTime;
+		if (!m_cardSampleReady || m_cardSampleTimer >= 0.75f)
+		{
+			m_cardSampleTimer = 0.f;
+			m_cardDownloadBps = downBps;
+			m_cardUploadBps = upBps;
+			m_cardSampleReady = true;
+		}
+		const auto drawMetrics = [&](float width) {
+			const float gap = 6.f;
+			const float cardH = ImGui::GetTextLineHeight() + 8.f;
+			const float rowW = width - gap * 2.f;
+			const float cardW = rowW * 0.29f;
+			DrawRateCard("Загрузка", m_cardDownloadBps, displayBits, UiCommon::FixedDownloadAccent(), cardW, cardH);
+			ImGui::SameLine(0.f, gap);
+			DrawRateCard("Отдача", m_cardUploadBps, displayBits, UiCommon::FixedUploadAccent(), cardW, cardH);
+			ImGui::SameLine(0.f, gap);
+			DrawSessionCard(bytesIn, bytesOut, colors, rowW - cardW * 2.f, cardH);
+		};
+		const float headerY = ImGui::GetCursorPosY();
+		const char* title = "Мониторинг сети";
+		const ImVec2 titleSize = ImGui::CalcTextSize(title);
+		const ImVec2 titlePos = ImGui::GetCursorScreenPos();
+		ImGui::GetWindowDrawList()->AddText({ titlePos.x, titlePos.y + 4.f }, ImGui::GetColorU32(colors.textPrimary), title);
+		ImGui::Dummy({ titleSize.x, titleSize.y + 8.f });
+		ImGui::SameLine(0.f, 8.f);
+		ImGui::SetCursorPosY(headerY);
+		const float toggleWidth = ImGui::CalcTextSize("МБ/с").x + ImGui::CalcTextSize("Мбит/с").x + 41.f;
+		const float metricsWidth = ImGui::GetContentRegionAvail().x - toggleWidth - 8.f;
+		const bool inlineMetrics = metricsWidth >= ImGui::GetFontSize() * 28.f;
+		if (inlineMetrics)
+		{
+			drawMetrics(metricsWidth);
+			ImGui::SameLine(0.f, 8.f);
+			ImGui::SetCursorPosY(headerY);
+		}
+		if (DrawSpeedUnitToggle(bitsMode, colors) && m_settings)
+		{
+			displayBits = !bitsMode;
+			m_settings->SetNetworkSpeedBits(displayBits);
+		}
+		if (!inlineMetrics)
+		{
+			ImGui::Dummy({ 0.f, 4.f });
+			drawMetrics(ImGui::GetContentRegionAvail().x);
+		}
+		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
 
 #ifdef _DEBUG
 		const float peakDown = m_traffic ? m_traffic->GetPeakDownloadBps() : 0.f;
@@ -1244,40 +1204,92 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 		ImGui::Dummy({ 0.f, 8.f });
 
 		if (m_traffic)
-			DrawSpeedGraph(*m_traffic, ImGui::GetContentRegionAvail().x, 260.f, displayBits, colors, 0.42f, 0.34f);
+			DrawSpeedGraph(*m_traffic, ImGui::GetContentRegionAvail().x, 260.f, displayBits, colors, theme.GetAccents(), 0.42f, 0.34f);
+#else
+		const ImVec4 downAccent = UiCommon::FixedDownloadAccent();
+		const ImVec4 upAccent = UiCommon::FixedUploadAccent();
+
+		DrawSpeedProgressBars(downBps, upBps, scaleMax, colors);
+
+		if (m_traffic)
+			DrawSpeedGraph(*m_traffic, ImGui::GetContentRegionAvail().x, 196.f, displayBits, colors, theme.GetAccents());
+#endif
 
 		ImGui::Dummy({ 0.f, 10.f });
-		UiCommon::SectionHeader("Процессы с сетью", colors);
-		ImGui::Dummy({ 0.f, 4.f });
-		UiCommon::CaptionText(
-			"Топ по TCP-скорости (EStats). UDP учитывается только как число сокетов.",
-			colors,
-			ImGui::GetContentRegionAvail().x);
+		UiCommon::SectionHeader("Сетевые соединения по приложениям", colors);
 		ImGui::Dummy({ 0.f, 6.f });
 
-		const std::vector<ProcessNetEntry>& procs =
-			m_processNet ? m_processNet->GetTopProcesses() : std::vector<ProcessNetEntry>{};
+		static const std::vector<ProcessNetEntry> emptyProcesses;
+		const auto& procs = m_processNet ? m_processNet->GetTopProcesses() : emptyProcesses;
+		ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiMetrics::kCardRadius);
+		ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, { 8.f, 5.f });
+		const bool panelVisible = ImGui::BeginChild("##process_net_panel", { 0.f, 0.f },
+			ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
 		if (procs.empty())
 		{
-			UiCommon::CaptionText("Пока нет данных — подождите ~1 с…", colors, ImGui::GetContentRegionAvail().x);
+			if (panelVisible)
+				ImGui::TextDisabled("Нет активных соединений");
 		}
-		else if (ImGui::BeginTable(
-					 "##debug_proc_net",
-					 4,
-					 ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV))
+		else if (panelVisible && ImGui::BeginTable(
+					 "##proc_net_autowidth",
+					 6,
+					 ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH
+					 | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable | ImGuiTableFlags_PadOuterX
+					 | ImGuiTableFlags_Sortable))
 		{
-			ImGui::TableSetupColumn("Процесс", ImGuiTableColumnFlags_WidthStretch, 2.4f);
-			ImGui::TableSetupColumn("↓", ImGuiTableColumnFlags_WidthStretch, 1.f);
-			ImGui::TableSetupColumn("↑", ImGuiTableColumnFlags_WidthStretch, 1.f);
-			ImGui::TableSetupColumn("Σ", ImGuiTableColumnFlags_WidthStretch, 1.f);
+			ImGui::TableSetupColumn("Процесс", ImGuiTableColumnFlags_WidthStretch, 2.2f);
+			const float sortSpace = ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x;
+			float tcpWidth = ImGui::CalcTextSize("TCP").x + sortSpace;
+			float udpWidth = ImGui::CalcTextSize("UDP").x + sortSpace;
+			for (const auto& entry : procs)
+			{
+				tcpWidth = (std::max)(tcpWidth, ImGui::CalcTextSize(std::to_string(entry.tcpCount).c_str()).x);
+				udpWidth = (std::max)(udpWidth, ImGui::CalcTextSize(std::to_string(entry.udpCount).c_str()).x);
+			}
+			ImGui::TableSetupColumn("TCP", ImGuiTableColumnFlags_WidthFixed, tcpWidth);
+			ImGui::TableSetupColumn("UDP", ImGuiTableColumnFlags_WidthFixed, udpWidth);
+			ImGui::TableSetupColumn("Приём", ImGuiTableColumnFlags_WidthStretch, 1.f);
+			ImGui::TableSetupColumn("Отдача", ImGuiTableColumnFlags_WidthStretch, 1.f);
+			ImGui::TableSetupColumn("Всего", ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort
+				| ImGuiTableColumnFlags_PreferSortDescending, 1.f);
 			ImGui::TableHeadersRow();
 
 			float maxTotal = 1.f;
-			for (const ProcessNetEntry& e : procs)
-				maxTotal = (std::max)(maxTotal, e.downloadBps + e.uploadBps);
-
+			std::vector<const ProcessNetEntry*> sorted;
+			sorted.reserve(procs.size());
 			for (const ProcessNetEntry& e : procs)
 			{
+				sorted.push_back(&e);
+				maxTotal = (std::max)(maxTotal, e.downloadBps + e.uploadBps);
+			}
+			if (auto* specs = ImGui::TableGetSortSpecs(); specs && specs->SpecsCount > 0)
+			{
+				const auto spec = specs->Specs[0];
+				// Rates change even when the selected sort column is unchanged.
+				std::sort(sorted.begin(), sorted.end(), [spec](const auto* lhs, const auto* rhs) {
+					const auto& a = *lhs;
+					const auto& b = *rhs;
+					const auto compare = [](const auto& x, const auto& y) { return (y < x) - (x < y); };
+					int order = 0;
+					switch (spec.ColumnIndex)
+					{
+					case 0: order = compare(a.name, b.name); break;
+					case 1: order = compare(a.tcpCount, b.tcpCount); break;
+					case 2: order = compare(a.udpCount, b.udpCount); break;
+					case 3: order = compare(a.downloadBps, b.downloadBps); break;
+					case 4: order = compare(a.uploadBps, b.uploadBps); break;
+					case 5: order = compare(a.downloadBps + a.uploadBps, b.downloadBps + b.uploadBps); break;
+					}
+					if (order == 0)
+						return a.pid < b.pid;
+					return spec.SortDirection == ImGuiSortDirection_Descending ? order > 0 : order < 0;
+				});
+				specs->SpecsDirty = false;
+			}
+
+			for (const ProcessNetEntry* entry : sorted)
+			{
+				const ProcessNetEntry& e = *entry;
 				ImGui::TableNextRow();
 				ImGui::TableNextColumn();
 				char nameLine[160] = {};
@@ -1295,6 +1307,10 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 					1.5f);
 
 				ImGui::TableNextColumn();
+				ImGui::Text("%d", e.tcpCount);
+				ImGui::TableNextColumn();
+				ImGui::Text("%d", e.udpCount);
+				ImGui::TableNextColumn();
 				ImGui::TextColored(downAccent, "%s", FormatSpeed(e.downloadBps, displayBits).c_str());
 				ImGui::TableNextColumn();
 				ImGui::TextColored(upAccent, "%s", FormatSpeed(e.uploadBps, displayBits).c_str());
@@ -1303,32 +1319,8 @@ void UiHomePage::DrawContent(ThemeManager& theme, FontManager& fonts, float widt
 			}
 			ImGui::EndTable();
 		}
-#else
-		m_cardSampleTimer += ImGui::GetIO().DeltaTime;
-		constexpr float kCardSampleIntervalSec = 0.75f;
-		if (!m_cardSampleReady || m_cardSampleTimer >= kCardSampleIntervalSec)
-		{
-			m_cardSampleTimer = 0.f;
-			m_cardDownloadBps = downBps;
-			m_cardUploadBps = upBps;
-			m_cardSampleReady = true;
-		}
-
-		const float gap = 8.f;
-		const float cardH = ImGui::GetTextLineHeight() * 3.f + 20.f;
-		const float cardW = (ImGui::GetContentRegionAvail().x - gap * 2.f) / 3.f;
-		DrawRateCard("Загрузка", m_cardDownloadBps, displayBits, UiCommon::FixedDownloadAccent(), cardW, cardH);
-		ImGui::SameLine(0.f, gap);
-		DrawRateCard("Отдача", m_cardUploadBps, displayBits, UiCommon::FixedUploadAccent(), cardW, cardH);
-		ImGui::SameLine(0.f, gap);
-		DrawSessionCard(bytesIn, bytesOut, colors, cardW, cardH);
-
-		ImGui::Dummy({ 0.f, 8.f });
-		DrawSpeedProgressBars(downBps, upBps, scaleMax, colors);
-
-		if (m_traffic)
-			DrawSpeedGraph(*m_traffic, ImGui::GetContentRegionAvail().x, 196.f, displayBits, colors);
-#endif
+		ImGui::EndChild();
+		ImGui::PopStyleVar(2);
 	}
 	UiCommon::EndCard();
 

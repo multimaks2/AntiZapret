@@ -247,6 +247,9 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		const int columns = avail > 520.f ? 4 : (avail > 360.f ? 3 : 2);
 		const float cellW = (avail - gap * static_cast<float>(columns - 1)) / static_cast<float>(columns);
 		const float cellH = 44.f;
+		UiCommon::PushInputStyle(colors);
+		const ImVec4 fieldBg = ImGui::GetStyleColorVec4(ImGuiCol_FrameBg);
+		UiCommon::PopInputStyle();
 
 		for (int i = 0; i < ThemeManager::ThemeCount(); ++i)
 		{
@@ -269,20 +272,10 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 			const ImVec2 cellMax = { cellMin.x + cellW, cellMin.y + cellH };
 			ImDrawList* dl = ImGui::GetWindowDrawList();
 			const UiThemeColors preview = ThemeManager::PaletteColors(id);
-			const ImU32 cellFill = (hovered && !selected)
-				? ImGui::GetColorU32(colors.navHover)
-				: ImGui::GetColorU32(colors.tileBg);
-			dl->AddRectFilled(cellMin, cellMax, cellFill, UiMetrics::kCardRadius);
-			if (selected)
-			{
-				dl->AddRect(
-					cellMin,
-					cellMax,
-					ImGui::GetColorU32(preview.navActive),
-					UiMetrics::kCardRadius,
-					0,
-					2.f);
-			}
+			const float fillAlpha = fieldBg.w * (selected ? 1.f : (hovered ? 0.75f : 0.45f));
+			dl->AddRectFilled(cellMin, cellMax,
+				ImGui::GetColorU32(UiCommon::WithAlpha(fieldBg, fillAlpha)),
+				UiMetrics::kCardRadius);
 
 			// Mini chrome: same bg / navActive the theme actually paints (no outline).
 			const float swatch = 18.f;
@@ -666,7 +659,7 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		UiCommon::SectionHeader("Скорость прокрутки", colors);
 		ImGui::Dummy({ 0.f, 4.f });
 		UiCommon::CaptionText(
-			"Множитель колёсика мыши для каждой страницы. По умолчанию x2.",
+			"Задайте общую скорость или настройте вкладки отдельно. По умолчанию x2. Вложенные списки могут прокручиваться отдельно.",
 			colors,
 			innerWidth);
 		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
@@ -674,35 +667,60 @@ void UiSettingsPage::DrawContent(ThemeManager& theme, FontManager& fonts, float 
 		if (m_appSettings)
 		{
 			const float labelWidth = 132.f;
-			const float sliderWidth = innerWidth - labelWidth - UiMetrics::kGridGap;
-
-			for (const ScrollPageSetting& page : kScrollPages)
+			const float sliderWidth = (std::max)(1.f, innerWidth - labelWidth - UiMetrics::kGridGap);
+			const auto drawMultiplier = [&](const char* label, float& multiplier)
 			{
-				float multiplier = m_appSettings->GetPageScrollMultiplier(page.pageIndex);
-				ImGui::PushID(page.pageIndex);
-				ImGui::AlignTextToFramePadding();
-				ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
-				ImGui::TextUnformatted(page.label);
-				ImGui::PopStyleColor();
-				ImGui::SameLine(labelWidth);
-
 				UiCommon::PushSliderStyle(colors);
 				ImGui::SetNextItemWidth(sliderWidth);
-				const bool changed = ImGui::SliderFloat(
-					"##scroll_multiplier",
-					&multiplier,
-					AppSettings::kMinScrollMultiplier,
-					AppSettings::kMaxScrollMultiplier,
-					"%.1f x");
+				const bool changed = ImGui::SliderFloat(label, &multiplier,
+					AppSettings::kMinScrollMultiplier, AppSettings::kMaxScrollMultiplier, "%.1f x");
 				UiCommon::PopSliderStyle();
+				return changed;
+			};
+			drawMultiplier("##all_scroll_multipliers", m_scrollForAllPages);
+			if (UiCommon::SecondaryButton("Применить ко всем вкладкам", { 0.f, UiMetrics::kSmallBtnHeight }, colors))
+			{
+				for (const ScrollPageSetting& page : kScrollPages)
+					m_appSettings->SetPageScrollMultiplier(page.pageIndex, m_scrollForAllPages);
+				m_appSettings->SavePageScrollMultipliers();
+			}
 
-				if (changed)
-					m_appSettings->SetPageScrollMultiplier(page.pageIndex, multiplier);
-				if (ImGui::IsItemDeactivatedAfterEdit())
-					m_appSettings->SavePageScrollMultipliers();
+			UiCommon::PushInputStyle(colors);
+			ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgHovered));
+			ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgActive));
+			const bool tabsExpanded = ImGui::CollapsingHeader("Настроить по вкладкам");
+			if (ImGui::IsItemVisible())
+			{
+				const ImVec2 min = ImGui::GetItemRectMin();
+				const ImVec2 max = ImGui::GetItemRectMax();
+				const float alpha = tabsExpanded ? 1.f : (ImGui::IsItemHovered() ? 0.85f : 0.55f);
+				ImGui::GetWindowDrawList()->AddRectFilled({ max.x - 13.f, min.y + 7.f },
+					{ max.x - 10.f, max.y - 7.f },
+					ImGui::GetColorU32(UiCommon::WithAlpha(theme.GetAccents().download, alpha)), 1.5f);
+			}
+			ImGui::PopStyleColor(3);
+			UiCommon::PopInputStyle();
+			if (tabsExpanded)
+			{
+				for (const ScrollPageSetting& page : kScrollPages)
+				{
+					float multiplier = m_appSettings->GetPageScrollMultiplier(page.pageIndex);
+					ImGui::PushID(page.pageIndex);
+					ImGui::AlignTextToFramePadding();
+					ImGui::PushStyleColor(ImGuiCol_Text, colors.textPrimary);
+					ImGui::TextUnformatted(page.label);
+					ImGui::PopStyleColor();
+					ImGui::SameLine(labelWidth);
 
-				ImGui::PopID();
-				ImGui::Dummy({ 0.f, 4.f });
+					if (drawMultiplier("##scroll_multiplier", multiplier))
+						m_appSettings->SetPageScrollMultiplier(page.pageIndex, multiplier);
+					if (ImGui::IsItemDeactivatedAfterEdit())
+						m_appSettings->SavePageScrollMultipliers();
+
+					ImGui::PopID();
+					ImGui::Dummy({ 0.f, 4.f });
+				}
 			}
 		}
 	}

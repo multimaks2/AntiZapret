@@ -132,8 +132,74 @@ void UiShell::Render(
 	}
 	api.BeginContent(kTitleBarHeight, width, height - kTitleBarHeight);
 	DrawMainLayout(theme, fonts, width, height - kTitleBarHeight);
+	DrawReleaseNotes(theme);
 	api.EndContent();
 	api.EndFrame();
+}
+
+void UiShell::DrawReleaseNotes(ThemeManager& theme)
+{
+	static const std::string version = AppVersion::ReadEmbedded();
+	static const std::string title = "Что нового в AntiZapret " + version;
+	// Обновлённый список показывается один раз, даже если номер версии не менялся.
+	static const std::string notesKey = version == "1.4.1b" ? version + ":2" : version;
+	constexpr const char* popupId = "##ReleaseNotes";
+	if (!m_releaseNotesChecked)
+	{
+		m_releaseNotesChecked = true;
+		if (m_appSettings.GetSeenReleaseNotesVersion() != notesKey)
+			ImGui::OpenPopup(popupId);
+	}
+
+	const auto colors = theme.GetColors();
+	const bool light = UiCommon::IsLightTheme(colors);
+	const auto popupBg = light ? ImVec4(0.90f, 0.90f, 0.92f, 0.98f) : UiCommon::WithAlpha(colors.tileBg, 0.98f);
+	ImGui::PushStyleColor(ImGuiCol_PopupBg, popupBg);
+	ImGui::PushStyleColor(ImGuiCol_Border, UiCommon::WithAlpha(colors.tileBorder, light ? 0.55f : 0.40f));
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UiMetrics::kCardRadius);
+	ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, UiMetrics::kCardRadius);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 18.f, 16.f });
+	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, UiMetrics::kCardRadius);
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 10.f, 8.f });
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, { 0.5f, 0.5f });
+	if (ImGui::BeginPopupModal(popupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings))
+	{
+		constexpr float dialogWidth = 340.f;
+		constexpr float buttonWidth = 112.f;
+		const float left = ImGui::GetCursorPosX();
+		const auto green = UiCommon::FixedStartAccent();
+		ImGui::TextColored(green, "%s", title.c_str());
+		ImGui::Dummy({ 0.f, 4.f });
+		ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
+		ImGui::PushTextWrapPos(left + dialogWidth);
+		if (version == "1.5.0")
+		{
+			ImGui::BulletText("Новые светлые и тёмные палитры, русские названия тем и обновлённое оформление настроек.");
+			ImGui::BulletText("Обновлён график сети: отдельные линии загрузки и отдачи, плавный автомасштаб и подсказки.");
+			ImGui::BulletText("Под графиком видны активные соединения приложений. Столбцы можно сортировать и менять их ширину.");
+			ImGui::BulletText("Показатели сети помещаются в шапке широкого окна, а в узком переходят на строку ниже.");
+			ImGui::BulletText("В VPN появился Kill Switch для блокировки трафика при обрыве туннеля.");
+			ImGui::BulletText("В списке VPN-серверов обновлены флаги, индикаторы пинга и кнопки групповых проверок.");
+			ImGui::BulletText("TG WS Proxy может тихо установить Python с python.org, если его нет.");
+			ImGui::BulletText("Установщик запускается без предварительной установки Visual C++ Redistributable.");
+			ImGui::BulletText("Обновлены панели действий VPN и консоли. На главной видно название активной стратегии.");
+		}
+		else
+			ImGui::TextUnformatted("Для этой версии список изменений не добавлен.");
+		ImGui::PopTextWrapPos();
+		ImGui::PopStyleColor();
+		ImGui::Dummy({ dialogWidth, 0.f });
+		ImGui::Dummy({ 0.f, 14.f });
+		ImGui::SetCursorPosX(left + dialogWidth - buttonWidth);
+		if (UiCommon::AccentButton("Закрыть", { buttonWidth, UiMetrics::kSmallBtnHeight }, green, colors) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+		{
+			m_appSettings.SetSeenReleaseNotesVersion(notesKey);
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+	ImGui::PopStyleVar(5);
+	ImGui::PopStyleColor(2);
 }
 
 void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float width, float height)
@@ -469,7 +535,7 @@ void UiShell::DrawMainLayout(ThemeManager& theme, FontManager& fonts, float widt
 
 	ImGui::SameLine(0.f, 0.f);
 
-	ImGui::PushStyleColor(ImGuiCol_ChildBg, colors.bg);
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, colors.workspaceBg);
 	ImGui::BeginChild("##MainArea", { width - sidebarWidth, height }, ImGuiChildFlags_None);
 
 	ImGui::SetCursorPos({ kPagePad, kPagePad });

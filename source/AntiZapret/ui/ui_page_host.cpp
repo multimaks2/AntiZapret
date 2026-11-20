@@ -211,7 +211,7 @@ void UiPageHost::DrawPage(
 				tgFixPage.DrawContent(theme, fonts, contentWidth);
 				break;
 			case UiTab::Vpn:
-				vpnPage.DrawContent(theme, fonts, contentWidth);
+				vpnPage.DrawContent(theme, fonts, contentWidth, wheelMultiplier);
 				break;
 			case UiTab::Routing:
 				routingPage.DrawContent(theme, fonts, contentWidth);
@@ -220,7 +220,7 @@ void UiPageHost::DrawPage(
 				dnsPage.DrawContent(theme, fonts, contentWidth);
 				break;
 			case UiTab::Console:
-				consolePage.DrawContent(theme, fonts, contentWidth);
+				consolePage.DrawContent(theme, fonts, contentWidth, wheelMultiplier);
 				break;
 			case UiTab::Settings:
 				settingsPage.DrawContent(theme, fonts, contentWidth);

@@ -148,9 +148,7 @@ void AppLog::AppendLineLocked(LogSource source, const std::string& line)
 	ParseActionResult(line, entry.action, entry.result);
 	if (entry.action.empty())
 		entry.action = line;
-	m_entries.push_back(std::move(entry));
-	if (m_entries.size() > kMaxEntries)
-		m_entries.erase(m_entries.begin(), m_entries.begin() + (m_entries.size() - kMaxEntries));
+	StoreEntryLocked(std::move(entry));
 }
 
 void AppLog::AppendStructuredLocked(LogSource source, const std::string& action, const std::string& result)
@@ -161,14 +159,21 @@ void AppLog::AppendStructuredLocked(LogSource source, const std::string& action,
 	entry.action = action;
 	entry.result = result;
 	entry.text = result.empty() ? action : (action + " : " + result);
+	StoreEntryLocked(std::move(entry));
+}
+
+void AppLog::StoreEntryLocked(LogEntry entry)
+{
 	m_entries.push_back(std::move(entry));
 	if (m_entries.size() > kMaxEntries)
 		m_entries.erase(m_entries.begin(), m_entries.begin() + (m_entries.size() - kMaxEntries));
+	++m_revision;
 }
 
 void AppLog::Clear(LogFilter filter)
 {
 	std::lock_guard<std::mutex> lock(m_mutex);
+	++m_revision;
 	if (filter == LogFilter::All)
 	{
 		m_entries.clear();
@@ -185,17 +190,20 @@ void AppLog::Clear(LogFilter filter)
 	m_lastText.clear();
 }
 
-std::vector<LogEntry> AppLog::Snapshot(LogFilter filter) const
+bool AppLog::SnapshotIfChanged(LogFilter filter, std::uint64_t& revision, std::vector<LogEntry>& result) const
 {
 	std::lock_guard<std::mutex> lock(m_mutex);
-	std::vector<LogEntry> result;
+	if (revision == m_revision)
+		return false;
+	result.clear();
 	result.reserve(m_entries.size());
 	for (const LogEntry& entry : m_entries)
 	{
 		if (MatchesFilter(entry.source, filter))
 			result.push_back(entry);
 	}
-	return result;
+	revision = m_revision;
+	return true;
 }
 
 bool AppLog::MatchesFilter(LogSource source, LogFilter filter)

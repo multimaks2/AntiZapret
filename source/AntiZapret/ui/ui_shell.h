@@ -112,6 +112,8 @@ private:
 	UiTab m_activeTab = UiTab::Home;
 	UiTab m_previousTab = UiTab::Home;
 	bool m_showSnakeGame = false;
+	bool m_releaseNotesChecked = false;
+	void DrawReleaseNotes(ThemeManager& theme);
 	int m_minimizeBurstClicks = 0;
 	double m_minimizeBurstLastClick = 0.0;
 	std::int64_t m_appLaunchAt = 0;

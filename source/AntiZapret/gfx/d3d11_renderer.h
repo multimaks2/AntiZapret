@@ -12,7 +12,7 @@ public:
 	bool Initialize(HWND hwnd, UINT monitorHz);
 	void Shutdown();
 	void Resize(UINT width, UINT height);
-	void Render(const DrawCallback& drawCallback, const float clearColor[4], bool vsync = true);
+	void Render(const DrawCallback& drawCallback, const float clearColor[4], bool vsync = true, bool resumed = false);
 	bool IsOccluded() const { return m_occluded; }
 	bool TestOccluded();
 

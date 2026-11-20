@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -39,7 +40,7 @@ public:
 	// Structured: ICON [tag] [time] [action] : result
 	void Append(LogSource source, const std::string& action, const std::string& result);
 	void Clear(LogFilter filter);
-	std::vector<LogEntry> Snapshot(LogFilter filter) const;
+	bool SnapshotIfChanged(LogFilter filter, std::uint64_t& revision, std::vector<LogEntry>& result) const;
 
 	static void ParseActionResult(const std::string& text, std::string& outAction, std::string& outResult);
 
@@ -48,12 +49,14 @@ private:
 
 	void AppendLineLocked(LogSource source, const std::string& line);
 	void AppendStructuredLocked(LogSource source, const std::string& action, const std::string& result);
+	void StoreEntryLocked(LogEntry entry);
 	static bool MatchesFilter(LogSource source, LogFilter filter);
 
 	static constexpr size_t kMaxEntries = 3000;
 
 	mutable std::mutex m_mutex;
 	std::vector<LogEntry> m_entries;
+	std::uint64_t m_revision = 1;
 	LogSource m_lastSource = LogSource::Zapret;
 	std::string m_lastText;
 };

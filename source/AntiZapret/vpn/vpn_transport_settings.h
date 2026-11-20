@@ -9,6 +9,8 @@ struct VpnStoreSettings
 
 	// 0 = Proxy (system proxy + mixed-port), 1 = Tunnel (TUN)
 	int transportMode = 1;
+	bool killSwitch = false;
+	std::string killSwitchServerIp; // Runtime only; pinned before enabling the firewall.
 	// 0 = system DNS, 1 = built-in DNS (mihomo)
 	int dnsMode = 1;
 	int bootstrapDns = 2;

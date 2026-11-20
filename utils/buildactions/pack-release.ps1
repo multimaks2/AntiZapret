@@ -52,11 +52,10 @@ if (Test-Path $updater) {
 	Write-Warning "Missing updater: $updater"
 }
 
-$fontsSrc = Join-Path $bin "fonts"
-if (Test-Path $fontsSrc) {
-	Copy-Item $fontsSrc (Join-Path $stage "fonts") -Recurse
-} else {
-	Write-Warning "Missing fonts folder: $fontsSrc"
+$fontsDst = Join-Path $stage "fonts"
+New-Item -ItemType Directory -Path $fontsDst | Out-Null
+foreach ($font in @('fa-brands-400.ttf', 'fa-solid-900.ttf')) {
+	Copy-Item -LiteralPath (Join-Path $root "vendor/fontawesome/$font") -Destination $fontsDst
 }
 
 $versionTxt = Join-Path $bin "version.txt"
@@ -66,21 +65,25 @@ if (Test-Path $versionTxt) {
 	Set-Content -LiteralPath (Join-Path $stage "version.txt") -Value $Version -NoNewline -Encoding ascii
 }
 
-foreach ($folder in @("zapret-discord-youtube", "tg-ws-proxy")) {
-	$src = Join-Path $bin $folder
-	if (-not (Test-Path $src)) {
-		Write-Warning "Missing runtime folder: $src"
-		continue
+foreach ($folder in @('zapret-discord-youtube', 'tg-ws-proxy')) {
+	$src = Join-Path $root "vendor/$folder"
+	if (-not (Test-Path -LiteralPath (Join-Path $src '.git'))) {
+		throw "Runtime submodule is not initialized: $folder"
 	}
-	$dst = Join-Path $stage $folder
-	Copy-Item $src $dst -Recurse
-}
-
-# Strip Python caches from tg-ws-proxy
-$tgDst = Join-Path $stage "tg-ws-proxy"
-if (Test-Path $tgDst) {
-	Get-ChildItem $tgDst -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
-		Remove-Item -Recurse -Force
+	& git -C $src diff --quiet HEAD --
+	if ($LASTEXITCODE -ne 0) { throw "Runtime submodule has local changes: $folder" }
+	$files = @(& git -C $src -c core.quotePath=false ls-tree -r --name-only HEAD)
+	if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0) { throw "Cannot list runtime files: $folder" }
+	$allowedPaths = if ($folder -eq 'zapret-discord-youtube') {
+		'^(?:(?:bin|lists|\.service|utils)/|general[^/]*\.bat$|service\.bat$|LICENSE\.txt$)'
+	} else {
+		'^(?:(?:proxy|ui|utils|docs)/|windows\.py$|pyproject\.toml$|icon\.ico$|LICENSE$)'
+	}
+	foreach ($file in ($files | Where-Object { $_ -match $allowedPaths })) {
+		$destination = Join-Path $stage "$folder/$file"
+		New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+		Copy-Item -LiteralPath (Join-Path $src $file) -Destination $destination
+	}
 }
 
 # vpn/: binaries only (no cache/, config.yaml, settings)
@@ -109,7 +112,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($zip)
 try {
 	$bad = @($archive.Entries | Where-Object {
-		$_.FullName -match '(^|[/\\])(settings\.ini|cache([/\\]|$)|config\.yaml|cache\.db|nodes\.txt|state\.ini|result\.ini)'
+		$_.FullName -match '(^|[/\\])(?:settings\.ini|cache|__pycache__|config\.ya?ml|cache\.db|nodes\.txt|state\.ini|result\.ini|ai_strategy\.ini|subscriptions\.(?:json|ini|txt)|[^/\\]+\.py[co])(?:[/\\]|$)'
 	})
 	if ($bad.Count -gt 0) {
 		$bad | ForEach-Object { Write-Host "BAD: $($_.FullName)" }

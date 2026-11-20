@@ -220,7 +220,10 @@ float UiSidebar::Draw(
 		? kRightStripWidth + kRightStripOffsetX
 		: 0.f;
 	if (stripLayoutW > 0.f)
+	{
 		ImGui::Dummy({ stripLayoutW, height });
+		ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ToU32(colors.sidebarBg));
+	}
 
 	const ImVec2 stripMin = { stripAnchor.x + kRightStripOffsetX, stripAnchor.y };
 	const ImVec2 stripMax = { stripMin.x + kRightStripWidth, stripAnchor.y + height };
@@ -233,7 +236,7 @@ float UiSidebar::Draw(
 		overlayDrawList->AddRectFilled(
 			stripMin,
 			stripMax,
-			ToU32(colors.bg),
+			ToU32(colors.workspaceBg),
 			kRightStripRadius,
 			ImDrawFlags_RoundCornersLeft);
 		overlayDrawList->PopClipRect();

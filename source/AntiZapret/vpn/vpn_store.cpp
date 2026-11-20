@@ -69,6 +69,8 @@ void VpnStore::ParseSettingsLine(const std::string& key, const std::string& valu
 		settings.workMode = ParseInt(value, 1);
 	else if (key == "transport_mode")
 		settings.transportMode = ParseInt(value, 1);
+	else if (key == "kill_switch")
+		settings.killSwitch = value == "1";
 	else if (key == "dns_mode")
 		settings.dnsMode = ParseInt(value, 1);
 	else if (key == "bootstrap_dns")
@@ -120,7 +122,33 @@ void VpnStore::ParseSettingsLine(const std::string& key, const std::string& valu
 	}
 }
 
-void VpnStore::LoadSettings(VpnStoreSettings& settings) const
+namespace
+{
+	constexpr char kCardSectionPrefix[] = "vpn_card_";
+
+	std::string CardSection(const std::string& url)
+	{
+		constexpr char hex[] = "0123456789abcdef";
+		std::string section = kCardSectionPrefix;
+		for (unsigned char ch : url)
+		{
+			section += hex[ch >> 4];
+			section += hex[ch & 15];
+		}
+		return section;
+	}
+
+	SettingsDocument::KeyMap CardKeys(const SettingsDocument::KeyMap& keys)
+	{
+		SettingsDocument::KeyMap card;
+		for (const auto& kv : keys)
+			if (kv.first == "last_subscription_url" || kv.first.compare(0, 13, "subscription_") == 0)
+				card.insert(kv);
+		return card;
+	}
+}
+
+void VpnStore::LoadSettings(VpnStoreSettings& settings, SubscriptionCards* cards) const
 {
 	settings = VpnStoreSettings {};
 
@@ -133,18 +161,43 @@ void VpnStore::LoadSettings(VpnStoreSettings& settings) const
 	const SettingsDocument::KeyMap keys = SettingsDocument::GetSection(doc, "vpn");
 	for (const auto& kv : keys)
 		ParseSettingsLine(kv.first, kv.second, settings);
+	if (!cards)
+		return;
+	cards->clear();
+	if (!settings.lastSubscriptionUrl.empty())
+		cards->emplace(settings.lastSubscriptionUrl, settings);
+	for (const auto& section : doc)
+	{
+		if (section.first.compare(0, sizeof(kCardSectionPrefix) - 1, kCardSectionPrefix) != 0)
+			continue;
+		VpnStoreSettings card;
+		for (const auto& kv : section.second)
+			ParseSettingsLine(kv.first, kv.second, card);
+		if (!card.lastSubscriptionUrl.empty())
+		{
+			const auto url = card.lastSubscriptionUrl;
+			cards->insert_or_assign(url, std::move(card));
+		}
+	}
 }
 
-void VpnStore::SaveSettings(const VpnStoreSettings& settings) const
+void VpnStore::SaveSettings(const VpnStoreSettings& settings, bool saveSubscriptionCard) const
 {
 	std::lock_guard<std::mutex> lock(SettingsDocument::Mutex());
 	SettingsDocument::Doc doc;
 	SettingsDocument::Load(doc);
 	// Merge — keep AppSettings keys (e.g. custom_hwid) that share [vpn].
 	SettingsDocument::KeyMap keys = SettingsDocument::GetSection(doc, "vpn");
+	if (saveSubscriptionCard)
+	{
+		const auto previousUrl = keys.find("last_subscription_url");
+		if (previousUrl != keys.end() && !previousUrl->second.empty())
+			doc.try_emplace(CardSection(previousUrl->second), CardKeys(keys));
+	}
 	keys["active_uri"] = settings.activeUri;
 	keys["work_mode"] = std::to_string(settings.workMode);
 	keys["transport_mode"] = std::to_string(settings.transportMode);
+	keys["kill_switch"] = settings.killSwitch ? "1" : "0";
 	keys["dns_mode"] = std::to_string(settings.dnsMode);
 	keys["bootstrap_dns"] = std::to_string(settings.bootstrapDns);
 	keys["bootstrap_type"] = std::to_string(settings.bootstrapType);
@@ -171,6 +224,8 @@ void VpnStore::SaveSettings(const VpnStoreSettings& settings) const
 	keys["subscription_provider_id"] = sanitizeLine(settings.subscriptionProviderId);
 	keys["subscription_user_id"] = sanitizeLine(settings.subscriptionUserId);
 	keys["subscription_icon_url"] = sanitizeLine(settings.subscriptionIconUrl);
+	if (saveSubscriptionCard && !settings.lastSubscriptionUrl.empty())
+		SettingsDocument::SetSection(doc, CardSection(settings.lastSubscriptionUrl), CardKeys(keys));
 	SettingsDocument::SetSection(doc, "vpn", keys);
 	SettingsDocument::Save(doc);
 }
@@ -284,7 +339,7 @@ void VpnStore::Load(std::vector<VpnNode>& nodes, VpnStoreSettings* settings)
 	}
 }
 
-void VpnStore::Save(const std::vector<VpnNode>& nodes, const VpnStoreSettings* settings) const
+void VpnStore::Save(const std::vector<VpnNode>& nodes, const VpnStoreSettings* settings, bool saveSubscriptionCard) const
 {
 	const std::filesystem::path cacheDir = CacheDirectory();
 	std::error_code ec;
@@ -327,5 +382,5 @@ void VpnStore::Save(const std::vector<VpnNode>& nodes, const VpnStoreSettings* s
 	}
 
 	if (settings)
-		SaveSettings(*settings);
+		SaveSettings(*settings, saveSubscriptionCard);
 }

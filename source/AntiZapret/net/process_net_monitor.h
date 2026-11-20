@@ -12,7 +12,8 @@ struct ProcessNetEntry
 	std::string name;
 	float downloadBps = 0.f;
 	float uploadBps = 0.f;
-	int connectionCount = 0;
+	int tcpCount = 0;
+	int udpCount = 0;
 };
 
 // Samples TCP (and UDP presence) per process for Debug home monitor.

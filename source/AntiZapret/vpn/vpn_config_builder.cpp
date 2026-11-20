@@ -581,7 +581,7 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 
 	std::ostringstream yaml;
 	const bool useTun = transport.transportMode != 0;
-	const bool strictRoute = useTun && preset == VpnRoutingPreset::Ruv1All;
+	const bool strictRoute = useTun && (transport.killSwitch || preset == VpnRoutingPreset::Ruv1All);
 
 	yaml << "mixed-port: " << mixedPort << "\n";
 	yaml << "external-controller: 127.0.0.1:" << apiPort << "\n";
@@ -622,7 +622,22 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 	}
 	yaml << "\n";
 
-	AppendDnsBlock(yaml, transport, preset, useTun);
+	if (transport.killSwitch)
+	{
+		if (!useTun || transport.killSwitchServerIp.empty())
+		{
+			outError = "Kill Switch: не подготовлен адрес VPN-сервера.";
+			return false;
+		}
+		if (node.server != transport.killSwitchServerIp)
+			yaml << "hosts:\n  " << YamlQuote(node.server) << ": " << YamlQuote(transport.killSwitchServerIp) << "\n";
+		yaml << "dns:\n"
+			<< "  enable: true\n  ipv6: false\n  use-hosts: true\n  use-system-hosts: false\n"
+			<< "  enhanced-mode: fake-ip\n  fake-ip-range: 198.18.0.1/16\n"
+			<< "  nameserver:\n    - 'https://1.1.1.1/dns-query#PROXY'\n\n";
+	}
+	else
+		AppendDnsBlock(yaml, transport, preset, useTun);
 	yaml << "proxies:\n";
 	yaml << proxyYaml;
 	yaml << "\n";
@@ -647,7 +662,7 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 		appSettings.Load();
 		customRouting.includeAdultServices = appSettings.GetConfirmAdult();
 
-		if (fetchGeosites)
+		if (fetchGeosites && !transport.killSwitch)
 		{
 			std::vector<std::string> requiredGeosites;
 			VpnServiceRoutes::CollectRequiredGeosites(customRouting.services, requiredGeosites);
@@ -687,7 +702,7 @@ bool VpnConfigBuilder::WriteRuntimeConfig(
 		return false;
 	}
 
-	output << configBody;
+	output << (transport.killSwitch ? yaml.str() + "rules:\n  - MATCH,PROXY\n" : configBody);
 	return output.good();
 }
 

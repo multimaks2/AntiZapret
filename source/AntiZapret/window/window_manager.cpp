@@ -217,6 +217,15 @@ bool WindowManager::Create(float dpiScale, int minWidth, int minHeight)
 	windowClass.hIconSm = (HICON)LoadImageW(instance, MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
 	RegisterClassExW(&windowClass);
 
+	int initialWidth = static_cast<int>(1080 * dpiScale);
+	MONITORINFO startupMonitor = {};
+	startupMonitor.cbSize = sizeof(startupMonitor);
+	if (GetMonitorInfoW(MonitorFromPoint(POINT{ 100, 100 }, MONITOR_DEFAULTTONEAREST), &startupMonitor))
+	{
+		const int availableWidth = static_cast<int>(startupMonitor.rcWork.right - (std::max)(100L, startupMonitor.rcWork.left));
+		if (availableWidth > 0 && availableWidth < initialWidth)
+			initialWidth = availableWidth;
+	}
 	m_hwnd = CreateWindowExW(
 		WS_EX_APPWINDOW,
 		kWindowClassName,
@@ -224,7 +233,7 @@ bool WindowManager::Create(float dpiScale, int minWidth, int minHeight)
 		// THICKFRAME + min/max/sysmenu: taskbar toggle + snap. NCCALCSIZE keeps full client area.
 		WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
 		100, 100,
-		int(800 * dpiScale),
+		initialWidth,
 		int(600 * dpiScale),
 		nullptr, nullptr, instance, this);
 	if (!m_hwnd)

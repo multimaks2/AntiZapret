@@ -101,6 +101,7 @@ void AppSettings::Load()
 	m_showExtraStrategies = false;
 	m_quickStrategyTest = false;
 	m_networkSpeedBits = false;
+	m_seenReleaseNotesVersion.clear();
 	m_fontScale = kDefaultFontScale;
 	m_customHwid.clear();
 	ResetScrollMultipliers(m_pageScrollMultipliers);
@@ -211,6 +212,8 @@ void AppSettings::Load()
 				m_discordImportVpnExpiresAt = static_cast<std::int64_t>(std::atoll(value.c_str()));
 			else if (key == "network_speed_bits")
 				m_networkSpeedBits = ParseBool(value);
+			else if (key == "seen_release_notes_version")
+				m_seenReleaseNotesVersion = value;
 			else if (key == "font_scale")
 				m_fontScale = ClampFontScale(ParseFloat(value, kDefaultFontScale));
 			else if (key == "custom_hwid" && !value.empty())
@@ -296,6 +299,7 @@ void AppSettings::Save()
 	ui["discord_import_az_expires_at"] = std::to_string(static_cast<long long>(m_discordImportAzExpiresAt));
 	ui["discord_import_vpn_expires_at"] = std::to_string(static_cast<long long>(m_discordImportVpnExpiresAt));
 	ui["network_speed_bits"] = m_networkSpeedBits ? "1" : "0";
+	ui["seen_release_notes_version"] = m_seenReleaseNotesVersion;
 	ui["font_scale"] = std::to_string(m_fontScale);
 	if (!m_customHwid.empty())
 		ui["custom_hwid"] = m_customHwid;

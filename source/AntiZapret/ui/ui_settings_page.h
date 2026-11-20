@@ -31,5 +31,6 @@ private:
 	char m_discordImportMinutes[16] = "5";
 	char m_customHwid[96] = {};
 	bool m_loadedFromSettings = false;
+	float m_scrollForAllPages = 2.f;
 	VpnManager* m_vpnManager = nullptr;
 };

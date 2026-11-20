@@ -101,7 +101,7 @@ namespace
 
 	bool DrawFilterButton(const char* label, bool selected, const UiThemeColors& colors)
 	{
-		const ImVec2 size = { ImGui::CalcTextSize(label).x + 24.f, UiMetrics::kSmallBtnHeight };
+		const ImVec2 size = { ImGui::CalcTextSize(label).x + 16.f, UiMetrics::kSmallBtnHeight };
 		if (selected)
 		{
 			ImGui::PushStyleColor(ImGuiCol_Button, colors.navActive);
@@ -136,9 +136,6 @@ void UiConsolePage::RebuildDisplayBuffer(const std::vector<LogEntry>& entries)
 
 	m_displayBuf.assign(text.begin(), text.end());
 	m_displayBuf.push_back('\0');
-	m_cachedCount = entries.size();
-	m_cachedFilter = m_filter;
-	m_cachedTail = entries.empty() ? std::string() : entries.back().text;
 }
 
 void UiConsolePage::ApplyLogInertiaScroll(ImGuiWindow* logWindow, float wheelCaptured, float wheelMultiplier)
@@ -198,7 +195,7 @@ void UiConsolePage::ApplyLogInertiaScroll(ImGuiWindow* logWindow, float wheelCap
 		m_autoScroll = true;
 }
 
-void UiConsolePage::DrawContent(ThemeManager& theme, FontManager& fonts, float width)
+void UiConsolePage::DrawContent(ThemeManager& theme, FontManager& fonts, float width, float wheelMultiplier)
 {
 	(void)fonts;
 	const UiThemeColors colors = theme.GetColors();
@@ -227,19 +224,40 @@ void UiConsolePage::DrawContent(ThemeManager& theme, FontManager& fonts, float w
 		{ LogFilter::VpnRouting, "VPN и маршрутизация" },
 	};
 
+	const bool compact = ImGui::GetContentRegionAvail().x < 520.f;
+	const float actionsGap = compact ? 4.f : UiMetrics::kGridGap;
 	for (size_t i = 0; i < std::size(kFilters); ++i)
 	{
 		if (i > 0)
-			ImGui::SameLine(0.f, UiMetrics::kGridGap);
+			ImGui::SameLine(0.f, actionsGap);
 		ImGui::PushID(static_cast<int>(kFilters[i].filter));
-		if (DrawFilterButton(kFilters[i].label, m_filter == kFilters[i].filter, colors))
+		const bool compactVpn = compact && kFilters[i].filter == LogFilter::VpnRouting;
+		if (DrawFilterButton(compactVpn ? "VPN" : kFilters[i].label, m_filter == kFilters[i].filter, colors))
 			m_filter = kFilters[i].filter;
+		if (compactVpn)
+			UiCommon::SetItemTooltip("%s", kFilters[i].label);
 		ImGui::PopID();
 	}
 
-	ImGui::SameLine(0.f, UiMetrics::kGridGap * 2.f);
-	if (UiCommon::SecondaryButton("Очистить", { 92.f, UiMetrics::kSmallBtnHeight }, colors))
+	if (m_cachedFilter != m_filter)
+	{
+		m_cachedFilter = m_filter;
+		m_cachedRevision = 0;
+	}
+	std::vector<LogEntry> entries;
+	if (AppLog::Instance().SnapshotIfChanged(m_filter, m_cachedRevision, entries))
+		RebuildDisplayBuffer(entries);
+	bool hasLogs = m_displayBuf.size() > 1;
+	ImGui::SameLine(0.f, actionsGap);
+	if (UiCommon::SecondaryButton("Копировать", { 0.f, UiMetrics::kSmallBtnHeight }, colors, hasLogs))
+		ImGui::SetClipboardText(m_displayBuf.data());
+	ImGui::SameLine(0.f, actionsGap);
+	if (UiCommon::SecondaryButton("Очистить", { 0.f, UiMetrics::kSmallBtnHeight }, colors, hasLogs))
+	{
 		AppLog::Instance().Clear(m_filter);
+		m_displayBuf.assign(1, '\0');
+		hasLogs = false;
+	}
 
 	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 
@@ -251,14 +269,8 @@ void UiConsolePage::DrawContent(ThemeManager& theme, FontManager& fonts, float w
 
 	if (UiCommon::BeginCard("##console_log", width, colors))
 	{
-		const std::vector<LogEntry> entries = AppLog::Instance().Snapshot(m_filter);
-
-		if (entries.empty())
+		if (!hasLogs)
 		{
-			m_displayBuf.clear();
-			m_displayBuf.push_back('\0');
-			m_cachedCount = 0;
-			m_cachedTail.clear();
 			m_logScrollReady = false;
 			m_logScrollVelocity = 0.f;
 			m_autoScroll = true;
@@ -269,15 +281,6 @@ void UiConsolePage::DrawContent(ThemeManager& theme, FontManager& fonts, float w
 		}
 		else
 		{
-			const std::string tail = entries.back().text;
-			if (m_displayBuf.empty()
-				|| m_cachedCount != entries.size()
-				|| m_cachedFilter != m_filter
-				|| m_cachedTail != tail)
-			{
-				RebuildDisplayBuffer(entries);
-			}
-
 			const bool light = UiCommon::IsLightTheme(colors);
 			const ImVec4 consoleBg = light
 				? ImVec4(0.92f, 0.92f, 0.94f, 1.f)
@@ -312,7 +315,7 @@ void UiConsolePage::DrawContent(ThemeManager& theme, FontManager& fonts, float w
 			}
 
 			ImGuiWindow* logWindow = ImGui::FindWindowByName(childName);
-			ApplyLogInertiaScroll(logWindow, wheelCaptured, AppSettings::kDefaultScrollMultiplier);
+			ApplyLogInertiaScroll(logWindow, wheelCaptured, wheelMultiplier);
 
 			ImGui::InputTextMultiline(
 				"##console_log_text",

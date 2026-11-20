@@ -54,6 +54,9 @@ private:
 	int m_selectedProcess = -1;
 	int m_selectedDomain = -1;
 	char m_serviceSearch[128] = {};
+	std::string m_normalizedServiceSearch;
+	static std::string NormalizeCatalogSearch(const char* text);
+	int m_catalogView = 0;
 	bool m_gamesExpanded = false;
 	std::unordered_map<int, bool> m_sectionExpanded;
 	char m_customAppName[96] = {};

@@ -65,13 +65,16 @@ void D3D11Renderer::Resize(UINT width, UINT height)
 	}
 }
 
-void D3D11Renderer::Render(const DrawCallback& drawCallback, const float clearColor[4], bool vsync)
+void D3D11Renderer::Render(const DrawCallback& drawCallback, const float clearColor[4], bool vsync, bool resumed)
 {
 	if (!m_renderTarget || !drawCallback)
 		return;
 
 	ImGui_ImplDX11_NewFrame();
 	ImGui_ImplWin32_NewFrame();
+	// Do not feed the entire hidden interval into UI animations on restore.
+	if (resumed && ImGui::GetIO().DeltaTime > 1.f / 24.f)
+		ImGui::GetIO().DeltaTime = 1.f / 24.f;
 	ImGui::NewFrame();
 	drawCallback();
 	ImGui::Render();

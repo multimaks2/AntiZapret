@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ui/ui_smooth_scroll.h"
+
 #include "vpn/vpn_import.h"
 #include "vpn/vpn_node.h"
 #include "vpn/vpn_store.h"
@@ -25,7 +27,7 @@ public:
 		Detail
 	};
 
-	void DrawContent(ThemeManager& theme, FontManager& fonts, float width);
+	void DrawContent(ThemeManager& theme, FontManager& fonts, float width, float wheelMultiplier);
 
 	void SetManager(VpnManager* manager) { m_manager = manager; }
 	void UpdateRuntime();
@@ -72,7 +74,8 @@ private:
 		std::vector<std::string> errors,
 		const VpnImportResult& meta);
 	void ApplySubscriptionMetaToSettings(VpnStoreSettings& settings, const VpnImportResult& meta);
-	void DrawListView(ThemeManager& theme, FontManager& fonts, float width);
+	void DrawListView(ThemeManager& theme, FontManager& fonts, float width, float wheelMultiplier);
+	UiSmoothScroll m_serverListScroll;
 	void DrawDetailView(ThemeManager& theme, FontManager& fonts, float width);
 	void SyncVpnRuntime();
 	void SyncDiscordRouteWithFixDiscord();
@@ -112,6 +115,7 @@ private:
 	char m_search[128] = {};
 	int m_workMode = 1;
 	int m_transportMode = 1; // 0 = Proxy, 1 = Tunnel
+	bool m_killSwitch = false;
 	int m_selected = -1; // anchor for single-target actions / Shift range
 	std::unordered_set<int> m_selectedSet;
 	int m_activeIndex = -1;
@@ -120,6 +124,7 @@ private:
 	bool m_pingTestRunning = false;
 	bool m_vpnEnabled = false;
 	float m_vpnMix = 0.f;
+	float m_killSwitchMix = 0.f;
 	bool m_fixDiscord = false;
 	bool m_storeLoaded = false;
 
@@ -162,11 +167,12 @@ private:
 
 	struct PendingGeoResult
 	{
-		int nodeIndex = -1;
+		std::string server;
 		std::string countryCode;
 	};
 	std::mutex m_geoMutex;
 	std::vector<PendingGeoResult> m_pendingGeo;
+	std::unordered_map<std::string, unsigned long long> m_geoRetryAfter;
 	std::unordered_set<std::string> m_geoInFlight;
 
 	std::atomic<bool> m_pingRunning { false };

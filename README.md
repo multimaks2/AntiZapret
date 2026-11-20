@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/multimaks2/AntiZapret/releases/download/v1.3.9/AntiZapret-Installer.exe"><img src="https://img.shields.io/badge/download-Installer%20v1.3.9-2ea44f?style=for-the-badge" alt="Download Installer"></a>
-  <a href="https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.9"><img src="https://img.shields.io/badge/release-v1.3.9-24292f?style=for-the-badge" alt="Release"></a>
+  <a href="https://github.com/multimaks2/AntiZapret/releases/latest/download/AntiZapret-Installer.exe"><img src="https://img.shields.io/github/v/release/multimaks2/AntiZapret?display_name=tag&amp;label=Installer&amp;color=2ea44f&amp;style=for-the-badge" alt="Скачать установщик последнего релиза"></a>
+  <a href="https://github.com/multimaks2/AntiZapret/releases/latest"><img src="https://img.shields.io/github/v/release/multimaks2/AntiZapret?display_name=tag&amp;label=Release&amp;color=24292f&amp;style=for-the-badge" alt="Последний релиз"></a>
   <img src="https://img.shields.io/badge/platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
 </p>
 
@@ -49,14 +49,14 @@
 
 ## 📥 Скачать
 
-Последний релиз: **[v1.3.9](https://github.com/multimaks2/AntiZapret/releases/tag/v1.3.9)** 🎉
+**[Последний релиз на GitHub](https://github.com/multimaks2/AntiZapret/releases/latest)** 🎉
 
 **Рекомендуется:** скачать и запустить установщик  
-➡️ **[AntiZapret-Installer.exe](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.9/AntiZapret-Installer.exe)**  
-(нужны права администратора)
+
+➡️ **[AntiZapret-Installer.exe](https://github.com/multimaks2/AntiZapret/releases/latest/download/AntiZapret-Installer.exe)** (нужны права администратора)
 
 Альтернатива без установщика: архив  
-[`AntiZapret-1.3.9-win32.zip`](https://github.com/multimaks2/AntiZapret/releases/download/v1.3.9/AntiZapret-1.3.9-win32.zip) → распаковать → запустить `AntiZapret.exe` **от имени администратора** 🔑
+В [последнем релизе](https://github.com/multimaks2/AntiZapret/releases/latest) скачайте `AntiZapret-<версия>-win32.zip` из списка файлов, распакуйте его и запустите `AntiZapret.exe` **от имени администратора** 🔑
 
 ---
 

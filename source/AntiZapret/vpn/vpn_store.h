@@ -4,17 +4,19 @@
 #include "vpn/vpn_transport_settings.h"
 
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
 class VpnStore
 {
 public:
+	using SubscriptionCards = std::map<std::string, VpnStoreSettings>;
 	void Load(std::vector<VpnNode>& nodes, VpnStoreSettings* settings = nullptr);
-	void Save(const std::vector<VpnNode>& nodes, const VpnStoreSettings* settings = nullptr) const;
+	void Save(const std::vector<VpnNode>& nodes, const VpnStoreSettings* settings = nullptr, bool saveSubscriptionCard = false) const;
 
-	void LoadSettings(VpnStoreSettings& settings) const;
-	void SaveSettings(const VpnStoreSettings& settings) const;
+	void LoadSettings(VpnStoreSettings& settings, SubscriptionCards* cards = nullptr) const;
+	void SaveSettings(const VpnStoreSettings& settings, bool saveSubscriptionCard = false) const;
 
 private:
 	std::filesystem::path CacheDirectory() const;

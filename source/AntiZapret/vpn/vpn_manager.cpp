@@ -16,6 +16,9 @@
 #include "zapret/zapret_paths.h"
 
 #include <WinInet.h>
+#include <iphlpapi.h>
+#include <initguid.h>
+#include <fwpmu.h>
 
 #include <filesystem>
 #include <sstream>
@@ -23,6 +26,8 @@
 #include <vector>
 
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "fwpuclnt.lib")
+#pragma comment(lib, "iphlpapi.lib")
 
 namespace
 {
@@ -39,6 +44,49 @@ namespace
 			return;
 		WSADATA data = {};
 		ready = (WSAStartup(MAKEWORD(2, 2), &data) == 0);
+	}
+
+	constexpr GUID kKillSwitchLayer = { 0x125dbd51, 0xa65a, 0x4f36, {0x96, 0xe3, 0xe5, 0xfd, 0x47, 0xed, 0xc3, 0x2b} };
+
+	std::string ResolveKillSwitchIp(const std::string& server)
+	{
+		EnsureWinsock();
+		addrinfo hints {};
+		hints.ai_family = AF_INET;
+		addrinfo* addresses = nullptr;
+		if (getaddrinfo(server.c_str(), nullptr, &hints, &addresses) != 0)
+			return {};
+		char ip[INET_ADDRSTRLEN] {};
+		if (addresses && addresses->ai_addrlen >= sizeof(sockaddr_in))
+			InetNtopA(AF_INET, &reinterpret_cast<sockaddr_in*>(addresses->ai_addr)->sin_addr, ip, sizeof(ip));
+		freeaddrinfo(addresses);
+		return ip;
+	}
+
+	UINT64 KillSwitchTunLuid()
+	{
+		NET_LUID luid {};
+		return ConvertInterfaceAliasToLuid(L"AntiZapret", &luid) == NO_ERROR ? luid.Value : 0;
+	}
+
+	DWORD AddKillSwitchFilter(HANDLE engine, const GUID& layer, FWP_ACTION_TYPE action, UINT8 weight,
+		FWPM_FILTER_CONDITION0* conditions, UINT32 count, std::vector<UINT64>& ids)
+	{
+		FWPM_FILTER0 filter {};
+		wchar_t name[] = L"AntiZapret Kill Switch";
+		filter.displayData.name = name;
+		filter.layerKey = layer;
+		filter.subLayerKey = kKillSwitchLayer;
+		filter.weight.type = FWP_UINT8;
+		filter.weight.uint8 = weight;
+		filter.action.type = action;
+		filter.filterCondition = conditions;
+		filter.numFilterConditions = count;
+		UINT64 id = 0;
+		const DWORD status = FwpmFilterAdd0(engine, &filter, nullptr, &id);
+		if (status == ERROR_SUCCESS)
+			ids.push_back(id);
+		return status;
 	}
 
 	bool IsTcpPortFree(int port)
@@ -209,12 +257,146 @@ VpnManager::VpnManager() = default;
 VpnManager::~VpnManager()
 {
 	Stop();
+	ReleaseKillSwitch();
 }
 
 void VpnManager::Update(float deltaTime)
 {
+	std::unique_lock<std::mutex> lock(m_opMutex, std::try_to_lock);
+	if (!lock.owns_lock())
+		return;
 	RefreshRunStatus();
+	if (m_killSwitchArmed.load())
+		RefreshKillSwitchInterface();
 	(void)deltaTime;
+}
+
+bool VpnManager::ApplyKillSwitch(const std::string& serverIp, int port)
+{
+	IN_ADDR address {};
+	if (port <= 0 || port > 65535 || InetPtonA(AF_INET, serverIp.c_str(), &address) != 1)
+	{
+		m_lastError = "Kill Switch: нужен доступный IPv4-адрес VPN-сервера.";
+		return false;
+	}
+
+	const auto binary = std::filesystem::path(ZapretPaths::GetVpnDirectory()) / L"mihomo.exe";
+	FWP_BYTE_BLOB* app = nullptr;
+	DWORD status = FwpmGetAppIdFromFileName0(binary.c_str(), &app);
+	const bool freshSession = !m_filterEngine;
+	if (!status && freshSession)
+	{
+		FWPM_SESSION0 session {};
+		session.flags = FWPM_SESSION_FLAG_DYNAMIC;
+		session.txnWaitTimeoutInMSec = 500;
+		status = FwpmEngineOpen0(nullptr, RPC_C_AUTHN_WINNT, nullptr, &session, &m_filterEngine);
+	}
+
+	if (!status)
+		status = FwpmTransactionBegin0(m_filterEngine, 0);
+	const bool transaction = !status;
+	if (!status && freshSession)
+	{
+		wchar_t name[] = L"AntiZapret Kill Switch";
+		FWPM_SUBLAYER0 sublayer {};
+		sublayer.subLayerKey = kKillSwitchLayer;
+		sublayer.displayData.name = name;
+		sublayer.weight = 0xfff0;
+		status = FwpmSubLayerAdd0(m_filterEngine, &sublayer, nullptr);
+	}
+	for (const auto id : m_killSwitchFilters)
+		if (!status)
+			status = FwpmFilterDeleteById0(m_filterEngine, id);
+
+	std::vector<UINT64> ids;
+	UINT64 luid = KillSwitchTunLuid();
+	const auto add = [&](const GUID& layer, bool permit, FWPM_FILTER_CONDITION0* match, UINT32 count)
+	{
+		if (!status)
+			status = AddKillSwitchFilter(m_filterEngine, layer, permit ? FWP_ACTION_PERMIT : FWP_ACTION_BLOCK,
+				permit ? 15 : 0, match, count, ids);
+	};
+	FWPM_FILTER_CONDITION0 loopback {};
+	loopback.fieldKey = FWPM_CONDITION_FLAGS;
+	loopback.matchType = FWP_MATCH_FLAGS_ALL_SET;
+	loopback.conditionValue.type = FWP_UINT32;
+	loopback.conditionValue.uint32 = FWP_CONDITION_FLAG_IS_LOOPBACK;
+	FWPM_FILTER_CONDITION0 tunnel {};
+	tunnel.fieldKey = FWPM_CONDITION_IP_LOCAL_INTERFACE;
+	tunnel.matchType = FWP_MATCH_EQUAL;
+	tunnel.conditionValue.type = FWP_UINT64;
+	tunnel.conditionValue.uint64 = &luid;
+	FWPM_FILTER_CONDITION0 endpoint[3] {};
+	endpoint[0].fieldKey = FWPM_CONDITION_IP_REMOTE_ADDRESS;
+	endpoint[0].conditionValue.type = FWP_UINT32;
+	endpoint[0].conditionValue.uint32 = ntohl(address.S_un.S_addr);
+	endpoint[1].fieldKey = FWPM_CONDITION_IP_REMOTE_PORT;
+	endpoint[1].conditionValue.type = FWP_UINT16;
+	endpoint[1].conditionValue.uint16 = static_cast<UINT16>(port);
+	endpoint[2].fieldKey = FWPM_CONDITION_ALE_APP_ID;
+	endpoint[2].conditionValue.type = FWP_BYTE_BLOB_TYPE;
+	endpoint[2].conditionValue.byteBlob = app;
+	for (auto& condition : endpoint)
+		condition.matchType = FWP_MATCH_EQUAL;
+
+	// Check the actual outgoing interface even when a socket was authorized earlier.
+	add(FWPM_LAYER_OUTBOUND_IPPACKET_V4, true, &loopback, 1);
+	if (luid)
+		add(FWPM_LAYER_OUTBOUND_IPPACKET_V4, true, &tunnel, 1);
+	add(FWPM_LAYER_OUTBOUND_IPPACKET_V4, true, endpoint, 1);
+	add(FWPM_LAYER_OUTBOUND_IPPACKET_V4, false, nullptr, 0);
+
+	for (auto layer : { &FWPM_LAYER_ALE_AUTH_CONNECT_V4, &FWPM_LAYER_OUTBOUND_TRANSPORT_V4 })
+	{
+		add(*layer, true, &loopback, 1);
+		if (luid)
+			add(*layer, true, &tunnel, 1);
+		add(*layer, true, endpoint, layer == &FWPM_LAYER_ALE_AUTH_CONNECT_V4 ? 3u : 2u);
+		add(*layer, false, nullptr, 0);
+	}
+	for (auto layer : { &FWPM_LAYER_ALE_AUTH_CONNECT_V6, &FWPM_LAYER_OUTBOUND_TRANSPORT_V6, &FWPM_LAYER_OUTBOUND_IPPACKET_V6 })
+	{
+		add(*layer, true, &loopback, 1);
+		add(*layer, false, nullptr, 0);
+	}
+	if (app)
+		FwpmFreeMemory0(reinterpret_cast<void**>(&app));
+	if (transaction && !status)
+		status = FwpmTransactionCommit0(m_filterEngine);
+	if (status)
+	{
+		if (transaction)
+			FwpmTransactionAbort0(m_filterEngine);
+		if (freshSession)
+			ReleaseKillSwitch();
+		m_lastError = "Kill Switch: не удалось установить фильтры Windows (" + std::to_string(status) + ").";
+		return false;
+	}
+	m_killSwitchFilters.swap(ids);
+	m_killSwitchIp = serverIp;
+	m_killSwitchPort = port;
+	m_killSwitchLuid = luid;
+	m_killSwitchArmed.store(true);
+	return true;
+}
+
+void VpnManager::ReleaseKillSwitch()
+{
+	if (m_filterEngine)
+		FwpmEngineClose0(m_filterEngine);
+	m_filterEngine = nullptr;
+	m_killSwitchFilters.clear();
+	m_killSwitchServer.clear();
+	m_killSwitchIp.clear();
+	m_killSwitchPort = 0;
+	m_killSwitchLuid = 0;
+	m_killSwitchArmed.store(false);
+}
+
+void VpnManager::RefreshKillSwitchInterface()
+{
+	if (KillSwitchTunLuid() != m_killSwitchLuid)
+		ApplyKillSwitch(m_killSwitchIp, m_killSwitchPort);
 }
 
 bool VpnManager::ResolveActiveNode(
@@ -500,29 +682,51 @@ int VpnManager::ResolveActiveIndex(const std::vector<VpnNode>& nodes, const VpnS
 
 bool VpnManager::Start(const std::vector<VpnNode>& nodes, int activeIndex, const VpnStoreSettings& settings)
 {
-	Stop();
-
 	std::string runtimeError;
 	if (!IsRuntimeReady(runtimeError))
 	{
+		Stop();
 		// Soft wait — SyncVpnRuntime retries by readiness; don't treat as hard crash spam.
 		m_lastError = runtimeError;
 		m_statusMessage = runtimeError;
 		return false;
 	}
 
-	EnsurePortsAllocated();
-
 	const VpnNode* activeNode = nullptr;
 	std::string selectionMessage;
 	if (!ResolveActiveNode(nodes, activeIndex, activeNode, selectionMessage))
 	{
+		Stop();
 		m_lastError = selectionMessage;
 		LogVpnMessage(m_lastError);
 		return false;
 	}
 
-	if (!WriteAndReloadConfig(*activeNode, settings, true, m_lastError))
+	VpnStoreSettings runtimeSettings = settings;
+	if (settings.killSwitch)
+	{
+		if (settings.transportMode != 1)
+		{
+			Stop();
+			m_lastError = "Kill Switch доступен только в режиме Tunnel.";
+			return false;
+		}
+		runtimeSettings.killSwitchServerIp = m_killSwitchServer == activeNode->server
+			? m_killSwitchIp : ResolveKillSwitchIp(activeNode->server);
+		if (!ApplyKillSwitch(runtimeSettings.killSwitchServerIp, activeNode->port))
+		{
+			Stop();
+			LogVpnMessage(m_lastError);
+			return false;
+		}
+		m_killSwitchServer = activeNode->server;
+	}
+
+	Stop();
+	if (!settings.killSwitch)
+		ReleaseKillSwitch();
+	EnsurePortsAllocated();
+	if (!WriteAndReloadConfig(*activeNode, runtimeSettings, true, m_lastError))
 	{
 		LogVpnMessage(m_lastError);
 		return false;
@@ -554,7 +758,7 @@ bool VpnManager::Start(const std::vector<VpnNode>& nodes, int activeIndex, const
 
 bool VpnManager::Reload(const std::vector<VpnNode>& nodes, int activeIndex, const VpnStoreSettings& settings)
 {
-	if (!IsRunning())
+	if (!IsRunning() || settings.killSwitch || IsKillSwitchArmed())
 		return Start(nodes, activeIndex, settings);
 
 	const VpnNode* activeNode = nullptr;
@@ -696,13 +900,15 @@ void VpnManager::RequestStart(
 	}).detach();
 }
 
-void VpnManager::RequestStop()
+void VpnManager::RequestStop(bool releaseKillSwitch)
 {
-	std::thread([this]()
+	std::thread([this, releaseKillSwitch]()
 	{
 		std::lock_guard<std::mutex> lock(m_opMutex);
 		m_opInFlight.store(true);
 		Stop();
+		if (releaseKillSwitch)
+			ReleaseKillSwitch();
 		m_opInFlight.store(false);
 	}).detach();
 }

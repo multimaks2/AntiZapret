@@ -31,6 +31,8 @@ workspace "AntiZapret"
 
 	filter "configurations:Release"
 		symbols "Off"
+		-- Keep the setup wizard and installed executables runnable before any VC++ redist is installed.
+		staticruntime "On"
 		optimize "Size"
 		buildoptions { "/Gy" }
 		linkoptions { "/OPT:REF", "/OPT:ICF" }

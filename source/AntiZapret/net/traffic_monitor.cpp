@@ -154,30 +154,6 @@ namespace
 	}
 }
 
-float TrafficMonitor::NiceScaleMax(float valueBps)
-{
-	const float minScale = 1024.f;
-	float value = (std::max)(valueBps, minScale);
-	const float exponent = std::floor(std::log10(value));
-	const float base = std::pow(10.f, exponent);
-	const float normalized = value / base;
-
-	static constexpr float kSteps[] = {
-		1.f, 1.2f, 1.5f, 2.f, 2.5f, 3.f, 4.f, 5.f, 6.f, 8.f, 10.f
-	};
-	float nice = 10.f;
-	for (float step : kSteps)
-	{
-		if (normalized <= step + 0.001f)
-		{
-			nice = step;
-			break;
-		}
-	}
-
-	return nice * base;
-}
-
 void TrafficMonitor::Update(float deltaTime)
 {
 	if (deltaTime <= 0.f)
@@ -196,7 +172,7 @@ void TrafficMonitor::Update(float deltaTime)
 		{
 			m_downloadHistory[m_historyIndex] = m_downloadBps;
 			m_uploadHistory[m_historyIndex] = m_uploadBps;
-			m_historyIndex = (m_historyIndex + 1) % kHistorySize;
+			m_historyIndex = (m_historyIndex + 1) % kHistoryCapacity;
 			if (m_historyIndex == 0)
 				m_historyFilled = true;
 		}
@@ -216,21 +192,17 @@ void TrafficMonitor::UpdateDisplaySmoothing(float deltaTime)
 	m_peakDownloadBps = PeakHold(m_peakDownloadBps, m_downloadBps, deltaTime, 0.28f);
 	m_peakUploadBps = PeakHold(m_peakUploadBps, m_uploadBps, deltaTime, 0.28f);
 
-	float windowPeak = (std::max)(m_displayDownloadBps, m_displayUploadBps);
-	windowPeak = (std::max)(windowPeak, m_downloadBps);
-	windowPeak = (std::max)(windowPeak, m_uploadBps);
+	float windowPeak = (std::max)(m_downloadBps, m_uploadBps);
 	const size_t count = GetHistorySampleCount();
 	for (size_t i = 0; i < count; ++i)
 	{
-		windowPeak = (std::max)(windowPeak, GetDownloadSampleAt(i));
-		windowPeak = (std::max)(windowPeak, GetUploadSampleAt(i));
+		windowPeak = (std::max)(windowPeak, (std::max)(GetDownloadSampleAt(i), GetUploadSampleAt(i)));
 	}
 
-	const float targetScale = NiceScaleMax(windowPeak * 1.18f);
-	const float scaleSpeed = targetScale > m_displayScaleMax ? 5.f : 1.4f;
+	const float targetScale = (std::max)(1024.f, windowPeak * 1.18f);
+	const float scaleSpeed = targetScale > m_displayScaleMax ? 6.f : 0.85f;
 	m_displayScaleMax = ExpSmooth(m_displayScaleMax, targetScale, deltaTime, scaleSpeed);
-	if (targetScale < m_displayScaleMax * 0.92f)
-		m_displayScaleMax = ExpSmooth(m_displayScaleMax, targetScale, deltaTime, 2.2f);
+	m_displayScaleMax = (std::max)(m_displayScaleMax, windowPeak);
 }
 
 void TrafficMonitor::Sample(float elapsedSec)
@@ -281,7 +253,7 @@ float TrafficMonitor::GetLinkCapacityBytesPerSec() const
 
 size_t TrafficMonitor::GetHistorySampleCount() const
 {
-	return m_historyFilled ? kHistorySize : m_historyIndex;
+	return m_historyFilled ? kHistoryCapacity : m_historyIndex;
 }
 
 float TrafficMonitor::GetDownloadSampleAt(size_t chronologicalIndex) const
@@ -290,7 +262,7 @@ float TrafficMonitor::GetDownloadSampleAt(size_t chronologicalIndex) const
 	if (count == 0 || chronologicalIndex >= count)
 		return 0.f;
 	const size_t start = m_historyFilled ? m_historyIndex : 0;
-	return m_downloadHistory[(start + chronologicalIndex) % kHistorySize];
+	return m_downloadHistory[(start + chronologicalIndex) % kHistoryCapacity];
 }
 
 float TrafficMonitor::GetUploadSampleAt(size_t chronologicalIndex) const
@@ -299,5 +271,5 @@ float TrafficMonitor::GetUploadSampleAt(size_t chronologicalIndex) const
 	if (count == 0 || chronologicalIndex >= count)
 		return 0.f;
 	const size_t start = m_historyFilled ? m_historyIndex : 0;
-	return m_uploadHistory[(start + chronologicalIndex) % kHistorySize];
+	return m_uploadHistory[(start + chronologicalIndex) % kHistoryCapacity];
 }

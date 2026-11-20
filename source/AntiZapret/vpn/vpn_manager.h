@@ -35,7 +35,7 @@ public:
 	void RequestReload(const std::vector<VpnNode>& nodes, int activeIndex, const VpnStoreSettings& settings);
 	void RequestReloadFromStore();
 	void Stop();
-	void RequestStop();
+	void RequestStop(bool releaseKillSwitch = false);
 
 	// RealPing: launch mihomo against already-written config.yaml (no system proxy).
 	bool StartFromExistingConfig(int mixedPort, int apiPort);
@@ -44,6 +44,7 @@ public:
 
 	VpnRunStatus GetRunStatus() const { return m_runStatus; }
 	bool IsOperationInFlight() const { return m_opInFlight.load(); }
+	bool IsKillSwitchArmed() const { return m_killSwitchArmed.load(); }
 	bool IsRunning() const { return m_runStatus == VpnRunStatus::Running; }
 	int GetAppliedRoutingRevision() const { return m_appliedRoutingRevision; }
 	int GetMixedPort() const { return m_mixedPort; }
@@ -67,6 +68,16 @@ private:
 	int ResolveActiveIndex(const std::vector<VpnNode>& nodes, const VpnStoreSettings& settings) const;
 	void RunReloadWorker();
 	void EnsurePortsAllocated();
+	bool ApplyKillSwitch(const std::string& serverIp, int port);
+	void ReleaseKillSwitch();
+	void RefreshKillSwitchInterface();
+	std::atomic<bool> m_killSwitchArmed { false };
+	HANDLE m_filterEngine = nullptr;
+	std::vector<UINT64> m_killSwitchFilters;
+	std::string m_killSwitchServer;
+	std::string m_killSwitchIp;
+	int m_killSwitchPort = 0;
+	UINT64 m_killSwitchLuid = 0;
 
 	HANDLE m_process = nullptr;
 	mutable std::mutex m_processMutex;

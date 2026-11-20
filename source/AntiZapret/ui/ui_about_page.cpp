@@ -38,16 +38,16 @@ namespace
 		ImGui::Dummy({ 0.f, 2.f });
 	}
 
+	template <size_t N>
 	void DrawCreditsSection(
 		const char* title,
-		const CreditEntry* entries,
-		int count,
+		const CreditEntry (&entries)[N],
 		const UiThemeColors& colors)
 	{
 		UiCommon::SectionHeader(title, colors);
 		ImGui::Dummy({ 0.f, 4.f });
-		for (int i = 0; i < count; ++i)
-			DrawCredit(entries[i], colors);
+		for (const auto& entry : entries)
+			DrawCredit(entry, colors);
 		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
 	}
 }
@@ -104,7 +104,7 @@ void UiAboutPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 			{ "Premake5", "Генерация проектов Visual Studio", "https://premake.github.io/" },
 			{ "DirectX 11", "Рендеринг (Microsoft)", "https://learn.microsoft.com/windows/win32/direct3d11/direct3d-11-graphics" },
 		};
-		DrawCreditsSection("Библиотеки и инструменты", devLibraries, 4, colors);
+		DrawCreditsSection("Библиотеки и инструменты", devLibraries, colors);
 
 		const CreditEntry bypass[] = {
 			{ "Flowseal / zapret-discord-youtube", "Обход Discord/YouTube: стратегии, списки и runtime", "https://github.com/Flowseal/zapret-discord-youtube" },
@@ -112,7 +112,7 @@ void UiAboutPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 			{ "WinDivert", "Перехват сетевого трафика", "https://reqrypt.org/windivert.html" },
 			{ "Flowseal / tg-ws-proxy", "MTProto-прокси для Telegram", "https://github.com/Flowseal/tg-ws-proxy" },
 		};
-		DrawCreditsSection("Обход блокировок", bypass, 4, colors);
+		DrawCreditsSection("Обход блокировок", bypass, colors);
 
 		const CreditEntry vpn[] = {
 			{ "mihomo", "VPN-ядро (Clash Meta)", "https://github.com/MetaCubeX/mihomo" },
@@ -122,14 +122,14 @@ void UiAboutPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 			{ "russia-v2ray-custom-routing-list", "Пресеты маршрутизации", "https://github.com/runetfreedom/russia-v2ray-custom-routing-list" },
 			{ "meta-rules-dat", "База GeoIP (geoip.metadb)", "https://github.com/MetaCubeX/meta-rules-dat" },
 		};
-		DrawCreditsSection("VPN и маршрутизация", vpn, 6, colors);
+		DrawCreditsSection("VPN и маршрутизация", vpn, colors);
 
 		const CreditEntry data[] = {
 			{ "Font Awesome", "Иконки сайдбара (Solid) и сервисов в маршрутизации (Brands)", "https://fontawesome.com/" },
 			{ "flagcdn.com", "Иконки флагов стран в списке VPN", "https://flagcdn.com/" },
 			{ "Segoe MDL2 Assets", "Дополнительные иконки интерфейса (Microsoft)", "https://learn.microsoft.com/windows/apps/design/style/segoe-ui-symbol-font" },
 		};
-		DrawCreditsSection("Данные и ресурсы", data, 3, colors);
+		DrawCreditsSection("Данные и ресурсы", data, colors);
 
 		ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
 		ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);

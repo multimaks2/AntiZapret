@@ -9,7 +9,7 @@ private:
 	bool Initialize();
 	void Shutdown();
 	void UpdateFrame();
-	void RenderFrame();
+	void RenderFrame(bool resumed = false);
 
 	class Components;
 	Components* m_components = nullptr;

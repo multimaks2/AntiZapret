@@ -136,8 +136,9 @@ void UiTgFixPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 		UiCommon::SectionHeader("Ссылка для Telegram", colors);
 		ImGui::Dummy({ 0.f, UiMetrics::kRowGap });
 
-		const std::string& link = m_manager ? m_manager->GetTelegramLinkCached() : kEmptyTelegramLink;
-		const char* linkText = link.empty() ? "tg://proxy?..." : link.c_str();
+		const std::string& link = running ? m_manager->GetTelegramLinkCached() : kEmptyTelegramLink;
+		const bool linkReady = !link.empty();
+		const char* linkText = linkReady ? link.c_str() : (running ? "Ссылка ещё не готова" : "Запустите прокси, чтобы получить ссылку");
 
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
 		ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_Border));
@@ -155,10 +156,10 @@ void UiTgFixPage::DrawContent(ThemeManager& theme, FontManager& fonts, float wid
 		ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 
 		const float btnW = (innerWidth - UiMetrics::kGridGap) * 0.5f;
-		if (UiCommon::SecondaryButton("Копировать ссылку", { btnW, UiMetrics::kBtnHeight }, colors, m_manager != nullptr) && m_manager)
+		if (UiCommon::SecondaryButton("Копировать ссылку", { btnW, UiMetrics::kBtnHeight }, colors, linkReady) && linkReady)
 			m_manager->CopyTelegramLinkToClipboard();
 		ImGui::SameLine(0.f, UiMetrics::kGridGap);
-		if (UiCommon::SecondaryButton("Открыть в Telegram", { btnW, UiMetrics::kBtnHeight }, colors, m_manager != nullptr) && m_manager)
+		if (UiCommon::SecondaryButton("Открыть в Telegram", { btnW, UiMetrics::kBtnHeight }, colors, linkReady) && linkReady)
 			m_manager->OpenTelegramLink();
 	}
 	UiCommon::EndCard();

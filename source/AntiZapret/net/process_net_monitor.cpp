@@ -145,7 +145,8 @@ void ProcessNetMonitor::Sample()
 	{
 		float down = 0.f;
 		float up = 0.f;
-		int connections = 0;
+		int tcp = 0;
+		int udp = 0;
 	};
 	std::unordered_map<std::uint32_t, Acc> byPid;
 	std::unordered_map<ConnKey, ConnStats, ConnKeyHash> nextConn;
@@ -190,7 +191,7 @@ void ProcessNetMonitor::Sample()
 				key.pid = row.dwOwningPid;
 
 				Acc& acc = byPid[row.dwOwningPid];
-				++acc.connections;
+				++acc.tcp;
 
 				// Enable once per connection identity; ignore failures (often needs admin).
 				if (m_enabledConn.find(key) == m_enabledConn.end())
@@ -240,7 +241,7 @@ void ProcessNetMonitor::Sample()
 		if (GetExtendedUdpTable(table, &size, FALSE, AF_INET, UDP_TABLE_OWNER_PID, 0) == NO_ERROR)
 		{
 			for (DWORD i = 0; i < table->dwNumEntries; ++i)
-				++byPid[table->table[i].dwOwningPid].connections;
+				++byPid[table->table[i].dwOwningPid].udp;
 		}
 	}
 
@@ -264,7 +265,8 @@ void ProcessNetMonitor::Sample()
 		entry.pid = pair.first;
 		entry.downloadBps = pair.second.down;
 		entry.uploadBps = pair.second.up;
-		entry.connectionCount = pair.second.connections;
+		entry.tcpCount = pair.second.tcp;
+		entry.udpCount = pair.second.udp;
 
 		auto nameIt = m_nameCache.find(entry.pid);
 		if (nameIt == m_nameCache.end())
@@ -284,8 +286,10 @@ void ProcessNetMonitor::Sample()
 		const float sb = b.downloadBps + b.uploadBps;
 		if (sa != sb)
 			return sa > sb;
-		if (a.connectionCount != b.connectionCount)
-			return a.connectionCount > b.connectionCount;
+		const int aCount = a.tcpCount + a.udpCount;
+		const int bCount = b.tcpCount + b.udpCount;
+		if (aCount != bCount)
+			return aCount > bCount;
 		return a.name < b.name;
 	});
 

@@ -9,17 +9,22 @@ namespace
 	constexpr UiThemeInfo kThemeInfos[] = {
 		{ UiThemeId::Dark, "dark", "Тёмная", { 0.45f, 0.45f, 0.48f, 1.f }, false },
 		{ UiThemeId::Light, "light", "Светлая", { 0.86f, 0.86f, 0.88f, 1.f }, true },
-		{ UiThemeId::Crimson, "crimson", "Багровая", { 0.85f, 0.25f, 0.25f, 1.f }, false },
-		{ UiThemeId::Ocean, "ocean", "Океан", { 0.43f, 0.67f, 0.85f, 1.f }, false },
-		{ UiThemeId::Emerald, "emerald", "Изумруд", { 0.55f, 0.68f, 0.40f, 1.f }, false },
-		{ UiThemeId::Violet, "violet", "Фиолет", { 0.68f, 0.29f, 0.88f, 1.f }, false },
-		{ UiThemeId::Amber, "amber", "Янтарь", { 1.f, 0.40f, 0.f, 1.f }, false },
+		{ UiThemeId::Crimson, "dracula", "Дракула", { 189 / 255.f, 147 / 255.f, 249 / 255.f, 1.f }, false },
+		{ UiThemeId::Ocean, "tokyo-night", "Ночь в Токио", { 122 / 255.f, 162 / 255.f, 247 / 255.f, 1.f }, false },
+		{ UiThemeId::Emerald, "everforest-dark", "Вечнозелёный лес", { 127 / 255.f, 187 / 255.f, 179 / 255.f, 1.f }, false },
+		{ UiThemeId::Violet, "kanagawa-wave", "Волна в Канагаве", { 126 / 255.f, 156 / 255.f, 216 / 255.f, 1.f }, false },
+		{ UiThemeId::Amber, "soft-orange", "Мягкий апельсин", { 211 / 255.f, 147 / 255.f, 104 / 255.f, 1.f }, false },
 		{ UiThemeId::Teal, "teal", "Бирюза", { 0.f, 0.68f, 0.71f, 1.f }, false },
-		{ UiThemeId::Rose, "rose", "Роза", { 0.94f, 0.53f, 0.68f, 1.f }, false },
-		{ UiThemeId::Nord, "nord", "Nord", { 0.27f, 0.41f, 0.51f, 1.f }, false },
-		{ UiThemeId::Forest, "forest", "Лес", { 0.12f, 0.49f, 0.33f, 1.f }, false },
-		{ UiThemeId::Mocha, "mocha", "Мокко", { 0.64f, 0.48f, 0.36f, 1.f }, false },
-		{ UiThemeId::Matrix, "matrix", "Матрица", { 0.f, 1.f, 0.25f, 1.f }, false },
+		{ UiThemeId::Rose, "rose-pine", "Розовая сосна", { 235 / 255.f, 188 / 255.f, 186 / 255.f, 1.f }, false },
+		{ UiThemeId::Nord, "one-dark-pro", "Ван Дарк Про", { 97 / 255.f, 175 / 255.f, 239 / 255.f, 1.f }, false },
+		{ UiThemeId::Forest, "monokai", "Монокай", { 249 / 255.f, 38 / 255.f, 114 / 255.f, 1.f }, false },
+		{ UiThemeId::Mocha, "catppuccin-mocha", "Катпучино Мокко", { 203 / 255.f, 166 / 255.f, 247 / 255.f, 1.f }, false },
+		{ UiThemeId::Matrix, "solarized-light", "Солнечная светлая", { 38 / 255.f, 139 / 255.f, 210 / 255.f, 1.f }, true },
+		{ UiThemeId::Peach, "peach-light", "Персик", { 156 / 255.f, 83 / 255.f, 72 / 255.f, 1.f }, true },
+		{ UiThemeId::Pear, "pear-light", "Груша", { 97 / 255.f, 116 / 255.f, 58 / 255.f, 1.f }, true },
+		{ UiThemeId::Blueberry, "blueberry-light", "Черника", { 98 / 255.f, 91 / 255.f, 150 / 255.f, 1.f }, true },
+		{ UiThemeId::Raspberry, "raspberry-light", "Малина", { 153 / 255.f, 71 / 255.f, 105 / 255.f, 1.f }, true },
+		{ UiThemeId::Apricot, "apricot-light", "Абрикос", { 146 / 255.f, 98 / 255.f, 47 / 255.f, 1.f }, true },
 	};
 	static_assert(sizeof(kThemeInfos) / sizeof(kThemeInfos[0]) == static_cast<int>(UiThemeId::Count));
 }
@@ -41,6 +46,23 @@ UiThemeId ThemeManager::ThemeFromKey(const char* key)
 		if (std::strcmp(info.key, key) == 0)
 			return info.id;
 	}
+	// Preserve saved selections from previous versions.
+	static constexpr struct { const char* key; UiThemeId id; } legacy[] = {
+		{ "crimson", UiThemeId::Crimson },
+		{ "ocean", UiThemeId::Ocean },
+		{ "emerald", UiThemeId::Emerald },
+		{ "violet", UiThemeId::Violet },
+		{ "amber", UiThemeId::Amber },
+		{ "rose", UiThemeId::Rose },
+		{ "nord", UiThemeId::Nord },
+		{ "forest", UiThemeId::Forest },
+		{ "mocha", UiThemeId::Mocha },
+		{ "matrix", UiThemeId::Matrix },
+		{ "gruvbox-dark", UiThemeId::Amber },
+	};
+	for (const auto& item : legacy)
+		if (std::strcmp(item.key, key) == 0)
+			return item.id;
 	return UiThemeId::Dark;
 }
 
@@ -193,6 +215,7 @@ UiThemeColors ThemeManager::LerpThemeColors(const UiThemeColors& a, const UiThem
 	c.tileBorder = LerpColor(a.tileBorder, b.tileBorder, t);
 	c.badgeBg = LerpColor(a.badgeBg, b.badgeBg, t);
 	c.inputBg = LerpColor(a.inputBg, b.inputBg, t);
+	c.workspaceBg = LerpColor(a.workspaceBg, b.workspaceBg, t);
 	c.clearColor = c.bg;
 	return c;
 }
@@ -220,10 +243,23 @@ const ThemeManager::Palette& ThemeManager::PaletteFor(UiThemeId id)
 	const ImVec4 warnAmber = Rgb(230, 170, 50);
 	const ImVec4 failRed = Rgb(196, 72, 72);
 
-	// Palettes sourced from Color Hunt (colorhunt.co) 4-swatch sets,
-	// expanded to UI roles: bg / sidebar / nav / text / tiles / accent.
+	// Adapt the editor palettes to the application's UI roles.
+	const auto hex = [](unsigned rgb) {
+		return Rgb((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+	};
+	const auto makePalette = [&](unsigned base, unsigned panel, unsigned text,
+		unsigned down, unsigned up, bool light = false) -> Palette {
+		const ImVec4 bg = hex(base), tile = hex(panel), fg = hex(text);
+		const ImVec4 download = hex(down), upload = hex(up);
+		return {
+			{ bg, LerpColor(bg, tile, 0.55f), LerpColor(tile, upload, 0.28f), LerpColor(tile, upload, 0.13f),
+			  fg, LerpColor(fg, tile, 0.28f), tile, LerpColor(tile, fg, 0.20f),
+			  LerpColor(tile, upload, 0.15f), bg, LerpColor(tile, fg, 0.10f) },
+			{ download, warnAmber, failRed, download, upload, brandDiscord, brandYoutube, brandTelegram }, light
+		};
+	};
 	static const Palette kPalettes[] = {
-		// Dark — original app graphite (untouched)
+		// Dark — graphite workspace with a matching sidebar seam.
 		{
 			{
 				Rgb(16, 16, 16), Rgb(20, 20, 20), Rgb(41, 41, 41), Rgb(31, 31, 31),
@@ -243,56 +279,11 @@ const ThemeManager::Palette& ThemeManager::PaletteFor(UiThemeId id)
 			{ Rgb(33, 176, 77), warnAmber, failRed, Rgb(33, 176, 77), Rgb(50, 120, 220), brandDiscord, brandYoutube, brandTelegram },
 			true
 		},
-		// Crimson — colorhunt.co/palette/1d16168e1616d84040eeeeee
-		{
-			{
-				Rgb(29, 22, 22), Rgb(40, 28, 28), Rgb(142, 22, 22), Rgb(60, 32, 32),
-				Rgb(238, 238, 238), Rgb(180, 120, 120), Rgb(40, 28, 28), Rgb(100, 40, 40),
-				Rgb(50, 30, 30), Rgb(29, 22, 22), { 40 / 255.f, 28 / 255.f, 28 / 255.f, 0.65f }
-			},
-			{ Rgb(216, 64, 64), warnAmber, Rgb(255, 100, 100), Rgb(216, 64, 64), Rgb(230, 140, 140), brandDiscord, brandYoutube, brandTelegram },
-			false
-		},
-		// Ocean — colorhunt.co/palette/02152603346e6eacdae2e2b6
-		{
-			{
-				Rgb(2, 21, 38), Rgb(6, 36, 70), Rgb(3, 52, 110), Rgb(8, 42, 80),
-				Rgb(226, 226, 182), Rgb(110, 172, 218), Rgb(6, 36, 70), Rgb(20, 70, 130),
-				Rgb(8, 42, 80), Rgb(2, 21, 38), { 6 / 255.f, 36 / 255.f, 70 / 255.f, 0.65f }
-			},
-			{ Rgb(110, 172, 218), warnAmber, failRed, Rgb(80, 180, 150), Rgb(110, 172, 218), brandDiscord, brandYoutube, brandTelegram },
-			false
-		},
-		// Emerald — colorhunt.co/palette/1b211a6281418bae66ebd5ab
-		{
-			{
-				Rgb(27, 33, 26), Rgb(40, 50, 38), Rgb(98, 129, 65), Rgb(55, 70, 50),
-				Rgb(235, 213, 171), Rgb(139, 174, 102), Rgb(40, 50, 38), Rgb(80, 110, 60),
-				Rgb(45, 55, 40), Rgb(27, 33, 26), { 40 / 255.f, 50 / 255.f, 38 / 255.f, 0.65f }
-			},
-			{ Rgb(139, 174, 102), warnAmber, failRed, Rgb(139, 174, 102), Rgb(160, 200, 140), brandDiscord, brandYoutube, brandTelegram },
-			false
-		},
-		// Violet — colorhunt.co/palette/2e073f7a1cacad49e1ebd3f8
-		{
-			{
-				Rgb(46, 7, 63), Rgb(70, 20, 100), Rgb(122, 28, 172), Rgb(90, 28, 140),
-				Rgb(235, 211, 248), Rgb(173, 73, 225), Rgb(70, 20, 100), Rgb(130, 50, 180),
-				Rgb(80, 25, 120), Rgb(46, 7, 63), { 70 / 255.f, 20 / 255.f, 100 / 255.f, 0.65f }
-			},
-			{ Rgb(173, 73, 225), warnAmber, failRed, Rgb(120, 200, 140), Rgb(190, 140, 255), brandDiscord, brandYoutube, brandTelegram },
-			false
-		},
-		// Amber — colorhunt.co/palette/ff65001e3e620b192c000000
-		{
-			{
-				Rgb(0, 0, 0), Rgb(11, 25, 44), Rgb(30, 62, 98), Rgb(18, 40, 70),
-				Rgb(255, 220, 190), Rgb(200, 140, 90), Rgb(11, 25, 44), Rgb(40, 70, 100),
-				Rgb(18, 40, 70), Rgb(0, 0, 0), { 11 / 255.f, 25 / 255.f, 44 / 255.f, 0.65f }
-			},
-			{ Rgb(255, 101, 0), warnAmber, failRed, Rgb(80, 180, 110), Rgb(255, 140, 60), brandDiscord, brandYoutube, brandTelegram },
-			false
-		},
+		makePalette(0x282a36, 0x44475a, 0xf8f8f2, 0x50fa7b, 0xbd93f9), // Dracula
+		makePalette(0x1a1b26, 0x24283b, 0xc0caf5, 0x9ece6a, 0x7aa2f7), // Tokyo Night
+		makePalette(0x2d353b, 0x343f44, 0xd3c6aa, 0xa7c080, 0x7fbbb3), // Everforest Dark
+		makePalette(0x1f1f28, 0x2a2a37, 0xdcd7ba, 0x98bb6c, 0x7e9cd8), // Kanagawa Wave
+		makePalette(0x191818, 0x282422, 0xeee4da, 0x9cb88e, 0xd39368),
 		// Teal — colorhunt.co/palette/222831393e4600adb5eeeeee
 		{
 			{
@@ -303,56 +294,16 @@ const ThemeManager::Palette& ThemeManager::PaletteFor(UiThemeId id)
 			{ Rgb(0, 173, 181), warnAmber, failRed, Rgb(0, 173, 181), Rgb(80, 200, 210), brandDiscord, brandYoutube, brandTelegram },
 			false
 		},
-		// Rose — colorhunt.co/palette/3a0519670d2fa53860ef88ad
-		{
-			{
-				Rgb(58, 5, 25), Rgb(80, 15, 40), Rgb(103, 13, 47), Rgb(90, 20, 50),
-				Rgb(239, 136, 173), Rgb(200, 100, 140), Rgb(80, 15, 40), Rgb(130, 40, 70),
-				Rgb(90, 20, 50), Rgb(58, 5, 25), { 80 / 255.f, 15 / 255.f, 40 / 255.f, 0.65f }
-			},
-			{ Rgb(165, 56, 96), warnAmber, failRed, Rgb(90, 180, 120), Rgb(239, 136, 173), brandDiscord, brandYoutube, brandTelegram },
-			false
-		},
-		// Nord — colorhunt.co/palette/1b3c53234c6a456882d2c1b6
-		{
-			{
-				Rgb(27, 60, 83), Rgb(35, 76, 106), Rgb(69, 104, 130), Rgb(50, 88, 115),
-				Rgb(210, 193, 182), Rgb(140, 165, 180), Rgb(35, 76, 106), Rgb(80, 115, 140),
-				Rgb(40, 80, 110), Rgb(27, 60, 83), { 35 / 255.f, 76 / 255.f, 106 / 255.f, 0.65f }
-			},
-			{ Rgb(110, 172, 180), Rgb(235, 203, 139), Rgb(191, 97, 106), Rgb(140, 180, 130), Rgb(129, 161, 193), brandDiscord, brandYoutube, brandTelegram },
-			false
-		},
-		// Forest — colorhunt.co/palette/18230f27391c255f381f7d53
-		{
-			{
-				Rgb(24, 35, 15), Rgb(39, 57, 28), Rgb(37, 95, 56), Rgb(40, 70, 40),
-				Rgb(200, 230, 200), Rgb(100, 160, 120), Rgb(39, 57, 28), Rgb(50, 100, 70),
-				Rgb(40, 70, 40), Rgb(24, 35, 15), { 39 / 255.f, 57 / 255.f, 28 / 255.f, 0.65f }
-			},
-			{ Rgb(31, 125, 83), warnAmber, failRed, Rgb(31, 125, 83), Rgb(100, 180, 130), brandDiscord, brandYoutube, brandTelegram },
-			false
-		},
-		// Mocha — colorhunt.co/palette/2c39303f4f44a27b5cdcd7c9
-		{
-			{
-				Rgb(44, 57, 48), Rgb(55, 70, 60), Rgb(63, 79, 68), Rgb(58, 74, 64),
-				Rgb(220, 215, 201), Rgb(162, 123, 92), Rgb(55, 70, 60), Rgb(90, 100, 85),
-				Rgb(58, 74, 64), Rgb(44, 57, 48), { 55 / 255.f, 70 / 255.f, 60 / 255.f, 0.65f }
-			},
-			{ Rgb(162, 123, 92), warnAmber, failRed, Rgb(120, 160, 100), Rgb(200, 160, 120), brandDiscord, brandYoutube, brandTelegram },
-			false
-		},
-		// Matrix — black void + phosphor green (film look)
-		{
-			{
-				Rgb(0, 0, 0), Rgb(4, 12, 4), Rgb(0, 48, 16), Rgb(0, 28, 10),
-				Rgb(0, 255, 65), Rgb(0, 140, 40), Rgb(4, 14, 6), Rgb(0, 70, 24),
-				Rgb(0, 24, 8), Rgb(0, 0, 0), { 4 / 255.f, 12 / 255.f, 4 / 255.f, 0.65f }
-			},
-			{ Rgb(0, 255, 65), Rgb(180, 220, 40), Rgb(255, 60, 60), Rgb(0, 220, 70), Rgb(40, 255, 120), brandDiscord, brandYoutube, brandTelegram },
-			false
-		},
+		makePalette(0x191724, 0x1f1d2e, 0xe0def4, 0x9ccfd8, 0xebbcba), // Rosé Pine
+		makePalette(0x282c34, 0x21252b, 0xabb2bf, 0x98c379, 0x61afef), // One Dark Pro
+		makePalette(0x272822, 0x333428, 0xf8f8f2, 0xa6e22e, 0xf92672), // Monokai
+		makePalette(0x1e1e2e, 0x313244, 0xcdd6f4, 0xa6e3a1, 0xcba6f7), // Catppuccin Mocha
+		makePalette(0xfdf6e3, 0xeee8d5, 0x073642, 0x859900, 0x268bd2, true), // Solarized Light
+		makePalette(0xfff4ef, 0xf7e6df, 0x3e2b28, 0x4e7465, 0x9c5348, true),
+		makePalette(0xf7faef, 0xeaf0dd, 0x303825, 0x48746e, 0x61743a, true),
+		makePalette(0xf6f5fd, 0xeae8f6, 0x302d47, 0x486f87, 0x625b96, true),
+		makePalette(0xfdf3f7, 0xf4e3eb, 0x422733, 0x537568, 0x994769, true),
+		makePalette(0xfff8ec, 0xf5ead4, 0x3e3021, 0x647743, 0x92622f, true),
 	};
 	static_assert(sizeof(kPalettes) / sizeof(kPalettes[0]) == static_cast<int>(UiThemeId::Count));
 

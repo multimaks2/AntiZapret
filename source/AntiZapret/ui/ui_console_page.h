@@ -14,7 +14,7 @@ class UiConsolePage
 {
 public:
 	void SetFilterFromTab(UiTab tab);
-	void DrawContent(ThemeManager& theme, FontManager& fonts, float width);
+	void DrawContent(ThemeManager& theme, FontManager& fonts, float width, float wheelMultiplier);
 
 private:
 	void RebuildDisplayBuffer(const std::vector<LogEntry>& entries);
@@ -23,9 +23,8 @@ private:
 	LogFilter m_filter = LogFilter::All;
 	bool m_autoScroll = true;
 	std::vector<char> m_displayBuf;
-	size_t m_cachedCount = 0;
+	std::uint64_t m_cachedRevision = 0;
 	LogFilter m_cachedFilter = LogFilter::All;
-	std::string m_cachedTail;
 
 	float m_logScrollY = 0.f;
 	float m_logScrollDisplay = 0.f;

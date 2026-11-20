@@ -43,3 +43,4 @@ release.bat
 release.ps1
 RELEASE_NOTES.md
 .release-notes-*.md
+/dist/

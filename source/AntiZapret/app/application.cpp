@@ -18,6 +18,7 @@
 #include "imgui_impl_win32.h"
 
 #include <Windows.h>
+#include <chrono>
 
 class Application::Components
 {
@@ -74,6 +75,10 @@ int Application::Run()
 		return 1;
 	}
 
+	using FrameClock = std::chrono::steady_clock;
+	constexpr std::chrono::duration<double> backgroundInterval(1.0 / 24.0);
+	auto lastFrameStart = FrameClock::time_point{};
+	bool renderingSuspended = false;
 	for (bool done = false; !done; )
 	{
 		MSG message = {};
@@ -87,22 +92,34 @@ int Application::Run()
 		if (done)
 			break;
 
-		// Heavy UI/GPU only while the window is focused (Discord-style).
-		// Minimized / tray / occluded / unfocused → background services only.
+		// A visible inactive window still renders; hidden windows only tick services.
 		const bool skipHeavyUi =
 			m_components->window.IsMinimized()
 			|| m_components->window.IsInTray()
-			|| !m_components->window.IsActive()
-			|| m_components->renderer.TestOccluded();
+			|| (m_components->renderer.IsOccluded() && m_components->renderer.TestOccluded());
 		if (skipHeavyUi)
 		{
 			m_components->ui.UpdateBackground(0.1f);
+			renderingSuspended = true;
 			Sleep(100);
 			continue;
 		}
 
+		const auto now = FrameClock::now();
+		if (!renderingSuspended && !m_components->window.IsActive() && lastFrameStart != FrameClock::time_point{})
+		{
+			const auto remaining = backgroundInterval - (now - lastFrameStart);
+			if (remaining.count() > 0.0)
+			{
+				const auto waitMs = std::chrono::ceil<std::chrono::milliseconds>(remaining);
+				MsgWaitForMultipleObjectsEx(0, nullptr, static_cast<DWORD>(waitMs.count()), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+				continue;
+			}
+		}
+		lastFrameStart = now;
 		UpdateFrame();
-		RenderFrame();
+		RenderFrame(renderingSuspended);
+		renderingSuspended = false;
 	}
 
 	Shutdown();
@@ -247,7 +264,7 @@ void Application::UpdateFrame()
 	m_components->window.UpdateAnimations();
 }
 
-void Application::RenderFrame()
+void Application::RenderFrame(bool resumed)
 {
 	if (!m_components || !m_components->ready)
 		return;
@@ -262,5 +279,5 @@ void Application::RenderFrame()
 				m_components->fonts,
 				m_components->luaApi);
 		},
-		m_components->clearColor);
+		m_components->clearColor, true, resumed);
 }

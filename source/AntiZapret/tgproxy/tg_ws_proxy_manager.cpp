@@ -41,36 +41,6 @@ namespace
 			|| fs::exists(root / "proxy" / "tg_ws_proxy.py");
 	}
 
-	std::string FileSignature(const fs::path& path)
-	{
-		std::error_code ec;
-		if (!fs::is_regular_file(path, ec))
-			return "0";
-		return std::to_string(fs::file_size(path, ec));
-	}
-
-	bool DepsMarkerMatches(const fs::path& root, const std::string& launcher)
-	{
-		const fs::path marker = root / ".antizapret_tg_deps";
-		if (!fs::exists(marker))
-			return false;
-
-		std::ifstream input(marker, std::ios::binary);
-		if (!input)
-			return false;
-
-		std::string stored((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-		while (!stored.empty() && (stored.back() == '\r' || stored.back() == '\n'))
-			stored.pop_back();
-
-		std::ostringstream expected;
-		expected << FileSignature(root / "requirements.txt") << "\n"
-			<< FileSignature(root / "pyproject.toml") << "\n"
-			<< launcher;
-
-		return stored == expected.str();
-	}
-
 	std::wstring ProxyWorkDir()
 	{
 		return ZapretPaths::GetTgWsProxyDirectory();
@@ -125,16 +95,6 @@ namespace
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
 		return exitCode == 0;
-	}
-
-	void WriteDepsMarker(const fs::path& root, const std::string& launcher)
-	{
-		std::ofstream output(root / ".antizapret_tg_deps", std::ios::binary | std::ios::trunc);
-		if (!output)
-			return;
-		output << FileSignature(root / "requirements.txt") << "\n"
-			<< FileSignature(root / "pyproject.toml") << "\n"
-			<< launcher;
 	}
 
 	std::string FormatPythonLauncherToken(const std::string& launcher)
@@ -352,11 +312,6 @@ namespace
 	bool RunPythonCmd(const std::string& launcher, const std::string& args, DWORD timeoutMs)
 	{
 		return RunProcessWide(NativeToWide(BuildPythonCmd(launcher, args)), ProxyWorkDir(), timeoutMs);
-	}
-
-	bool OpenExternalUrl(const char* url)
-	{
-		return reinterpret_cast<intptr_t>(ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOWNORMAL)) > 32;
 	}
 
 	const char* EnvStateUserMessage(TgProxyEnvState state)
@@ -721,19 +676,6 @@ void TgWsProxyManager::RefreshEnvironmentState()
 	}
 
 	m_pythonLauncher = launcher;
-	if (!RunPythonCmd(launcher, "-m pip --version", 30000))
-	{
-		m_envState.store(TgProxyEnvState::MissingDependencies);
-		return;
-	}
-
-	if (!DepsMarkerMatches(root, launcher)
-		&& (fs::exists(root / "requirements.txt") || fs::exists(root / "pyproject.toml")))
-	{
-		m_envState.store(TgProxyEnvState::MissingDependencies);
-		return;
-	}
-
 	if (!CanRunProxyModule(launcher))
 	{
 		m_envState.store(TgProxyEnvState::MissingDependencies);
@@ -787,7 +729,7 @@ bool TgWsProxyManager::EnsureDependencies(std::string& outError)
 	}
 	m_pythonLauncher = launcher;
 
-	if (DepsMarkerMatches(root, launcher) && CanRunProxyModule(launcher))
+	if (CanRunProxyModule(launcher))
 		return true;
 
 	if (!RunPythonCmd(launcher, "-m pip --version", 30000))
@@ -802,9 +744,7 @@ bool TgWsProxyManager::EnsureDependencies(std::string& outError)
 
 	auto runPip = [&](const std::string& args) -> bool
 	{
-		if (RunPythonCmd(launcher, "-m pip install --disable-pip-version-check --no-input " + args, 300000))
-			return true;
-		return RunPythonCmd(launcher, "-m pip install --disable-pip-version-check " + args, 300000);
+		return RunPythonCmd(launcher, "-m pip install --disable-pip-version-check --no-input " + args, 300000);
 	};
 
 	if (fs::exists(root / "requirements.txt"))
@@ -814,22 +754,20 @@ bool TgWsProxyManager::EnsureDependencies(std::string& outError)
 			outError = "Не удалось установить зависимости из requirements.txt.";
 			return false;
 		}
-		WriteDepsMarker(root, launcher);
-		return true;
 	}
-
-	if (fs::exists(root / "pyproject.toml"))
+	else if (fs::exists(root / "pyproject.toml"))
 	{
 		if (!runPip("-e ."))
 		{
 			outError = "Не удалось установить пакет tg-ws-proxy.";
 			return false;
 		}
-		WriteDepsMarker(root, launcher);
-		return true;
 	}
 
-	return true;
+	if (CanRunProxyModule(launcher))
+		return true;
+	outError = "Python найден, но модуль TG WS Proxy не загружается.";
+	return false;
 }
 
 void TgWsProxyManager::KillProcessTree(DWORD rootPid)
@@ -1158,9 +1096,10 @@ void TgWsProxyManager::RequestStop()
 	}).detach();
 }
 
-void TgWsProxyManager::RunSetupAndStart(bool openTelegram)
+void TgWsProxyManager::RunSetupAndStart(bool openTelegram, bool allowPythonInstall)
 {
-	m_setupRunning.store(true);
+	if (m_setupRunning.exchange(true))
+		return;
 	m_envState.store(TgProxyEnvState::SettingUp);
 	SetStatusMessage("Подготовка TG WS Proxy...");
 
@@ -1191,39 +1130,30 @@ void TgWsProxyManager::RunSetupAndStart(bool openTelegram)
 	if (fs::exists(root / "proxy" / "tg_ws_proxy.py"))
 	{
 		SetStatusMessage("Поиск Python...");
-		if (!DetectPythonLauncher(m_pythonLauncher))
+		bool pythonFound = DetectPythonLauncher(m_pythonLauncher);
+		if (!pythonFound && allowPythonInstall)
 		{
-			std::string message;
-			if (OpenPythonInstaller(message))
+			SetStatusMessage("Тихая установка Python с python.org...");
+			if (!InstallPythonSilently())
 			{
-				m_lastError = "Python 3 не найден. " + message;
-				SetStatusMessage(message);
+				m_lastError = "Не удалось загрузить, проверить или установить Python с python.org.";
+				SetStatusMessage(m_lastError);
+				m_envState.store(TgProxyEnvState::MissingPython);
+				m_setupRunning.store(false);
+				return;
 			}
-			else
-			{
-				m_lastError = message;
-				SetStatusMessage(message);
-			}
+			pythonFound = DetectPythonLauncher(m_pythonLauncher);
+		}
+		if (!pythonFound)
+		{
+			m_lastError = "Python 3 не найден. Откройте TG WS Proxy и нажмите кнопку установки Python.";
+			SetStatusMessage(m_lastError);
 			m_envState.store(TgProxyEnvState::MissingPython);
 			m_setupRunning.store(false);
 			return;
 		}
 
-		SetStatusMessage("Проверка pip...");
-		if (!RunPythonCmd(m_pythonLauncher, "-m pip --version", 30000))
-		{
-			RunPythonCmd(m_pythonLauncher, "-m ensurepip --upgrade", 120000);
-			if (!RunPythonCmd(m_pythonLauncher, "-m pip --version", 30000))
-			{
-				m_lastError = "pip недоступен.";
-				SetStatusMessage(m_lastError);
-				m_envState.store(TgProxyEnvState::MissingDependencies);
-				m_setupRunning.store(false);
-				return;
-			}
-		}
-
-		if (DepsMarkerMatches(root, m_pythonLauncher) && CanRunProxyModule(m_pythonLauncher))
+		if (CanRunProxyModule(m_pythonLauncher))
 		{
 			SetStatusMessage("Зависимости уже установлены, запуск TG WS Proxy...");
 		}
@@ -1254,22 +1184,34 @@ void TgWsProxyManager::RunSetupAndStart(bool openTelegram)
 	m_setupRunning.store(false);
 }
 
-bool TgWsProxyManager::OpenPythonInstaller(std::string& outMessage)
+bool TgWsProxyManager::InstallPythonSilently()
 {
-	if (OpenExternalUrl(kPythonManagerStoreUrl))
-	{
-		outMessage = "Открыт Microsoft Store. Установите Python Install Manager и нажмите кнопку снова.";
-		return true;
-	}
+	wchar_t systemDir[MAX_PATH] = {};
+	const UINT length = GetSystemDirectoryW(systemDir, MAX_PATH);
+	if (length == 0 || length >= MAX_PATH)
+		return false;
 
-	if (OpenExternalUrl(kPythonManagerUrl))
-	{
-		outMessage = "Не удалось открыть Microsoft Store. Открыта прямая загрузка установщика Python.";
-		return true;
-	}
-
-	outMessage = "Не удалось открыть Microsoft Store или загрузить установщик Python.";
-	return false;
+	const std::wstring powershell = std::wstring(systemDir) + L"\\WindowsPowerShell\\v1.0\\powershell.exe";
+	const std::wstring command = L"\"" + powershell + LR"PS(" -NoProfile -NonInteractive -Command "
+		$ErrorActionPreference='Stop';
+		$base='https://www.python.org/ftp/python/3.14.10/';
+		if ([Environment]::Is64BitOperatingSystem) {
+			$name='python-3.14.10-amd64.exe'; $hash='92480239264744fe0386a1bd8275786fefa126e3129e56a68e22b52c73329965';
+		} else {
+			$name='python-3.14.10.exe'; $hash='c8f1a16db9afd76ca74b5f8e28eeaad408bca10894c9d080443bde83def3ed09';
+		};
+		$dir=Join-Path ([IO.Path]::GetTempPath()) ('AntiZapretPython-'+[Guid]::NewGuid());
+		[IO.Directory]::CreateDirectory($dir) | Out-Null;
+		try {
+			$exe=Join-Path $dir $name;
+			Invoke-WebRequest -UseBasicParsing -Uri ($base+$name) -OutFile $exe -TimeoutSec 180;
+			if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -ne $hash) { exit 1 };
+			$p=Start-Process -FilePath $exe -ArgumentList '/quiet','InstallAllUsers=0','PrependPath=0','Include_launcher=0','Include_pip=1','Include_test=0','Shortcuts=0' -PassThru -Wait;
+			if ($p.ExitCode -ne 0) { exit $p.ExitCode };
+		} finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue };
+		exit 0"
+	)PS";
+	return RunProcessWide(command, {}, INFINITE);
 }
 
 void TgWsProxyManager::HandlePrimaryAction(bool openTelegramAfterStart)
@@ -1288,12 +1230,12 @@ void TgWsProxyManager::HandlePrimaryAction(bool openTelegramAfterStart)
 	const TgProxyEnvState state = m_envState.load();
 	if (state == TgProxyEnvState::MissingPython)
 	{
-		// Do not only open Store again — re-detect Python first (PATH refresh + folder scan).
+		// Re-detect first; install Python only after an explicit click.
 		if (m_setupRunning.load() || m_envProbeRunning.load())
 			return;
 		m_pythonLauncher.clear();
 		SetStatusMessage("Повторная проверка Python...");
-		std::thread([this, openTelegramAfterStart]() { RunSetupAndStart(openTelegramAfterStart); }).detach();
+		std::thread([this, openTelegramAfterStart]() { RunSetupAndStart(openTelegramAfterStart, true); }).detach();
 		return;
 	}
 

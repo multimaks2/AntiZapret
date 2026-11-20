@@ -111,6 +111,8 @@ public:
 
 	// false = МБ/с (bytes), true = Мбит/с (bits) — Steam-style network metrics.
 	bool GetNetworkSpeedBits() const { return m_networkSpeedBits; }
+	const std::string& GetSeenReleaseNotesVersion() const { return m_seenReleaseNotesVersion; }
+	void SetSeenReleaseNotesVersion(const std::string& version) { m_seenReleaseNotesVersion = version; Save(); }
 	void SetNetworkSpeedBits(bool value);
 
 	// UI font scale coefficient (ImGui FontScaleMain). 1.0 = default.
@@ -163,6 +165,7 @@ private:
 	bool m_showExtraStrategies = false;
 	bool m_quickStrategyTest = false;
 	bool m_networkSpeedBits = false;
+	std::string m_seenReleaseNotesVersion;
 	float m_fontScale = kDefaultFontScale;
 	std::string m_customHwid;
 	std::array<float, kPageScrollCount> m_pageScrollMultipliers {};

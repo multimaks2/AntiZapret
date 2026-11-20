@@ -718,11 +718,8 @@ void UiRoutingPage::EnsureDomainRulesLoaded()
 	m_domainRulesLoaded = true;
 }
 
-bool UiRoutingPage::MatchesTextSearch(const char* text) const
+std::string UiRoutingPage::NormalizeCatalogSearch(const char* src)
 {
-	if (!m_serviceSearch[0] || !text || !text[0])
-		return !m_serviceSearch[0];
-
 	auto decodeUtf8 = [](const char*& p) -> unsigned
 	{
 		const unsigned char c0 = static_cast<unsigned char>(*p);
@@ -777,7 +774,7 @@ bool UiRoutingPage::MatchesTextSearch(const char* text) const
 		return false;
 	};
 
-	auto normalize = [&](const char* src) -> std::string
+	const auto normalize = [&]() -> std::string
 	{
 		std::string out;
 		out.reserve(64);
@@ -833,11 +830,15 @@ bool UiRoutingPage::MatchesTextSearch(const char* text) const
 		return compact;
 	};
 
-	const std::string needle = normalize(m_serviceSearch);
-	if (needle.empty())
-		return true;
-	const std::string hay = normalize(text);
-	return hay.find(needle) != std::string::npos;
+	return normalize();
+}
+
+bool UiRoutingPage::MatchesTextSearch(const char* text) const
+{
+	if (!m_serviceSearch[0] || !text || !text[0])
+		return !m_serviceSearch[0];
+	return m_normalizedServiceSearch.empty()
+		|| NormalizeCatalogSearch(text).find(m_normalizedServiceSearch) != std::string::npos;
 }
 
 bool UiRoutingPage::MatchesServiceSearch(const ServiceRouteEntry& service) const
@@ -1270,6 +1271,8 @@ void UiRoutingPage::DrawServiceRoutes(
 		size_t targetsSize,
 		const char* addLabel) -> int
 	{
+		if (m_catalogView != 0 && m_catalogView != (kind == ServiceCatalogKind::App ? 1 : 2))
+			return 0;
 		const int total = countKind(kind);
 		if (searching && total == 0)
 			return 0;
@@ -1292,8 +1295,9 @@ void UiRoutingPage::DrawServiceRoutes(
 		sizeof m_customAppTargets,
 		"Добавить##add_app");
 
-	ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
+	if (m_catalogView == 0 && (!searching || appsDrawn > 0))
 	{
+		ImGui::Dummy({ 0.f, UiMetrics::kSectionGap });
 		ImDrawList* dl = ImGui::GetWindowDrawList();
 		const ImVec2 p = ImGui::GetCursorScreenPos();
 		dl->AddLine(
@@ -1603,11 +1607,17 @@ void UiRoutingPage::DrawContent(ThemeManager& theme, FontManager& fonts, float w
 		ImGui::Dummy({ 0.f, 6.f });
 		UiCommon::PushInputStyle(colors);
 		ImGui::SetNextItemWidth(cardInner);
-		ImGui::InputTextWithHint(
+		if (ImGui::InputTextWithHint(
 			"##service_search",
 			"Поиск в приложениях и сайтах...",
 			m_serviceSearch,
-			sizeof m_serviceSearch);
+			sizeof m_serviceSearch))
+			m_normalizedServiceSearch = NormalizeCatalogSearch(m_serviceSearch);
+		UiCommon::PopInputStyle();
+		const char* catalogViews[] = { "Все правила", "Приложения", "Сайты" };
+		UiCommon::PushInputStyle(colors);
+		ImGui::SetNextItemWidth(cardInner);
+		ImGui::Combo("##catalog_view", &m_catalogView, catalogViews, IM_ARRAYSIZE(catalogViews));
 		UiCommon::PopInputStyle();
 		ImGui::Dummy({ 0.f, 8.f });
 		DrawServiceRoutes(fonts, cardInner, colors, accents);
