@@ -8,6 +8,9 @@
 #include "ui/ui_antizapret_page.h"
 #include "ui/ui_console_page.h"
 #include "ui/ui_dns_page.h"
+#ifdef ANTIZAPRET_LAN
+#include "ui/ui_lan_page.h"
+#endif
 #include "ui/ui_routing_page.h"
 #include "ui/ui_settings_page.h"
 #include "ui/ui_tgfix_page.h"
@@ -45,15 +48,25 @@ int UiPageHost::TabIndex(UiTab tab)
 	case UiTab::Vpn: return 3;
 	case UiTab::Routing: return 4;
 	case UiTab::Dns: return 5;
+#ifdef ANTIZAPRET_LAN
+	case UiTab::Lan: return 6;
+	case UiTab::Console: return 7;
+	case UiTab::Settings: return 8;
+	case UiTab::About: return 9;
+#else
 	case UiTab::Console: return 6;
 	case UiTab::Settings: return 7;
 	case UiTab::About: return 8;
+#endif
 	}
 	return 0;
 }
 
 void UiPageHost::Update(float deltaTime, UiTab activeTab)
 {
+#ifdef ANTIZAPRET_LAN
+	UpdateLanPage(activeTab == UiTab::Lan);
+#endif
 	if (activeTab != m_tab)
 	{
 		m_fromTab = m_tab;
@@ -219,6 +232,11 @@ void UiPageHost::DrawPage(
 			case UiTab::Dns:
 				dnsPage.DrawContent(theme, fonts, contentWidth);
 				break;
+#ifdef ANTIZAPRET_LAN
+			case UiTab::Lan:
+				DrawLanPage(theme, fonts);
+				break;
+#endif
 			case UiTab::Console:
 				consolePage.DrawContent(theme, fonts, contentWidth, wheelMultiplier);
 				break;

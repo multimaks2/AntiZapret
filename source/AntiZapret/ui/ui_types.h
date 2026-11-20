@@ -10,7 +10,10 @@ enum class UiTab
 	Dns,
 	Console,
 	Settings,
-	About
+	About,
+#ifdef ANTIZAPRET_LAN
+	Lan
+#endif
 };
 
 namespace UiMetrics

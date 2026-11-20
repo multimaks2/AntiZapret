@@ -49,6 +49,24 @@ project "AntiZapret"
 		targetdir "bin/x32"
 		debugdir "bin/x32"
 
+		defines { "ANTIZAPRET_LAN" }
+		files {
+			"source/AntiZapret/lan/lan_discovery.h",
+			"source/AntiZapret/lan/lan_discovery.cpp",
+			"source/AntiZapret/lan/lan_transfer_tls.h",
+			"source/AntiZapret/lan/lan_transfer_tls.cpp",
+			"source/AntiZapret/lan/lan_transfer.h",
+			"source/AntiZapret/lan/lan_transfer.cpp",
+			"source/AntiZapret/lan/lan_speed.h",
+			"source/AntiZapret/lan/lan_speed.cpp",
+			"source/AntiZapret/lan/lan_checked_selection.h",
+			"source/AntiZapret/lan/lan_session.h",
+			"source/AntiZapret/lan/lan_session.cpp",
+			"source/AntiZapret/ui/ui_lan_page.h",
+			"source/AntiZapret/ui/ui_lan_page.cpp",
+		}
+		links { "ws2_32", "bcrypt", "crypt32", "secur32", "iphlpapi", "ole32", "shell32" }
+
 	filter "configurations:Debug"
 		targetdir "bin/x32/Debug"
 		debugdir "bin/x32/Debug"
@@ -355,6 +373,7 @@ project "AntiZapret"
 			'powershell -NoProfile -ExecutionPolicy Bypass -File "' .. deployScript .. '" -TargetDir "' .. path.getabsolute("bin/x32") .. '"',
 		}
 
+
 	filter "configurations:Debug"
 		postbuildcommands {
 			'powershell -NoProfile -ExecutionPolicy Bypass -File "' .. deployScript .. '" -TargetDir "' .. path.getabsolute("bin/x32/Debug") .. '"',
@@ -371,6 +390,7 @@ project "AntiZapret-Updater"
 	filter "configurations:Release"
 		targetdir "bin/x32"
 		debugdir "bin/x32"
+
 
 	filter "configurations:Debug"
 		targetdir "bin/x32/Debug"
@@ -438,6 +458,7 @@ project "AntiZapret-Installer"
 	filter "configurations:Release"
 		targetdir "bin/x32"
 		debugdir "bin/x32"
+
 
 	filter "configurations:Debug"
 		targetdir "bin/x32/Debug"

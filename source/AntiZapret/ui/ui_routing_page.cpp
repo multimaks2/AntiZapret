@@ -2172,7 +2172,7 @@ void UiRoutingPage::DrawDuplicateWarningModal(
 
 	const ImGuiViewport* vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-	ImGui::SetNextWindowSize({ 420.f, 0.f }, ImGuiCond_Appearing);
+	ImGui::SetNextWindowSize({ (std::min)(420.f, vp->WorkSize.x * .94f), 0.f }, ImGuiCond_Always);
 
 	if (ImGui::BeginPopupModal(
 			"##routing_duplicate_warn",

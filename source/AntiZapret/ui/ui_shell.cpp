@@ -9,6 +9,9 @@
 #include "gfx/theme_manager.h"
 #include "lua/lua_api.h"
 #include "ui/ui_common.h"
+#ifdef ANTIZAPRET_LAN
+#include "ui/ui_lan_page.h"
+#endif
 #include "window/window_manager.h"
 #include "vpn/vpn_flag_icons.h"
 #include "vpn/vpn_module_update_check.h"
@@ -172,7 +175,13 @@ void UiShell::DrawReleaseNotes(ThemeManager& theme)
 		ImGui::Dummy({ 0.f, 4.f });
 		ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
 		ImGui::PushTextWrapPos(left + dialogWidth);
-		if (version == "1.5.0")
+		if (version == "1.5.1a")
+		{
+			ImGui::BulletText("Во вкладке «Обмен файлами LAN» можно отправлять файлы и папки напрямую между ПК.");
+			ImGui::BulletText("Получатель выбирает папку сохранения. Большие списки передаются за один сеанс, без повторных подключений.");
+			ImGui::BulletText("На карточке компьютера видна задержка и доступна проверка скорости. Обновите оба ПК до одной версии.");
+		}
+		else if (version == "1.5.0")
 		{
 			ImGui::BulletText("Новые светлые и тёмные палитры, русские названия тем и обновлённое оформление настроек.");
 			ImGui::BulletText("Обновлён график сети: отдельные линии загрузки и отдачи, плавный автомасштаб и подсказки.");
@@ -867,6 +876,9 @@ void UiShell::HandleTrayCommand(TrayCommand command, int param)
 
 void UiShell::UpdateBackground(float deltaTime)
 {
+#ifdef ANTIZAPRET_LAN
+	UpdateLanPage(m_activeTab == UiTab::Lan);
+#endif
 	PumpProtocolCommands();
 	if (!m_zapretPageInitialized)
 		return;

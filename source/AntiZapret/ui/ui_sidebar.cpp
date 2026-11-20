@@ -132,6 +132,9 @@ float UiSidebar::Draw(
 		{ 0xf0ac, IconSet::Solid, "VPN", UiTab::Vpn },
 		{ 0xf4d7, IconSet::Solid, "Маршрутизация", UiTab::Routing },
 		{ 0xf233, IconSet::Solid, "DNS", UiTab::Dns },
+#ifdef ANTIZAPRET_LAN
+		{ 0xf0ec, IconSet::Solid, "Обмен файлами LAN", UiTab::Lan },
+#endif
 		{ 0xf120, IconSet::Solid, "Консоль", UiTab::Console },
 		{ 0xf013, IconSet::Solid, "Настройки", UiTab::Settings },
 		{ 0xf05a, IconSet::Solid, "О приложении", UiTab::About },

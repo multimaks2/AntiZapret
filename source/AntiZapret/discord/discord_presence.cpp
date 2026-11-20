@@ -237,6 +237,9 @@ const char* AppRichPresence::TabImageKey(UiTab tab)
 	case UiTab::Console: return "icon-console";
 	case UiTab::Settings: return "icon-settings";
 	case UiTab::About: return "icon-about";
+#ifdef ANTIZAPRET_LAN
+	case UiTab::Lan: return "icon-home";
+#endif
 	}
 	return "icon-home";
 }
@@ -254,6 +257,9 @@ const char* AppRichPresence::TabLabel(UiTab tab)
 	case UiTab::Console: return "📋 Консоль";
 	case UiTab::Settings: return "⚙️ Настройки";
 	case UiTab::About: return "ℹ️ О приложении";
+#ifdef ANTIZAPRET_LAN
+	case UiTab::Lan: return "AntiZapret";
+#endif
 	}
 	return "AntiZapret";
 }

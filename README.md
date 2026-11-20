@@ -16,6 +16,8 @@
   <img src="https://img.shields.io/badge/platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
 </p>
 
+Для обмена файлами откройте «Обмен файлами LAN» на обоих ПК с одинаковой версией клиента, включите видимость и выберите компьютер получателя.
+
 <details>
 <summary>📸 Ещё скриншоты</summary>
 
