@@ -1,6 +1,7 @@
 param(
 	[Parameter(Mandatory = $true)]
-	[string]$TargetDir
+	[string]$TargetDir,
+	[string]$VpnRuntimeDir = $env:ANTIZAPRET_VPN_RUNTIME_DIR
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,7 +23,7 @@ function Copy-RuntimeFile {
 	)
 
 	if (-not (Test-Path -LiteralPath $Source)) {
-		throw "Missing required zapret file: $Source"
+		throw "Missing runtime file: $Source"
 	}
 
 	$destinationDir = Split-Path -Parent $Destination
@@ -102,6 +103,43 @@ foreach ($rootFile in @('service.bat', 'LICENSE.txt')) {
 			'locked' { ++$locked }
 		}
 	}
+}
+
+# Stage the Windows Telegram proxy from its pinned submodule, without local state.
+$tgSource = Join-Path $Root 'vendor\tg-ws-proxy'
+$tgTarget = Join-Path $TargetRoot 'tg-ws-proxy'
+if (-not (Test-Path -LiteralPath (Join-Path $tgSource 'proxy\tg_ws_proxy.py') -PathType Leaf)) {
+	throw "Telegram proxy submodule is incomplete: $tgSource. Run git submodule update --init --recursive."
+}
+foreach ($entry in @('proxy', 'ui', 'utils', 'docs', 'windows.py', 'pyproject.toml', 'icon.ico', 'LICENSE')) {
+	$source = Join-Path $tgSource $entry
+	if (Test-Path -LiteralPath $source -PathType Leaf) {
+		Copy-RuntimeFile -Source $source -Destination (Join-Path $tgTarget $entry) | Out-Null
+	} elseif (Test-Path -LiteralPath $source -PathType Container) {
+		foreach ($file in (Get-ChildItem -LiteralPath $source -File -Recurse)) {
+			$relative = $file.FullName.Substring($tgSource.Length + 1)
+			if ($relative -match '(^|\\)__pycache__(\\|$)|\.py[co]$') { continue }
+			Copy-RuntimeFile -Source $file.FullName -Destination (Join-Path $tgTarget $relative) | Out-Null
+		}
+	}
+}
+
+# Seed missing VPN binaries only, never settings or existing local updates.
+if (-not $VpnRuntimeDir -and ${env:ProgramFiles(x86)}) {
+	$VpnRuntimeDir = Join-Path ${env:ProgramFiles(x86)} 'AntiZapret\vpn'
+}
+$vpnTarget = Join-Path $TargetRoot 'vpn'
+foreach ($file in @('mihomo.exe', 'wintun.dll', 'EnableLoopback.exe')) {
+	$destination = Join-Path $vpnTarget $file
+	if (Test-Path -LiteralPath $destination -PathType Leaf) { continue }
+	if ($VpnRuntimeDir) {
+		$source = Join-Path $VpnRuntimeDir $file
+		if (Test-Path -LiteralPath $source -PathType Leaf) {
+			Copy-RuntimeFile -Source $source -Destination $destination | Out-Null
+			continue
+		}
+	}
+	Write-Warning "VPN runtime file not staged: $file. Set ANTIZAPRET_VPN_RUNTIME_DIR to a folder with the VPN binaries."
 }
 
 # App version.txt next to AntiZapret.exe / AntiZapret-Updater.exe (from source/AntiZapret/version.h).
