@@ -9,7 +9,7 @@ namespace lan
 class Session
 {
 public:
-    enum class Phase { Idle, Connecting, Pair, Consent, FileOffer, Measuring, Transferring, Finished, Declined, Cancelled, Failed };
+    enum class Phase { Idle, Connecting, Pair, Consent, FileOffer, CheckingFiles, FileConflict, Measuring, Transferring, Finished, Declined, Cancelled, Failed };
     struct Status
     {
         Phase phase = Phase::Idle;
@@ -18,6 +18,8 @@ public:
         std::uint64_t done = 0, total = 0;
         std::size_t itemCount = 0;
         std::vector<std::string> sample;
+        transfer::Conflict conflict{};
+        std::size_t conflictsOfKind = 0;
         std::wstring bundle;
         Ticket ticket{};
         Operation operation = Operation::Speed;
@@ -35,6 +37,7 @@ public:
     void Decide(Phase, bool);
     void Cancel();
     void ChooseDestination(const Ticket&, std::optional<std::wstring>);
+    void ChooseConflict(const Ticket&, std::size_t index, bool replace, bool applyToAll);
 #ifdef ANTIZAPRET_LAN_TEST
     void StartLoopbackForTest(bool receiver, Ticket ticket, Operation = Operation::Speed, std::vector<transfer::Source> sources = {});
     void PumpLoopbackForTest(bool leaseValid);

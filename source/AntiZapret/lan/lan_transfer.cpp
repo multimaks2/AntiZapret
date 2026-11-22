@@ -5,6 +5,8 @@
 #include <bcrypt.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <cstddef>
 #include <cstring>
 #include <map>
 #include <stdexcept>
@@ -13,6 +15,8 @@
 
 #pragma comment(lib, "ntdll.lib")
 #pragma comment(lib, "bcrypt.lib")
+
+extern "C" NTSYSAPI NTSTATUS NTAPI NtSetInformationFile(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
 
 namespace lan::transfer
 {
@@ -23,9 +27,11 @@ constexpr std::uint64_t ByteLimit = 64ULL * 1024 * 1024 * 1024;
 constexpr std::uint64_t FsReserve = 4 * 1024 * 1024;
 constexpr std::size_t ManifestBatch = 1024;
 constexpr std::size_t Chunk = 64 * 1024;
-constexpr std::array<char, 8> Protocol{'A','Z','L','A','N','F','2','\n'};
+constexpr std::array<char, 8> Protocol{'A','Z','L','A','N','F','3','\n'};
 constexpr unsigned char Accepted = 1, Declined = 2, NoSpace = 3, InvalidDestination = 4,
-                        Finished = 5, Saved = 6;
+                        Finished = 5, Saved = 6, Compare = 7;
+constexpr auto CompareTimeout = std::chrono::minutes(15);
+using Digest = std::array<unsigned char, 32>;
 
 [[noreturn]] void Fail(const char* message, long code = 0)
 {
@@ -145,7 +151,8 @@ void CheckHandle(HANDLE h, bool directory)
         Fail("Reparse point or wrong object type");
 }
 
-Handle OpenChild(HANDLE parent, const std::wstring& name, bool directory, bool create = false, bool wantWrite = false)
+Handle OpenChild(HANDLE parent, const std::wstring& name, bool directory, bool create = false,
+                 bool wantWrite = false, bool allowMissing = false)
 {
     const auto bytes = static_cast<USHORT>(name.size() * sizeof(wchar_t));
     UNICODE_STRING text{bytes, bytes, const_cast<wchar_t*>(name.c_str())};
@@ -154,11 +161,14 @@ Handle OpenChild(HANDLE parent, const std::wstring& name, bool directory, bool c
     HANDLE object = INVALID_HANDLE_VALUE;
     ACCESS_MASK access = directory ? ReadDirectory : (GENERIC_READ | SYNCHRONIZE);
     if (wantWrite && directory) access |= FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY;
+    if (wantWrite && !directory) access |= DELETE;
     if (create) access |= DELETE | (directory ? FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY : GENERIC_WRITE);
     const auto status = NtCreateFile(&object, access, &attrs, &ios, nullptr,
         directory ? 0 : FILE_ATTRIBUTE_NORMAL, create ? 0 : FILE_SHARE_READ,
         create ? FILE_CREATE : FILE_OPEN, (directory ? FILE_DIRECTORY_FILE : FILE_NON_DIRECTORY_FILE) |
         FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT, nullptr, 0);
+    if (allowMissing && (static_cast<ULONG>(status) == 0xC0000034u ||
+                         static_cast<ULONG>(status) == 0xC000000Fu)) return {};
     if (status < 0) Fail("Open path without following reparse points", status);
     Handle h(object);
     // Every created name is FILE_CREATE under an owned root, never open-or-create.
@@ -217,34 +227,133 @@ void RemoveOwned(Handle& file) noexcept
     file.Close();
 }
 
+void RenameOwned(HANDLE file, const std::wstring& leaf)
+{
+    // A simple leaf with no RootDirectory renames in the source handle's own directory.
+    // No overwrite: only a file explicitly moved aside by us can be replaced.
+    const auto bytes = leaf.size() * sizeof(wchar_t);
+    FILE_RENAME_INFO info{};
+    const auto length = (std::max)(sizeof(info), offsetof(FILE_RENAME_INFO, FileName) + bytes);
+    std::vector<FILE_RENAME_INFO> storage((length + sizeof(info) - 1) / sizeof(info));
+    auto* rename = storage.data();
+    rename->FileNameLength = static_cast<DWORD>(bytes);
+    std::memcpy(reinterpret_cast<unsigned char*>(rename) + offsetof(FILE_RENAME_INFO, FileName), leaf.data(), bytes);
+    IO_STATUS_BLOCK io{};
+    const auto status = NtSetInformationFile(file, &io, rename, static_cast<ULONG>(length),
+        static_cast<FILE_INFORMATION_CLASS>(10)); // FileRenameInformation
+    if (status < 0) Fail("Rename verified LAN file", status);
+}
+
+std::wstring TemporaryLeaf()
+{
+    std::array<unsigned char, 16> random{};
+    if (BCryptGenRandom(nullptr, random.data(), static_cast<ULONG>(random.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
+        Fail("Generate LAN temporary filename");
+    std::wstring name = L".AntiZapret-LAN-";
+    for (auto byte : random) { name += L"0123456789abcdef"[byte >> 4]; name += L"0123456789abcdef"[byte & 15]; }
+    return name + L".tmp";
+}
+
+void CheckExistingName(HANDLE file, const std::wstring& expected)
+{
+    std::wstring path(32768, L'\0');
+    const auto size = GetFinalPathNameByHandleW(file, path.data(), static_cast<DWORD>(path.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_GUID);
+    if (!size || size >= path.size()) Fail("Resolve existing LAN path", GetLastError());
+    path.resize(size);
+    const auto leaf = path.substr(path.find_last_of(L'\\') + 1);
+    if (CaseLess{}(leaf, expected) || CaseLess{}(expected, leaf)) Fail("Existing path uses an alias");
+}
+
 struct Stage
 {
+    struct Entry
+    {
+        Handle file, old;
+        HANDLE parent = INVALID_HANDLE_VALUE;
+        std::wstring leaf;
+        bool owned = false, movedOld = false;
+    };
     Handle root;
-    std::vector<Handle> entries;
+    std::vector<Entry> entries;
     bool committed = false;
     ~Stage()
     {
         if (!committed)
         {
-            for (auto i = entries.rbegin(); i != entries.rend(); ++i) RemoveOwned(*i);
+            for (auto i = entries.rbegin(); i != entries.rend(); ++i)
+            {
+                if (i->owned) RemoveOwned(i->file);
+                else i->file.Close();
+                if (i->movedOld)
+                {
+                    // Keep the old data under its backup name if the path cannot be restored.
+                    try { RenameOwned(i->old.Get(), i->leaf); } catch (...) {}
+                }
+            }
             RemoveOwned(root);
         }
     }
-    void Prepare(HANDLE folder, const std::vector<Item>& manifest, const std::vector<Path>& paths, const std::wstring& bundle)
+    void Inspect(HANDLE folder, const std::vector<Item>& manifest, const std::vector<Path>& paths,
+                 const std::wstring& bundle, bool merge)
     {
         entries.reserve(paths.size());
         if (!bundle.empty()) root = OpenChild(folder, bundle, true, true);
         for (std::size_t i = 0; i < paths.size(); ++i)
         {
             const auto& path = paths[i];
-            entries.push_back(OpenChild(path.parent == Root ? (root ? root.Get() : folder) : entries[path.parent].Get(),
-                path.leaf, manifest[i].directory, true));
+            auto& entry = entries.emplace_back();
+            entry.parent = path.parent == Root ? (root ? root.Get() : folder) : entries[path.parent].file.Get();
+            entry.leaf = path.leaf;
+            if (manifest[i].directory)
+            {
+                if (merge) entry.file = OpenChild(entry.parent, entry.leaf, true, false, true, true);
+                if (entry.file) CheckExistingName(entry.file.Get(), entry.leaf);
+                else { entry.file = OpenChild(entry.parent, entry.leaf, true, true); entry.owned = true; }
+            }
+            else if (merge)
+            {
+                entry.old = OpenChild(entry.parent, entry.leaf, false, false, true, true);
+                if (entry.old)
+                {
+                    CheckExistingName(entry.old.Get(), entry.leaf);
+                    FILE_STANDARD_INFO info{};
+                    if (!GetFileInformationByHandleEx(entry.old.Get(), FileStandardInfo, &info, sizeof(info)) ||
+                        info.NumberOfLinks != 1) Fail("Cannot safely replace existing linked file");
+                }
+            }
         }
     }
-    void Keep() noexcept
+    void PrepareFiles(const std::vector<Item>& items, const std::vector<unsigned char>& selected, bool merge)
     {
+        for (std::size_t i = 0; i < items.size(); ++i)
+        {
+            auto& entry = entries[i];
+            if (items[i].directory || !selected[i]) continue;
+            entry.file = OpenChild(entry.parent, merge ? TemporaryLeaf() : entry.leaf, false, true);
+            entry.owned = true;
+        }
+    }
+    void Keep(const std::vector<Item>& items, bool merge)
+    {
+        if (merge)
+            for (std::size_t i = 0; i < items.size(); ++i)
+            {
+                auto& entry = entries[i];
+                if (items[i].directory || !entry.file) continue;
+                if (entry.old)
+                {
+                    RenameOwned(entry.old.Get(), TemporaryLeaf());
+                    entry.movedOld = true;
+                }
+                RenameOwned(entry.file.Get(), entry.leaf);
+            }
         committed = true;
-        for (auto i = entries.rbegin(); i != entries.rend(); ++i) i->Close();
+        for (auto i = entries.rbegin(); i != entries.rend(); ++i)
+        {
+            if (i->movedOld) RemoveOwned(i->old);
+            else i->old.Close();
+            i->file.Close();
+        }
         root.Close();
     }
 };
@@ -318,6 +427,32 @@ std::uint64_t Get(TlsChannel& ch, std::size_t count)
     return value;
 }
 
+unsigned char WaitForChoice(TlsChannel& ch)
+{
+    unsigned char result{};
+    ch.ReadUntil(&result, 1, std::chrono::steady_clock::now() + CompareTimeout);
+    return result;
+}
+
+Digest HashFile(TlsChannel& ch, HANDLE file, std::uint64_t remaining)
+{
+    LARGE_INTEGER start{};
+    if (!SetFilePointerEx(file, start, nullptr, FILE_BEGIN)) Fail("Seek LAN file", GetLastError());
+    std::array<unsigned char, Chunk> data{};
+    Hash hash;
+    while (remaining)
+    {
+        ch.CheckCancelled();
+        const auto count = static_cast<DWORD>((std::min)(remaining, static_cast<std::uint64_t>(data.size())));
+        DWORD read{};
+        if (!ReadFile(file, data.data(), count, &read, nullptr) || count != read) Fail("Hash LAN file", GetLastError());
+        hash.Add(data.data(), count);
+        remaining -= count;
+    }
+    if (!SetFilePointerEx(file, start, nullptr, FILE_BEGIN)) Fail("Rewind LAN file", GetLastError());
+    return hash.Finish();
+}
+
 void SendManifest(TlsChannel& ch, const std::vector<Item>& items)
 {
     ch.Write(Protocol.data(), Protocol.size());
@@ -380,9 +515,25 @@ Result Send(TlsChannel& ch, const std::vector<Source>& sources, const Progress& 
         if (!GetFileSizeEx(opened[i].file.Get(), &size) || size.QuadPart < 0) Fail("Inspect source size", GetLastError());
         items[i].size = static_cast<std::uint64_t>(size.QuadPart);
     }
-    const auto total = ValidateManifest(items);
+    ValidateManifest(items);
     SendManifest(ch, items);
-    switch (Get(ch, 1))
+    auto response = WaitForChoice(ch);
+    std::vector<unsigned char> selected(items.size(), 1), compare(items.size());
+    if (response == Compare)
+    {
+        ch.Read(compare.data(), compare.size());
+        for (std::size_t i = 0; i < items.size(); ++i)
+        {
+            if (compare[i] > 1 || (compare[i] && items[i].directory)) Fail("Invalid comparison list");
+            if (compare[i])
+            {
+                const auto digest = HashFile(ch, opened[i].file.Get(), items[i].size);
+                ch.Write(digest.data(), digest.size());
+            }
+        }
+        response = WaitForChoice(ch);
+    }
+    switch (response)
     {
     case Declined: return Result::Declined;
     case NoSpace: return Result::NoSpace;
@@ -390,12 +541,19 @@ Result Send(TlsChannel& ch, const std::vector<Source>& sources, const Progress& 
     case Accepted: break;
     default: Fail("Unknown offer response");
     }
+    ch.Read(selected.data(), selected.size());
+    std::uint64_t total = 0;
+    for (std::size_t i = 0; i < items.size(); ++i)
+    {
+        if (selected[i] > 1 || (items[i].directory && !selected[i])) Fail("Invalid transfer selection");
+        if (selected[i]) total += items[i].size;
+    }
     std::array<unsigned char, Chunk> buffer{};
     std::uint64_t transferred = 0;
     if (progress) progress(0, total);
     for (std::size_t i = 0; i < items.size(); ++i)
     {
-        if (items[i].directory) continue;
+        if (items[i].directory || !selected[i]) continue;
         auto left = items[i].size;
         Hash hash;
         while (left)
@@ -423,7 +581,7 @@ Result Send(TlsChannel& ch, const std::vector<Source>& sources, const Progress& 
     return Result::Saved;
 }
 
-Result Receive(TlsChannel& ch, const Offer& offer, const Progress& progress)
+Result Receive(TlsChannel& ch, const Offer& offer, const Progress& progress, const ResolveConflicts& resolve)
 {
     ch.BeginTransfer(true);
     const auto items = ReadManifest(ch);
@@ -438,38 +596,82 @@ Result Receive(TlsChannel& ch, const Offer& offer, const Progress& progress)
     }
     LocalPath target; // Must outlive the stage so all destination ancestors stay pinned.
     Stage stage;
-    bool noSpace = false;
+    const bool merge = resolve && destination->bundle.empty();
     try
     {
         if (!destination->bundle.empty()) ValidateComponent(destination->bundle);
         target = OpenLocal(destination->folder, true);
-        const auto folder = FinalPath(target.Folder());
-        if (!destination->bundle.empty() &&
-            (GetFileAttributesW((folder + destination->bundle).c_str()) != INVALID_FILE_ATTRIBUTES ||
-             GetLastError() != ERROR_FILE_NOT_FOUND)) Fail("Destination name already used or inaccessible");
-        noSpace = !HasSpace(folder, items, total, destination->maxBytes);
-        if (!noSpace) stage.Prepare(target.Folder(), items, paths, destination->bundle);
+        stage.Inspect(target.Folder(), items, paths, destination->bundle, merge);
     }
     catch (const std::runtime_error&)
     {
         Put(ch, InvalidDestination, 1);
         return Result::InvalidDestination;
     }
-    if (noSpace)
+    std::vector<unsigned char> selected(items.size(), 1), compare(items.size());
+    std::vector<Digest> offeredHashes(items.size());
+    std::vector<Conflict> conflicts;
+    for (std::size_t i = 0; i < items.size(); ++i)
+    {
+        if (!stage.entries[i].old) continue;
+        LARGE_INTEGER size{};
+        if (!GetFileSizeEx(stage.entries[i].old.Get(), &size) || size.QuadPart < 0)
+            Fail("Read existing file size", GetLastError());
+        compare[i] = static_cast<std::uint64_t>(size.QuadPart) == items[i].size;
+        conflicts.push_back({i, items[i].name, false});
+    }
+    if (!conflicts.empty())
+    {
+        Put(ch, Compare, 1);
+        ch.Write(compare.data(), compare.size());
+        const auto deadline = std::chrono::steady_clock::now() + CompareTimeout;
+        for (const auto& conflict : conflicts)
+        {
+            const auto i = conflict.index;
+            if (compare[i]) ch.ReadUntil(offeredHashes[i].data(), offeredHashes[i].size(), deadline);
+        }
+        for (auto& conflict : conflicts)
+        {
+            const auto i = conflict.index;
+            conflict.identical = compare[i] && offeredHashes[i] == HashFile(ch, stage.entries[i].old.Get(), items[i].size);
+        }
+        const auto choices = resolve(conflicts);
+        ch.CheckCancelled();
+        if (!choices) { Put(ch, Declined, 1); return Result::Declined; }
+        if (choices->size() != conflicts.size()) Fail("Invalid local conflict choices");
+        for (std::size_t i = 0; i < conflicts.size(); ++i) selected[conflicts[i].index] = (*choices)[i];
+    }
+    total = 0;
+    std::vector<Item> planned;
+    planned.reserve(items.size());
+    for (std::size_t i = 0; i < items.size(); ++i)
+    {
+        if (!selected[i]) continue;
+        total += items[i].size;
+        if (!items[i].directory || stage.entries[i].owned) planned.push_back(items[i]);
+    }
+    if (!planned.empty() && !HasSpace(FinalPath(target.Folder()), planned, total, destination->maxBytes))
     {
         Put(ch, NoSpace, 1);
         return Result::NoSpace;
     }
+    try { stage.PrepareFiles(items, selected, merge); }
+    catch (const std::runtime_error&)
+    {
+        Put(ch, InvalidDestination, 1);
+        return Result::InvalidDestination;
+    }
     ch.CheckCancelled();
     Put(ch, Accepted, 1);
+    ch.Write(selected.data(), selected.size());
     if (progress) progress(0, total);
     std::array<unsigned char, Chunk> buffer{};
     std::uint64_t transferred = 0;
     for (std::size_t i = 0; i < items.size(); ++i)
     {
-        if (items[i].directory) continue;
+        if (items[i].directory || !selected[i]) continue;
         auto left = items[i].size;
-        const auto file = stage.entries[i].Get();
+        const auto file = stage.entries[i].file.Get();
         Hash hash;
         while (left)
         {
@@ -487,12 +689,12 @@ Result Receive(TlsChannel& ch, const Offer& offer, const Progress& progress)
         auto digest = hash.Finish();
         decltype(digest) expected{};
         ch.Read(expected.data(), expected.size());
-        if (digest != expected) Fail("File SHA-256 mismatch");
+        if (digest != expected || (compare[i] && digest != offeredHashes[i])) Fail("File SHA-256 mismatch");
         if (!FlushFileBuffers(file)) Fail("Flush destination file", GetLastError());
     }
     if (Get(ch, 1) != Finished) Fail("Invalid transfer completion marker");
     ch.CheckCancelled();
-    stage.Keep();
+    stage.Keep(items, merge);
     try { Put(ch, Saved, 1); }
     catch (...) { return Result::SavedReceiptLost; }
     return Result::Saved;

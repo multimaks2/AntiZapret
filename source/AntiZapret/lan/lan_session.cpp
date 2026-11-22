@@ -120,6 +120,7 @@ struct Session::Impl
     Status status;
     std::optional<bool> decision;
     std::optional<std::wstring> destination;
+    bool applyConflictToAll = false;
 
     bool Ask(Phase phase, const std::string& code, std::uint32_t bytes, const std::function<bool()>& live)
     {
@@ -155,10 +156,54 @@ struct Session::Impl
             if (condition.wait_for(lock, 100ms, [&] { return decision.has_value() || cancelled.load(); }))
             {
                 if (cancelled || !decision.value_or(false) || !destination) return {};
+                status.phase = Phase::CheckingFiles;
                 return transfer::Destination{*destination, {}};
             }
         }
         return {};
+    }
+
+    std::optional<std::vector<bool>> AskConflicts(const std::vector<transfer::Conflict>& conflicts,
+                                                 const std::function<bool()>& live)
+    {
+        std::optional<bool> groupChoice[2];
+        std::size_t remaining[2]{};
+        for (const auto& conflict : conflicts) ++remaining[conflict.identical];
+        std::vector<bool> choices;
+        choices.reserve(conflicts.size());
+        const auto deadline = Clock::now() + 5min;
+        for (const auto& conflict : conflicts)
+        {
+            const auto kind = conflict.identical;
+            if (groupChoice[kind]) choices.push_back(*groupChoice[kind]);
+            else
+            {
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    decision.reset(); applyConflictToAll = false;
+                    status.phase = Phase::FileConflict; status.conflict = conflict;
+                    status.conflictsOfKind = remaining[kind];
+                }
+                bool answered = false;
+                while (Clock::now() < deadline && live())
+                {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    if (!condition.wait_for(lock, 100ms, [&] { return decision.has_value() || cancelled.load(); })) continue;
+                    if (cancelled || !decision) return {};
+                    choices.push_back(*decision);
+                    if (applyConflictToAll) groupChoice[kind] = *decision;
+                    answered = true;
+                    break;
+                }
+                if (!answered) return {};
+            }
+            --remaining[kind];
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            status.phase = Phase::CheckingFiles;
+        }
+        return choices;
     }
 
     void Run(Invitation invite, bool receiver, bool loopback, const std::vector<transfer::Source>& sources)
@@ -216,7 +261,7 @@ struct Session::Impl
                 using transfer::Result;
                 const auto result = receiver ? transfer::Receive(channel, [&](const auto& files, std::uint64_t bytes) {
                     return AskFiles(files, bytes, invite.ticket, live);
-                }, onProgress) : transfer::Send(channel, sources, onProgress);
+                }, onProgress, [&](const auto& conflicts) { return AskConflicts(conflicts, live); }) : transfer::Send(channel, sources, onProgress);
                 std::lock_guard<std::mutex> lock(mutex);
                 switch (result)
                 {
@@ -351,6 +396,16 @@ void Session::ChooseDestination(const Ticket& ticket, std::optional<std::wstring
     if (s.status.phase != Phase::FileOffer || s.status.ticket != ticket || s.cancelled || s.decision) return;
     s.destination = std::move(folder);
     s.decision = s.destination.has_value();
+    s.condition.notify_all();
+}
+void Session::ChooseConflict(const Ticket& ticket, std::size_t index, bool replace, bool applyToAll)
+{
+    auto& s = *impl;
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if (s.status.phase != Phase::FileConflict || s.status.ticket != ticket || s.status.conflict.index != index ||
+        s.cancelled || s.decision) return;
+    s.decision = replace;
+    s.applyConflictToAll = applyToAll;
     s.condition.notify_all();
 }
 void Session::Cancel()

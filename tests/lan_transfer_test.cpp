@@ -237,6 +237,45 @@ void FileTests(const fs::path& base)
 
 }
 
+void MergeFiles(const fs::path& base)
+{
+    Fixture f(fs::absolute(base).make_preferred());
+    fs::create_directory(f.receive / L"data");
+    const auto dir = f.receive / L"data";
+    const auto write = [](const fs::path& path, const std::string& text) {
+        std::ofstream file(path, std::ios::binary);
+        Require(static_cast<bool>(file << text), "Create merge fixture");
+    };
+    write(dir / L"same.dat", f.payload);
+    write(dir / L"replace.dat", std::string(f.payload.size(), 'x'));
+    write(dir / L"skip.dat", "local-only bytes");
+    write(dir / L"unrelated.dat", "keep");
+    const std::vector<Source> files{{{"data", true}, {}}, {{"data/same.dat"}, f.file.native()},
+        {{"data/replace.dat"}, f.file.native()}, {{"data/skip.dat"}, f.file.native()}, {{"data/new.dat"}, f.file.native()}};
+    std::atomic_bool senderCancel{false}, receiverCancel{false};
+    std::uint64_t sent = 0;
+    Expect(Session([&](TlsChannel& ch) {
+        return Send(ch, files, [&](auto done, auto) { sent = done; });
+    }, [&](TlsChannel& ch) {
+        return Receive(ch, [&](const auto&, auto) { return f.Target(L"", 2 * f.payload.size()); }, {},
+            [&](const auto& conflicts) -> std::optional<std::vector<bool>> {
+                Require(conflicts.size() == 3 && conflicts[0].identical && !conflicts[1].identical &&
+                    !conflicts[2].identical, "Conflicts grouped by content, not just file size");
+                return std::vector<bool>{false, true, false};
+            });
+    }, senderCancel, receiverCancel), Result::Saved);
+    const auto content = [](const fs::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    };
+    Require(sent == 2 * f.payload.size() && content(dir / L"same.dat") == f.payload &&
+        content(dir / L"replace.dat") == f.payload && content(dir / L"new.dat") == f.payload &&
+        content(dir / L"skip.dat") == "local-only bytes" && content(dir / L"unrelated.dat") == "keep",
+        "Only selected files transferred and existing tree preserved");
+    for (const auto& entry : fs::directory_iterator(dir)) Require(entry.path().extension() == L".dat", "No staging residue");
+    puts("PASS: merge, SHA-256 decisions, selected byte budget, preservation of skipped files");
+}
+
 void CompatibilityTest(std::string_view version, std::uint32_t revision, const char* expected)
 {
     Pair pair;
@@ -336,12 +375,14 @@ void WireTests(const fs::path& base)
     std::atomic_bool cancelClient{false}, cancelServer{false};
     auto wire = [](TlsChannel& ch, const std::string& name, bool sendContent) {
         ch.BeginTransfer(false);
-        const unsigned char header[]{'A','Z','L','A','N','F','2',10, 0, 1, 0, 1, 0, 0,0,0,0,0,0,0,1, 0, static_cast<unsigned char>(name.size())};
+        const unsigned char header[]{'A','Z','L','A','N','F','3',10, 0, 1, 0, 1, 0, 0,0,0,0,0,0,0,1, 0, static_cast<unsigned char>(name.size())};
         ch.Write(header, sizeof(header));
         ch.Write(name.data(), name.size());
         unsigned char reply{};
         ch.Read(&reply, 1);
         Require(sendContent && reply == 1, "Expected acceptance of one-byte valid offer");
+        ch.Read(&reply, 1);
+        Require(reply == 1, "Receiver requested the offered file");
         std::array<unsigned char, 34> bad{}; // one content byte, wrong SHA-256, and final tag
         bad.back() = 5;
         ch.Write(bad.data(), bad.size());
@@ -446,6 +487,7 @@ int wmain(int argc, wchar_t** argv)
         SpeedTests();
         LegacyAndDeadlineTests();
         FileTests(fs::path(argv[1]));
+        MergeFiles(fs::path(argv[1]));
         WireTests(fs::path(argv[1]));
         if (argc == 3) JunctionTest(fs::path(argv[1]), fs::path(argv[2]));
         std::string code;

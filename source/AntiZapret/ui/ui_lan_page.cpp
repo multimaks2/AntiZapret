@@ -406,6 +406,12 @@ void DrawLanSession(LanPageState& state, ThemeManager& theme)
     static Phase lastPhase = Phase::Idle;
     static lan::Ticket lastTicket{};
     static UiSmoothScroll offerScroll;
+    static std::size_t lastConflict = 0;
+    static bool applyConflictToAll = false;
+    if (status.phase == Phase::FileConflict &&
+        (lastPhase != status.phase || lastTicket != status.ticket || lastConflict != status.conflict.index))
+        applyConflictToAll = false;
+    lastConflict = status.conflict.index;
     if (lastTicket != status.ticket) offerScroll = {};
     if (show && (lastPhase != status.phase || lastTicket != status.ticket)) ImGui::OpenPopup(popup);
     lastPhase = status.phase;
@@ -513,6 +519,26 @@ void DrawLanSession(LanPageState& state, ThemeManager& theme)
         ImGui::SameLine();
         if (UiCommon::SecondaryButton("Отклонить##lan_files", buttonSize, colors)) session.ChooseDestination(status.ticket, {});
         if (state.destinationPick.valid()) ImGui::TextWrapped("Выберите папку в системном окне или закройте его. Ожидание ограничено.");
+        break;
+    }
+    case Phase::CheckingFiles:
+        ImGui::TextWrapped("Проверяем файлы в выбранной папке…");
+        if (UiCommon::SecondaryButton("Отменить передачу##lan_check", buttonSize, colors)) session.Cancel();
+        break;
+    case Phase::FileConflict:
+    {
+        ImGui::TextColored(colors.textPrimary, "Файл уже есть в папке");
+        ImGui::TextWrapped("%s", status.conflict.name.c_str());
+        ImGui::TextWrapped("%s", status.conflict.identical ? "Содержимое совпадает." : "Содержимое отличается.");
+        ImGui::Text("Осталось в этой группе: %u", static_cast<unsigned>(status.conflictsOfKind));
+        ImGui::Checkbox("Применить ко всем файлам этой группы##lan_conflict", &applyConflictToAll);
+        if (UiCommon::SecondaryButton("Заменить##lan_conflict", buttonSize, colors))
+            session.ChooseConflict(status.ticket, status.conflict.index, true, applyConflictToAll);
+        ImGui::SameLine();
+        if (UiCommon::SecondaryButton("Пропустить##lan_conflict", buttonSize, colors))
+            session.ChooseConflict(status.ticket, status.conflict.index, false, applyConflictToAll);
+        ImGui::SameLine();
+        if (UiCommon::SecondaryButton("Отменить передачу##lan_conflict", buttonSize, colors)) session.Cancel();
         break;
     }
     case Phase::Transferring:

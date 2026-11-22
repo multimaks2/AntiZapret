@@ -175,7 +175,14 @@ void UiShell::DrawReleaseNotes(ThemeManager& theme)
 		ImGui::Dummy({ 0.f, 4.f });
 		ImGui::PushStyleColor(ImGuiCol_Text, colors.textMuted);
 		ImGui::PushTextWrapPos(left + dialogWidth);
-		if (version == "1.5.1a")
+		const auto wrappedBullet = [](const char* text) { ImGui::Bullet(); ImGui::TextUnformatted(text); };
+		if (version == "1.5.2")
+		{
+			wrappedBullet("Обновляйте папки по LAN без повторной отправки файлов, которые уже есть на другом ПК.");
+			wrappedBullet("Перед передачей выберите, какие существующие файлы заменить, а какие пропустить. Решение можно применить ко всем совпадающим или ко всем отличающимся файлам отдельно.");
+			wrappedBullet("Для обмена файлами обновите AntiZapret на обоих ПК.");
+		}
+		else if (version == "1.5.1a")
 		{
 			ImGui::BulletText("Во вкладке «Обмен файлами LAN» можно отправлять файлы и папки напрямую между ПК.");
 			ImGui::BulletText("Получатель выбирает папку сохранения. Большие списки передаются за один сеанс, без повторных подключений.");
@@ -199,7 +206,8 @@ void UiShell::DrawReleaseNotes(ThemeManager& theme)
 		ImGui::PopStyleColor();
 		ImGui::Dummy({ dialogWidth, 0.f });
 		ImGui::Dummy({ 0.f, 14.f });
-		ImGui::SetCursorPosX(left + dialogWidth - buttonWidth);
+		const float availableWidth = (std::max)(dialogWidth, ImGui::GetContentRegionAvail().x);
+		ImGui::SetCursorPosX(left + (availableWidth - buttonWidth) * 0.5f);
 		if (UiCommon::AccentButton("Закрыть", { buttonWidth, UiMetrics::kSmallBtnHeight }, green, colors) || ImGui::IsKeyPressed(ImGuiKey_Escape))
 		{
 			m_appSettings.SetSeenReleaseNotesVersion(notesKey);

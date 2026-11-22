@@ -28,7 +28,7 @@ namespace
 {
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
-constexpr std::uint32_t LanProtocolRevision = 3;
+constexpr std::uint32_t LanProtocolRevision = 4;
 constexpr std::size_t MaxRecord = 20 * 1024, MaxHandshake = 64 * 1024;
 
 [[noreturn]] void Fail(const char* message, long code = 0)

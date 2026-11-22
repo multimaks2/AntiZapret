@@ -31,12 +31,15 @@ struct Destination
 enum class Result { Saved, Declined, NoSpace, InvalidDestination, SavedReceiptLost };
 using Offer = std::function<std::optional<Destination>(const std::vector<Item>&, std::uint64_t)>;
 using Progress = std::function<void(std::uint64_t, std::uint64_t)>;
+struct Conflict { std::size_t index; std::string name; bool identical; };
+// One replace/skip flag per conflict, in manifest order; nullopt cancels.
+using ResolveConflicts = std::function<std::optional<std::vector<bool>>(const std::vector<Conflict>&)>;
 
 // Throws on malformed input, I/O failure or cancellation. After failure destroy
 // channel; no retries. On transport failure after sender's final marker, delivery
 // may have completed even if the sender did not receive the receipt.
 Result Send(TlsChannel&, const std::vector<Source>&, const Progress& = {});
-Result Receive(TlsChannel&, const Offer&, const Progress& = {});
+Result Receive(TlsChannel&, const Offer&, const Progress& = {}, const ResolveConflicts& = {});
 std::uint64_t ValidateManifest(const std::vector<Item>&);
 }
 #endif

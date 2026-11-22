@@ -1,4 +1,4 @@
 #pragma once
 
-#define ANTIZAPRET_VERSION "1.5.1a"
-#define ANTIZAPRET_LATEST_VERSION "1.5.1a"
+#define ANTIZAPRET_VERSION "1.5.2"
+#define ANTIZAPRET_LATEST_VERSION "1.5.2"
